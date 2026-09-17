@@ -1,4 +1,5 @@
 import asyncio
+import json
 import subprocess
 from datetime import datetime
 from unittest.mock import AsyncMock, Mock
@@ -68,13 +69,16 @@ def test_web_auth_and_task_lifecycle(system):
 def test_webhook_auth_and_commands(system):
     client, service, bot, config = system
     headers = {'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}
+    update_id = 0
     def send(text, chat_id=123):
+        nonlocal update_id
+        update_id += 1
         return client.post('/telegram/webhook', headers=headers,
-                           json={'message': {'chat': {'id': chat_id}, 'text': text}})
+                           json={'update_id': update_id, 'message': {'chat': {'id': chat_id}, 'text': text}})
     assert client.post('/telegram/webhook', json={}).status_code == 403
     assert send('新增工作', 456).status_code == 403
     assert bot.send_message.await_count == 0
-    assert client.post('/telegram/webhook', headers=headers, json={}).status_code == 200
+    assert client.post('/telegram/webhook', headers=headers, json={'update_id': 0}).status_code == 200
     assert send('/start').status_code == 200
     assert '指令' in bot.send_message.call_args.args[1]
     assert send('新增工作').status_code == 200
@@ -272,12 +276,64 @@ def test_duplicate_other_mutations(system, monkeypatch, command):
     assert bot.send_message.await_count == 1
 
 
-@pytest.mark.xfail(strict=True, reason='已知問題：非物件 webhook 輸入導致 500')
-def test_webhook_invalid_shape(system):
-    client, _, _, _ = system
-    response = client.post('/telegram/webhook', json=[], headers={
+@pytest.mark.parametrize('payload', [
+    [], None, 'secret-input', 1, {}, {'update_id': True}, {'update_id': '1'},
+    {'update_id': 1.0}, {'update_id': -1}, {'update_id': 2**63},
+    {'update_id': 1, 'message': []}, {'update_id': 1, 'message': 'wrong'},
+    {'update_id': 1, 'message': {}}, {'update_id': 1, 'message': {'chat': []}},
+    {'update_id': 1, 'message': {'chat': {'id': '123'}, 'text': '工作'}},
+    {'update_id': 1, 'message': {'chat': {'id': True}, 'text': '工作'}},
+    {'update_id': 1, 'message': {'chat': {'id': 2**63}, 'text': '工作'}},
+    {'update_id': 1, 'message': {'chat': {'id': 123}, 'text': []}},
+    {'update_id': 1, 'message': {'chat': {'id': 123}, 'text': 123}},
+])
+def test_webhook_invalid_shape(system, payload):
+    client, service, bot, _ = system
+    response = client.post('/telegram/webhook', content=json.dumps(payload), headers={
+        'Content-Type': 'application/json',
         'X-Telegram-Bot-Api-Secret-Token': 'test-hook'})
-    assert response.status_code in (400, 422)
+    assert response.status_code == 422
+    assert 'secret-input' not in response.text
+    assert service.list_open() == []
+    main.ai.parse.assert_not_awaited()
+    bot.send_message.assert_not_awaited()
+
+
+@pytest.mark.parametrize('body', [b'{broken', b'', b'\xff'])
+def test_webhook_invalid_json(system, body):
+    client, service, bot, _ = system
+    response = client.post('/telegram/webhook', content=body, headers={
+        'Content-Type': 'application/json', 'X-Telegram-Bot-Api-Secret-Token': 'test-hook'})
+    assert response.status_code == 400
+    assert service.list_open() == []
+    main.ai.parse.assert_not_awaited()
+    bot.send_message.assert_not_awaited()
+
+
+@pytest.mark.parametrize('payload', [
+    {'update_id': 1, 'callback_query': {'data': 'ignored'}},
+    {'update_id': 2, 'message': {'chat': {'id': 123}, 'photo': []}},
+    {'update_id': 3, 'message': {'chat': {'id': 123}, 'text': '  '}},
+])
+def test_webhook_non_text_updates_are_ignored(system, payload):
+    client, service, bot, _ = system
+    assert client.post('/telegram/webhook', json=payload, headers={
+        'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}).status_code == 200
+    assert service.list_open() == []
+    main.ai.parse.assert_not_awaited()
+    bot.send_message.assert_not_awaited()
+
+
+def test_webhook_checks_secret_before_parsing_and_preserves_retry_id(system):
+    client, service, _, _ = system
+    assert client.post('/telegram/webhook', content=b'{broken').status_code == 403
+    payload = {'update_id': 123, 'message': {'chat': {'id': 123}, 'text': []}}
+    headers = {'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}
+    assert client.post('/telegram/webhook', json=payload, headers=headers).status_code == 422
+    assert main.db.get_update(123) is None
+    payload['message']['text'] = '新增工作'
+    assert client.post('/telegram/webhook', json=payload, headers=headers).status_code == 200
+    assert len(service.list_open()) == 1
 
 
 @pytest.mark.parametrize('origin, expected', [

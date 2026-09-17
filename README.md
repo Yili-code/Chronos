@@ -76,6 +76,8 @@ CHRONOS_PUBLIC_BASE_URL=https://你的公開網址
 
 設定 `CHRONOS_TELEGRAM_CHAT_ID` 後，其他 chat 無法操作 bot。
 
+Webhook 會驗證 JSON 結構與整數 `update_id`，合法的非文字更新會略過。每筆文字更新的代辦變更與處理紀錄會一起儲存在 SQLite；重送同一 update 不會重複新增、完成或延期，重啟後仍有效。回覆失敗時，後續重送會重試原始回覆。若 Telegram 已收到回覆而程式尚未記錄送達就中斷，回覆文字仍可能重複，但代辦不會重複變更。去重紀錄目前不會自動清除。
+
 ## GitHub 設定
 
 公開 repository 的本機狀態不需要 token。若要補充 GitHub repository metadata，建立最小權限的 fine-grained token，並設定：
@@ -85,6 +87,8 @@ CHRONOS_GITHUB_TOKEN=github_pat_...
 ```
 
 token 只需讀取目標 repository 的 Metadata。不要將 `.env` commit。
+
+Git 讀取失敗會顯示「狀態未知」，不會推定專案乾淨。GitHub 斷線或逾時時仍保留本機 Git 資訊，並標示遠端資訊暫時無法取得。
 
 ## Docker
 

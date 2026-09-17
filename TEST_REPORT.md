@@ -2,6 +2,8 @@
 
 日期：2026-09-17（Asia/Taipei）
 
+最新結果：**93 passed、0 xfailed、3 dependency deprecation warnings**。下列 5 個缺陷皆已修復，每項分別測試、提交與推送。棄用警告來自 Starlette/httpx、AnyIO 與 pytest-asyncio 的相容性提示，非測試失敗。
+
 初次檢查結果：26 passed、5 xfailed、3 dependency deprecation warnings。以下缺陷清單保留初次檢查證據；最新修復結果見下節。
 
 ## 逐項修復紀錄
@@ -10,6 +12,7 @@
 2. Telegram 去重：已修復。SQLite 保存 update_id、原始回覆及送達狀態；代辦變更與處理紀錄在同一 transaction 提交。重送不重複執行新增、完成、延期，傳送失敗只重試保存的回覆。測試涵蓋重開資料庫、同時收到重複請求、回覆逾時/拒絕、資料庫寫入失敗 rollback。完整測試：37 passed、3 xfailed。限制：若 Telegram 已收到回覆，但程式尚未記錄送達就中斷，重試可能重複回覆文字；代辦不會重複變更。去重紀錄目前保留於本機資料庫，不自動清除。
 3. GitHub 故障隔離：已修復。連線失敗、逾時、協定錯誤及無效 JSON 轉為該 repo 的錯誤狀態；本機 Git 結果與其他 repo 仍正常回傳。測試 HTTP API 同時取得正常與離線 repo、錯誤訊息不洩漏原始例外。完整測試：44 passed、2 xfailed。另以隔離服務和模擬專案資料實際開啟瀏覽器，確認 Git 失敗顯示「狀態未知」，GitHub 失敗仍顯示本機 branch、變更數、commit 與遠端資訊不可用提示。
 4. GitHub remote 解析：已修復。依 URL 主機與路徑解析 HTTPS/SSH/git remote，保留名稱中的句點，只移除結尾的 `.git`。測試 8 種有效格式及 15 種無效格式，包括相似域名、子路徑、query、fragment、URL 編碼與損壞網址。完整測試：67 passed、1 xfailed。
+5. webhook 驗證：已修復。secret 驗證後才解析 JSON；無效 JSON 回傳 400，結構或型別錯誤回傳 422。update_id 必須為可存入 SQLite 的非負整數，拒絕布林值、浮點數與字串；檢查巢狀 chat/text 結構，合法非文字更新回傳 200 並略過。拒絕的請求不呼叫 AI、不寫入代辦或消耗 update_id。完整測試：93 passed、0 xfailed。
 
 ## 已驗證
 
@@ -25,7 +28,7 @@
 | GitHub | 模擬 metadata 成功及 HTTP 403/404/429/500；實際帳號 API 回傳 200 |
 | Telegram 連線 | 實際 getMe/getWebhookInfo 回傳 200；未註冊 webhook、pending updates 為 0 |
 
-## 可重現缺陷
+## 初次檢查重現的缺陷（現已修復）
 
 1. **Git 失敗時誤報乾淨**：`chronos/projects.py` 的 `_git` 忽略 stderr，失敗回傳空字串。實際遇到 sandbox 帳號被 Git ownership 檢查拒絕，UI 顯示「乾淨／尚無 commit」。這代表未知狀態被當成正常狀態。
 2. **Telegram 重送造成重複代辦**：同一 `update_id` 連續送兩次，新增兩筆。webhook 未實作去重。

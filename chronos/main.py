@@ -1,5 +1,6 @@
 import base64
 import hmac
+import json
 import logging
 import re
 from contextlib import asynccontextmanager
@@ -8,7 +9,7 @@ from collections.abc import Callable
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .db import Database
 from .ai import AIError, ExternalAI
@@ -64,6 +65,23 @@ class NaturalTask(BaseModel):
     text: str
 
 
+class TelegramChat(BaseModel):
+    model_config = ConfigDict(strict=True)
+    id: int = Field(ge=-(2**63), le=2**63 - 1)
+
+
+class TelegramMessage(BaseModel):
+    model_config = ConfigDict(strict=True)
+    chat: TelegramChat
+    text: str | None = None
+
+
+class TelegramUpdate(BaseModel):
+    model_config = ConfigDict(strict=True)
+    update_id: int = Field(ge=0, le=2**63 - 1)
+    message: TelegramMessage | None = None
+
+
 @app.get("/health")
 async def health() -> dict:
     return {"status": "ok"}
@@ -108,18 +126,23 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         x_telegram_bot_api_secret_token or "", settings.telegram_webhook_secret
     ):
         raise HTTPException(status_code=403, detail="無效 webhook")
-    update = await request.json()
-    message = update.get("message") or {}
-    chat_id = (message.get("chat") or {}).get("id")
-    text = (message.get("text") or "").strip()
-    if not chat_id or not text:
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise HTTPException(status_code=400, detail="webhook 內容必須為有效 JSON") from None
+    try:
+        update = TelegramUpdate.model_validate(payload)
+    except ValidationError:
+        raise HTTPException(status_code=422, detail="webhook 格式錯誤：請檢查 update_id、message、chat 與 text") from None
+    if update.message is None:
         return {"ok": True}
+    chat_id = update.message.chat.id
     if settings.telegram_chat_id and chat_id != settings.telegram_chat_id:
         raise HTTPException(status_code=403, detail="未授權 chat")
-    update_id = update.get("update_id")
-    if type(update_id) is not int:
-        await telegram.send_message(chat_id, await handle_message(text))
+    text = (update.message.text or "").strip()
+    if not text:
         return {"ok": True}
+    update_id = update.update_id
     receipt = db.get_update(update_id)
     if receipt is None:
         # Network work happens before acquiring the SQLite write lock.
