@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from chronos import main
 from chronos.ai import AIError
 from chronos.db import Database
-from chronos.projects import ProjectService, format_projects
+from chronos.projects import GitReadError, ProjectService, format_projects
 from chronos.settings import Settings
 from chronos.tasks import ParsedTask, TaskService, format_tasks
 from chronos.telegram import TelegramClient
@@ -203,9 +203,42 @@ def test_github_offline_is_reported(tmp_path, monkeypatch):
     assert result.get('error')
 
 
-@pytest.mark.xfail(strict=True, reason='已知問題：Git 失敗時被誤報為乾淨')
 def test_failed_git_is_not_clean(tmp_path, monkeypatch):
     service = ProjectService(tmp_path)
-    monkeypatch.setattr(service, '_git', AsyncMock(return_value=''))
+    monkeypatch.setattr(service, '_git', AsyncMock(side_effect=GitReadError('讀取被拒絕')))
     result = asyncio.run(service._inspect(tmp_path))
-    assert result.get('error') or result.get('dirty') is None
+    assert result['error'] == '讀取被拒絕'
+    assert result['dirty'] is None and result['change_count'] is None
+    assert '乾淨' not in format_projects([result])
+    assert '狀態未知' in format_projects([result])
+
+
+def test_unborn_repository_and_invalid_repository(tmp_path):
+    good = tmp_path / 'good'
+    good.mkdir()
+    subprocess.run(['git', '-C', str(good), 'init', '-b', 'main'], check=True, capture_output=True)
+    bad = tmp_path / 'bad'
+    bad.mkdir()
+    (bad / '.git').mkdir()
+    projects = asyncio.run(ProjectService(tmp_path).scan())
+    assert len(projects) == 2
+    by_name = {p['name']: p for p in projects}
+    assert by_name['good']['dirty'] is False
+    assert by_name['good']['last_commit'] == '尚無 commit'
+    assert by_name['good']['origin'] == ''
+    assert by_name['bad']['dirty'] is None
+    assert by_name['bad']['error']
+
+
+def test_git_ownership_error_and_missing_binary(tmp_path, monkeypatch):
+    process = AsyncMock()
+    process.returncode = 128
+    process.communicate.return_value = (b'', b'fatal: detected dubious ownership')
+    spawn = AsyncMock(return_value=process)
+    monkeypatch.setattr(asyncio, 'create_subprocess_exec', spawn)
+    service = ProjectService(tmp_path)
+    with pytest.raises(GitReadError, match='擁有者'):
+        asyncio.run(service._git(tmp_path, 'status', '--porcelain'))
+    spawn.side_effect = FileNotFoundError()
+    with pytest.raises(GitReadError, match='無法執行'):
+        asyncio.run(service._git(tmp_path, 'status', '--porcelain'))

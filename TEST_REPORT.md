@@ -2,7 +2,11 @@
 
 日期：2026-09-17（Asia/Taipei）
 
-結果：26 passed、5 xfailed、3 dependency deprecation warnings。5 個 xfail 是實際重現、尚未修復的缺陷，不能視為通過。使用 strict=True，修復後須移除對應標記。
+初次檢查結果：26 passed、5 xfailed、3 dependency deprecation warnings。以下缺陷清單保留初次檢查證據；最新修復結果見下節。
+
+## 逐項修復紀錄
+
+1. Git 狀態：已修復。讀取失敗回傳 `dirty: null` 與安全錯誤訊息，Web/Telegram 顯示狀態未知；正常的新 repository 仍顯示尚無 commit。防止 Git 往父層搜尋，誤讀其他 repository。新增真實空 repo、損壞 repo、ownership 拒絕與找不到 Git 的測試。完整測試：29 passed、4 xfailed。
 
 ## 已驗證
 
@@ -40,4 +44,4 @@
 .\.venv\Scripts\python.exe -m pytest -q -rx --basetemp=.pytest-tmp/verify
 ```
 
-新增測試位於 `tests/test_system.py`。既有 15 項測試，加上 11 項一般測試與 5 項缺陷重現測試，共 31 項。測試資料位於 `.pytest-tmp`，未修改使用者 `.env` 或正式代辦資料。瀏覽器測試服務已停止。應用程式實作未修改。
+測試位於 `tests/test_system.py` 等檔案。測試資料位於 `.pytest-tmp`，未修改使用者 `.env` 或正式代辦資料。初次瀏覽器測試服務已停止；後續實作修改與測試數量見逐項修復紀錄。

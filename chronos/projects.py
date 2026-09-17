@@ -1,8 +1,13 @@
 import asyncio
+import os
 import re
 from pathlib import Path
 
 import httpx
+
+
+class GitReadError(Exception):
+    """A safe explanation of an unreadable repository."""
 
 
 class ProjectService:
@@ -16,30 +21,46 @@ class ProjectService:
         projects = [path for path in self.root.iterdir() if path.is_dir() and (path / ".git").exists()]
         return await asyncio.gather(*(self._inspect(path) for path in sorted(projects)))
 
-    async def _git(self, path: Path, *args: str) -> str:
-        process = await asyncio.create_subprocess_exec(
-            "git", "-C", str(path), *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        stdout, _ = await process.communicate()
-        return stdout.decode().strip() if process.returncode == 0 else ""
+    async def _git(self, path: Path, *args: str, empty_exit_codes: tuple[int, ...] = ()) -> str:
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "git", "-C", str(path), *args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env={**os.environ, "GIT_CEILING_DIRECTORIES": str(path.resolve().parent)},
+            )
+            stdout, stderr = await process.communicate()
+        except OSError:
+            raise GitReadError("無法執行 Git，請檢查安裝與存取權限。") from None
+        if process.returncode == 0:
+            return stdout.decode("utf-8", errors="replace").strip()
+        if process.returncode in empty_exit_codes:
+            return ""
+        if b"dubious ownership" in stderr:
+            raise GitReadError("Git 拒絕讀取：專案擁有者與執行帳號不同，請確認目錄信任設定。")
+        raise GitReadError("Git 讀取失敗，請檢查專案完整性與存取權限。")
 
     async def _inspect(self, path: Path) -> dict:
-        branch, changes, origin, last_commit = await asyncio.gather(
-            self._git(path, "branch", "--show-current"),
-            self._git(path, "status", "--porcelain"),
-            self._git(path, "remote", "get-url", "origin"),
-            self._git(path, "log", "-1", "--pretty=%h %s"),
-        )
+        try:
+            branch, changes, origin, head = await asyncio.gather(
+                self._git(path, "branch", "--show-current"),
+                self._git(path, "status", "--porcelain"),
+                self._git(path, "remote", "get-url", "origin", empty_exit_codes=(2,)),
+                self._git(path, "rev-parse", "--verify", "--quiet", "HEAD", empty_exit_codes=(1,)),
+            )
+            last_commit = await self._git(path, "log", "-1", "--pretty=%h %s") if head else "尚無 commit"
+        except GitReadError as error:
+            return {"name": path.name, "path": str(path), "branch": "未知",
+                    "dirty": None, "change_count": None, "origin": None,
+                    "last_commit": "無法讀取", "error": str(error)}
         project = {
             "name": path.name,
             "path": str(path),
-            "branch": branch or "—",
+            "branch": branch or "detached HEAD",
             "dirty": bool(changes),
             "change_count": len(changes.splitlines()) if changes else 0,
             "origin": origin,
-            "last_commit": last_commit or "尚無 commit",
+            "last_commit": last_commit,
         }
         repo = self._github_repo(origin)
         if repo and self.github_token:
@@ -71,7 +92,9 @@ def format_projects(projects: list[dict]) -> str:
         return "找不到可追蹤的 Git repository。"
     lines = ["開發專案："]
     for project in projects:
+        if project.get("error"):
+            lines.append(f"• {project['name']}｜狀態未知\n  {project['error']}")
+            continue
         state = f"{project['change_count']} 項未 commit" if project["dirty"] else "乾淨"
         lines.append(f"• {project['name']}｜{project['branch']}｜{state}\n  {project['last_commit']}")
     return "\n".join(lines)
-
