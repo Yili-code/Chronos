@@ -7,6 +7,7 @@
 ## 逐項修復紀錄
 
 1. Git 狀態：已修復。讀取失敗回傳 `dirty: null` 與安全錯誤訊息，Web/Telegram 顯示狀態未知；正常的新 repository 仍顯示尚無 commit。防止 Git 往父層搜尋，誤讀其他 repository。新增真實空 repo、損壞 repo、ownership 拒絕與找不到 Git 的測試。完整測試：29 passed、4 xfailed。
+2. Telegram 去重：已修復。SQLite 保存 update_id、原始回覆及送達狀態；代辦變更與處理紀錄在同一 transaction 提交。重送不重複執行新增、完成、延期，傳送失敗只重試保存的回覆。測試涵蓋重開資料庫、同時收到重複請求、回覆逾時/拒絕、資料庫寫入失敗 rollback。完整測試：37 passed、3 xfailed。限制：若 Telegram 已收到回覆，但程式尚未記錄送達就中斷，重試可能重複回覆文字；代辦不會重複變更。去重紀錄目前保留於本機資料庫，不自動清除。
 
 ## 已驗證
 

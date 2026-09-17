@@ -3,6 +3,7 @@ import hmac
 import logging
 import re
 from contextlib import asynccontextmanager
+from collections.abc import Callable
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
@@ -115,36 +116,68 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         return {"ok": True}
     if settings.telegram_chat_id and chat_id != settings.telegram_chat_id:
         raise HTTPException(status_code=403, detail="未授權 chat")
-    await telegram.send_message(chat_id, await handle_message(text))
+    update_id = update.get("update_id")
+    if type(update_id) is not int:
+        await telegram.send_message(chat_id, await handle_message(text))
+        return {"ok": True}
+    receipt = db.get_update(update_id)
+    if receipt is None:
+        # Network work happens before acquiring the SQLite write lock.
+        action = await prepare_message(text)
+        with db.transaction() as connection:
+            receipt = db.get_update(update_id)
+            if receipt is None:
+                reply = action()
+                connection.execute(
+                    "INSERT INTO telegram_updates(update_id, reply) VALUES (?, ?)", (update_id, reply)
+                )
+                receipt = {"reply": reply, "delivered": False}
+    if not receipt["delivered"]:
+        result = await telegram.send_message(chat_id, receipt["reply"])
+        if not result.get("ok"):
+            raise HTTPException(status_code=502, detail="Telegram 回覆失敗，等待重試")
+        db.mark_update_delivered(update_id)
     return {"ok": True}
 
 
 async def handle_message(text: str) -> str:
+    return (await prepare_message(text))()
+
+
+async def prepare_message(text: str) -> Callable[[], str]:
+    """Resolve external input first; the returned action performs no async work."""
     normalized = text.lstrip("/")
     if normalized in {"start", "help", "說明"}:
-        return "指令：\n• 新增 明天 17:00 完成報告 #Chronos\n• 代辦\n• 完成 3\n• 延期 3 到明天 10:00\n• 專案"
+        return lambda: "指令：\n• 新增 明天 17:00 完成報告 #Chronos\n• 代辦\n• 完成 3\n• 延期 3 到明天 10:00\n• 專案"
     if normalized in {"代辦", "清單", "tasks"}:
-        return format_tasks(tasks.list_open(), settings.tz)
+        return lambda: format_tasks(tasks.list_open(), settings.tz)
     if normalized in {"專案", "狀態", "projects"}:
-        return format_projects(await projects.scan())
+        reply = format_projects(await projects.scan())
+        return lambda: reply
     completed = re.fullmatch(r"(?:完成|done)\s*#?(\d+)", normalized, re.IGNORECASE)
     if completed:
-        ok = tasks.complete(int(completed.group(1)))
-        return "已完成。" if ok else "找不到該未完成代辦。"
+        def complete() -> str:
+            ok = tasks.complete(int(completed.group(1)))
+            return "已完成。" if ok else "找不到該未完成代辦。"
+        return complete
     postponed = re.fullmatch(r"延期\s*#?(\d+)\s*(?:到|至)?\s*(.+)", normalized)
     if postponed:
         try:
             parsed = await ai.parse(f"{postponed.group(2)} 更新期限")
         except (AIError, ValueError) as error:
-            return str(error)
+            return lambda reply=str(error): reply
         if not parsed.due_at:
-            return "請指定日期或時間。"
-        ok = tasks.postpone(int(postponed.group(1)), parsed.due_at)
-        return f"已延期至 {parsed.due_at:%m/%d %H:%M}。" if ok else "找不到該未完成代辦。"
+            return lambda: "請指定日期或時間。"
+        def postpone() -> str:
+            ok = tasks.postpone(int(postponed.group(1)), parsed.due_at)
+            return f"已延期至 {parsed.due_at:%m/%d %H:%M}。" if ok else "找不到該未完成代辦。"
+        return postpone
     try:
         parsed = await ai.parse(normalized)
-        task = tasks.create(parsed.title, parsed.due_at, parsed.project)
     except (AIError, ValueError) as error:
-        return str(error)
-    due = f"，期限 {parsed.due_at:%m/%d %H:%M}" if parsed.due_at else ""
-    return f"已新增 #{task['id']}：{task['title']}{due}。"
+        return lambda reply=str(error): reply
+    def create() -> str:
+        task = tasks.create(parsed.title, parsed.due_at, parsed.project)
+        due = f"，期限 {parsed.due_at:%m/%d %H:%M}" if parsed.due_at else ""
+        return f"已新增 #{task['id']}：{task['title']}{due}。"
+    return create

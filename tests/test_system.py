@@ -1,7 +1,7 @@
 import asyncio
 import subprocess
 from datetime import datetime
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
@@ -170,14 +170,106 @@ def test_telegram_transport(monkeypatch):
     assert not asyncio.run(TelegramClient('').send_message(123, '測試'))['ok']
 
 
-@pytest.mark.xfail(strict=True, reason='已知問題：相同 update_id 重送會重複新增')
 def test_webhook_duplicate_update(system):
-    client, service, _, _ = system
+    client, service, bot, _ = system
     payload = {'update_id': 12345, 'message': {'chat': {'id': 123}, 'text': '新增工作'}}
     for _ in range(2):
         assert client.post('/telegram/webhook', json=payload, headers={
             'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}).status_code == 200
     assert len(service.list_open()) == 1
+    assert bot.send_message.await_count == 1
+    assert main.ai.parse.await_count == 1
+
+
+def test_duplicate_update_survives_database_reopen(system, monkeypatch):
+    client, service, bot, config = system
+    payload = {'update_id': 45, 'message': {'chat': {'id': 123}, 'text': '新增工作'}}
+    headers = {'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}
+    assert client.post('/telegram/webhook', json=payload, headers=headers).status_code == 200
+    reopened = Database(config.database_path)
+    reopened.initialize()
+    monkeypatch.setattr(main, 'db', reopened)
+    monkeypatch.setattr(main, 'tasks', TaskService(reopened, config.tz))
+    assert client.post('/telegram/webhook', json=payload, headers=headers).status_code == 200
+    assert len(service.list_open()) == 1
+    assert bot.send_message.await_count == 1
+
+
+@pytest.mark.parametrize('failure', ['exception', 'rejected'])
+def test_reply_retry_does_not_repeat_task_change(system, failure):
+    client, service, bot, _ = system
+    payload = {'update_id': 46, 'message': {'chat': {'id': 123}, 'text': '新增工作'}}
+    headers = {'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}
+    if failure == 'exception':
+        bot.send_message.side_effect = httpx.ReadTimeout('timeout')
+    else:
+        bot.send_message.return_value = {'ok': False}
+    assert client.post('/telegram/webhook', json=payload, headers=headers).status_code >= 500
+    assert len(service.list_open()) == 1
+    first_reply = bot.send_message.call_args.args[1]
+    bot.send_message.side_effect = None
+    bot.send_message.return_value = {'ok': True}
+    assert client.post('/telegram/webhook', json=payload, headers=headers).status_code == 200
+    assert len(service.list_open()) == 1
+    assert main.ai.parse.await_count == 1
+    assert bot.send_message.call_args.args[1] == first_reply
+
+
+def test_update_receipt_and_mutation_roll_back_together(system):
+    client, service, _, _ = system
+    payload = {'update_id': 47, 'message': {'chat': {'id': 123}, 'text': '新增工作'}}
+    headers = {'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}
+    with main.db.connect() as connection:
+        connection.execute("CREATE TRIGGER fail_receipt BEFORE INSERT ON telegram_updates "
+                           "BEGIN SELECT RAISE(ABORT, 'test disk failure'); END")
+    assert client.post('/telegram/webhook', json=payload, headers=headers).status_code == 500
+    assert service.list_open() == []
+    assert main.db.get_update(47) is None
+    with main.db.connect() as connection:
+        connection.execute('DROP TRIGGER fail_receipt')
+    assert client.post('/telegram/webhook', json=payload, headers=headers).status_code == 200
+    assert len(service.list_open()) == 1
+
+
+def test_concurrent_duplicate_updates(system, monkeypatch):
+    _, service, _, _ = system
+    async def run():
+        both_started = asyncio.Event()
+        calls = 0
+        async def parse(text):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                both_started.set()
+            await asyncio.wait_for(both_started.wait(), timeout=2)
+            return ParsedTask('並行測試')
+        monkeypatch.setattr(main.ai, 'parse', parse)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url='http://test') as client:
+            async def send():
+                return await client.post('/telegram/webhook', json={
+                    'update_id': 48, 'message': {'chat': {'id': 123}, 'text': '新增工作'}},
+                    headers={'X-Telegram-Bot-Api-Secret-Token': 'test-hook'})
+            responses = await asyncio.gather(send(), send())
+        assert all(response.status_code == 200 for response in responses)
+    asyncio.run(run())
+    assert len(service.list_open()) == 1
+
+
+@pytest.mark.parametrize('command', ['完成', '延期'])
+def test_duplicate_other_mutations(system, monkeypatch, command):
+    client, service, bot, config = system
+    task = service.create('原始工作')
+    main.ai.parse.return_value = ParsedTask('更新期限', datetime(2026, 9, 20, 10, tzinfo=config.tz))
+    method = 'complete' if command == '完成' else 'postpone'
+    action = Mock(wraps=getattr(service, method))
+    monkeypatch.setattr(service, method, action)
+    text = f"完成 {task['id']}" if command == '完成' else f"延期 {task['id']} 到明天"
+    payload = {'update_id': 49, 'message': {'chat': {'id': 123}, 'text': text}}
+    for _ in range(2):
+        assert client.post('/telegram/webhook', json=payload, headers={
+            'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}).status_code == 200
+    assert action.call_count == 1
+    assert bot.send_message.await_count == 1
 
 
 @pytest.mark.xfail(strict=True, reason='已知問題：非物件 webhook 輸入導致 500')
