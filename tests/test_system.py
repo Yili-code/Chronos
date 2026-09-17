@@ -285,14 +285,54 @@ def test_github_dotted_repository():
     assert ProjectService._github_repo('https://github.com/owner/my.repo.git') == 'owner/my.repo'
 
 
-@pytest.mark.xfail(strict=True, reason='已知問題：GitHub 網路失敗會中斷掃描')
-def test_github_offline_is_reported(tmp_path, monkeypatch):
+@pytest.mark.parametrize('failure, expected', [
+    (httpx.ConnectError, 'connection_failed'), (httpx.ReadTimeout, 'timeout'),
+    (httpx.RemoteProtocolError, 'connection_failed'),
+])
+def test_github_offline_is_reported(tmp_path, monkeypatch, failure, expected):
     original = httpx.AsyncClient
     def handler(request):
-        raise httpx.ConnectError('offline', request=request)
+        raise failure('secret-must-not-leak', request=request)
     monkeypatch.setattr(httpx, 'AsyncClient', lambda **kw: original(transport=httpx.MockTransport(handler), **kw))
     result = asyncio.run(ProjectService(tmp_path, 'test')._github_status('owner/repo'))
-    assert result.get('error')
+    assert result['error'] == expected
+    assert 'secret-must-not-leak' not in str(result)
+
+
+@pytest.mark.parametrize('body', ['not json', '[]', 'null'])
+def test_github_invalid_response(tmp_path, monkeypatch, body):
+    original = httpx.AsyncClient
+    monkeypatch.setattr(httpx, 'AsyncClient', lambda **kw: original(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, text=body)), **kw))
+    result = asyncio.run(ProjectService(tmp_path, 'test')._github_status('owner/repo'))
+    assert result['error'] == 'invalid_response'
+
+
+def test_projects_api_preserves_local_state_when_github_is_offline(system, monkeypatch):
+    client, _, _, config = system
+    for name in ['offline', 'healthy']:
+        (config.projects_root / name / '.git').mkdir(parents=True)
+    service = ProjectService(config.projects_root, 'test-token')
+    async def git(path, *args, **kwargs):
+        return {'branch': 'main', 'status': ' M work.txt',
+                'remote': f'https://github.com/owner/{path.name}.git',
+                'rev-parse': 'abcdef', 'log': 'abcdef Work saved'}[args[0]]
+    monkeypatch.setattr(service, '_git', git)
+    monkeypatch.setattr(main, 'projects', service)
+    original = httpx.AsyncClient
+    def handler(request):
+        if request.url.path.endswith('/offline'):
+            raise httpx.ConnectError('offline', request=request)
+        return httpx.Response(200, json={'open_issues_count': 2, 'default_branch': 'main'})
+    monkeypatch.setattr(httpx, 'AsyncClient', lambda **kw: original(transport=httpx.MockTransport(handler), **kw))
+    response = client.get('/api/projects', auth=('chronos', 'test-password'))
+    assert response.status_code == 200
+    projects = response.json()
+    assert len(projects) == 2
+    assert all(p['dirty'] and p['last_commit'] == 'abcdef Work saved' for p in projects)
+    assert projects[0]['github']['open_issues'] == 2
+    assert projects[1]['github']['error'] == 'connection_failed'
+    assert 'GitHub 資訊暫時無法取得' in format_projects(projects)
 
 
 def test_failed_git_is_not_clean(tmp_path, monkeypatch):

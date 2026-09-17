@@ -74,11 +74,21 @@ class ProjectService:
 
     async def _github_status(self, repo: str) -> dict:
         headers = {"Authorization": f"Bearer {self.github_token}", "Accept": "application/vnd.github+json"}
-        async with httpx.AsyncClient(timeout=10) as client:
-            response = await client.get(f"https://api.github.com/repos/{repo}", headers=headers)
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                response = await client.get(f"https://api.github.com/repos/{repo}", headers=headers)
+        except httpx.TimeoutException:
+            return {"repo": repo, "error": "timeout"}
+        except httpx.RequestError:
+            return {"repo": repo, "error": "connection_failed"}
         if response.is_error:
             return {"repo": repo, "error": response.status_code}
-        data = response.json()
+        try:
+            data = response.json()
+        except ValueError:
+            return {"repo": repo, "error": "invalid_response"}
+        if not isinstance(data, dict):
+            return {"repo": repo, "error": "invalid_response"}
         return {
             "repo": repo,
             "open_issues": data.get("open_issues_count", 0),
@@ -97,4 +107,6 @@ def format_projects(projects: list[dict]) -> str:
             continue
         state = f"{project['change_count']} 項未 commit" if project["dirty"] else "乾淨"
         lines.append(f"• {project['name']}｜{project['branch']}｜{state}\n  {project['last_commit']}")
+        if project.get("github", {}).get("error"):
+            lines.append("  GitHub 資訊暫時無法取得；以上為本機狀態。")
     return "\n".join(lines)
