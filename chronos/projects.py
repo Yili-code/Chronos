@@ -2,6 +2,7 @@ import asyncio
 import os
 import re
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -69,8 +70,28 @@ class ProjectService:
 
     @staticmethod
     def _github_repo(origin: str) -> str | None:
-        match = re.search(r"github\.com[/:]([^/]+/[^/.]+)(?:\.git)?$", origin)
-        return match.group(1) if match else None
+        scp = re.fullmatch(r"git@github\.com:(.+)", origin, re.IGNORECASE)
+        if scp:
+            path = scp.group(1)
+        else:
+            try:
+                url = urlsplit(origin)
+                if (url.scheme not in {"https", "http", "ssh", "git"}
+                        or url.hostname != "github.com" or url.query or url.fragment):
+                    return None
+                path = url.path.removeprefix("/")
+            except ValueError:
+                return None
+        path = path.removesuffix("/").removesuffix(".git")
+        parts = path.split("/")
+        if len(parts) != 2:
+            return None
+        owner, repo = parts
+        if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?", owner):
+            return None
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", repo) or repo in {".", ".."}:
+            return None
+        return f"{owner}/{repo}"
 
     async def _github_status(self, repo: str) -> dict:
         headers = {"Authorization": f"Bearer {self.github_token}", "Accept": "application/vnd.github+json"}

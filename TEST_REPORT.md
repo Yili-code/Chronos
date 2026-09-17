@@ -9,6 +9,7 @@
 1. Git 狀態：已修復。讀取失敗回傳 `dirty: null` 與安全錯誤訊息，Web/Telegram 顯示狀態未知；正常的新 repository 仍顯示尚無 commit。防止 Git 往父層搜尋，誤讀其他 repository。新增真實空 repo、損壞 repo、ownership 拒絕與找不到 Git 的測試。完整測試：29 passed、4 xfailed。
 2. Telegram 去重：已修復。SQLite 保存 update_id、原始回覆及送達狀態；代辦變更與處理紀錄在同一 transaction 提交。重送不重複執行新增、完成、延期，傳送失敗只重試保存的回覆。測試涵蓋重開資料庫、同時收到重複請求、回覆逾時/拒絕、資料庫寫入失敗 rollback。完整測試：37 passed、3 xfailed。限制：若 Telegram 已收到回覆，但程式尚未記錄送達就中斷，重試可能重複回覆文字；代辦不會重複變更。去重紀錄目前保留於本機資料庫，不自動清除。
 3. GitHub 故障隔離：已修復。連線失敗、逾時、協定錯誤及無效 JSON 轉為該 repo 的錯誤狀態；本機 Git 結果與其他 repo 仍正常回傳。測試 HTTP API 同時取得正常與離線 repo、錯誤訊息不洩漏原始例外。完整測試：44 passed、2 xfailed。另以隔離服務和模擬專案資料實際開啟瀏覽器，確認 Git 失敗顯示「狀態未知」，GitHub 失敗仍顯示本機 branch、變更數、commit 與遠端資訊不可用提示。
+4. GitHub remote 解析：已修復。依 URL 主機與路徑解析 HTTPS/SSH/git remote，保留名稱中的句點，只移除結尾的 `.git`。測試 8 種有效格式及 15 種無效格式，包括相似域名、子路徑、query、fragment、URL 編碼與損壞網址。完整測試：67 passed、1 xfailed。
 
 ## 已驗證
 

@@ -280,9 +280,34 @@ def test_webhook_invalid_shape(system):
     assert response.status_code in (400, 422)
 
 
-@pytest.mark.xfail(strict=True, reason='已知問題：無法識別名稱含句點的 GitHub repo')
-def test_github_dotted_repository():
-    assert ProjectService._github_repo('https://github.com/owner/my.repo.git') == 'owner/my.repo'
+@pytest.mark.parametrize('origin, expected', [
+    ('https://github.com/owner/my.repo.git', 'owner/my.repo'),
+    ('https://github.com/owner/my.repo', 'owner/my.repo'),
+    ('git@github.com:owner/my.repo.git', 'owner/my.repo'),
+    ('ssh://git@github.com/owner/my.repo.git', 'owner/my.repo'),
+    ('git://github.com/owner/repo.git', 'owner/repo'),
+    ('https://GITHUB.COM/Owner-1/my_repo-2.git/', 'Owner-1/my_repo-2'),
+    ('https://github.com/owner/.github.git', 'owner/.github'),
+    ('https://github.com/owner/repo.git.git', 'owner/repo.git'),
+])
+def test_github_repository_urls(origin, expected):
+    assert ProjectService._github_repo(origin) == expected
+
+
+@pytest.mark.parametrize('origin', [
+    '', 'https://notgithub.com/owner/repo.git',
+    'https://github.com.evil.example/owner/repo.git',
+    'https://github.com@evil.example/owner/repo.git',
+    'https://example.com/github.com/owner/repo.git',
+    'https://github.com/owner/repo/tree/main',
+    'https://github.com/owner/repo?query=1',
+    'https://github.com/owner/repo#fragment',
+    'https://github.com/owner/..', 'https://github.com/owner/repo%2Fextra',
+    'https://github.com//repo', 'https://github.com/owner/',
+    'C:/projects/repo', 'file://github.com/owner/repo', 'ssh://[invalid',
+])
+def test_non_repository_urls_are_rejected(origin):
+    assert ProjectService._github_repo(origin) is None
 
 
 @pytest.mark.parametrize('failure, expected', [
