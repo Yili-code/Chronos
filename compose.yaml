@@ -1,0 +1,19 @@
+services:
+  chronos:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - chronos-data:/data
+      - type: bind
+        source: ${CHRONOS_PROJECTS_ROOT:-C:/Users/User/Documents/Developing}
+        target: /projects
+        read_only: true
+    environment:
+      CHRONOS_DATABASE_PATH: /data/chronos.db
+      CHRONOS_PROJECTS_ROOT: /projects
+
+volumes:
+  chronos-data:
