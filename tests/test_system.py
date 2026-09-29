@@ -80,7 +80,14 @@ def test_webhook_auth_and_commands(system):
     assert bot.send_message.await_count == 0
     assert client.post('/telegram/webhook', headers=headers, json={'update_id': 0}).status_code == 200
     assert send('/start').status_code == 200
-    assert '指令' in bot.send_message.call_args.args[1]
+    help_text = bot.send_message.call_args.args[1]
+    assert 'Chronos 使用說明' in help_text
+    assert '新增代辦' in help_text
+    assert '查看清單' in help_text
+    assert '完成代辦' in help_text
+    assert '修改期限' in help_text
+    assert send('/help').status_code == 200
+    assert bot.send_message.call_args.args[1] == help_text
     assert send('專案').status_code == 200
     assert bot.send_message.call_args.args[1] == '專案追蹤功能已移除。'
     assert service.list_open() == []

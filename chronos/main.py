@@ -174,7 +174,14 @@ async def prepare_message(text: str) -> Callable[[], str]:
     """Resolve external input first; the returned action performs no async work."""
     normalized = text.lstrip("/")
     if normalized in {"start", "help", "說明"}:
-        return lambda: "指令：\n• 新增 明天 17:00 完成報告 #Chronos\n• 代辦\n• 完成 3\n• 延期 3 到明天 10:00"
+        return lambda: (
+            "Chronos 使用說明\n\n"
+            "• 新增代辦：新增 明天 17:00 完成報告 #Chronos\n"
+            "• 查看清單：代辦\n"
+            "• 完成代辦：完成 3\n"
+            "• 修改期限：延期 3 到明天 10:00\n\n"
+            "輸入 /help 可再次查看本說明。"
+        )
     if normalized in {"代辦", "清單", "tasks"}:
         return lambda: format_tasks(tasks.list_open(), settings.tz)
     if normalized in {"專案", "狀態", "projects"}:
