@@ -1,8 +1,9 @@
 import sqlite3
 from contextlib import contextmanager
 from contextvars import ContextVar
+from datetime import datetime
 from pathlib import Path
-from typing import Iterator
+from typing import Callable, Iterator
 
 
 SCHEMA = """
@@ -69,3 +70,58 @@ class Database:
     def mark_update_delivered(self, update_id: int) -> None:
         with self.connect() as connection:
             connection.execute("UPDATE telegram_updates SET delivered = 1 WHERE update_id = ?", (update_id,))
+
+    def create_task(self, title: str, due_at: datetime | None, project: str | None, created_at: datetime) -> dict:
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "INSERT INTO tasks(title, project, due_at, created_at) VALUES (?, ?, ?, ?)",
+                (title, project, due_at.isoformat() if due_at else None, created_at.isoformat()),
+            )
+            row = connection.execute("SELECT * FROM tasks WHERE id = ?", (cursor.lastrowid,)).fetchone()
+        return dict(row)
+
+    def list_open_tasks(self) -> list[dict]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM tasks WHERE status = 'open' ORDER BY due_at IS NULL, due_at, id"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def complete_task(self, task_id: int, completed_at: datetime) -> bool:
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "UPDATE tasks SET status = 'done', completed_at = ? WHERE id = ? AND status = 'open'",
+                (completed_at.isoformat(), task_id),
+            )
+        return cursor.rowcount == 1
+
+    def postpone_task(self, task_id: int, due_at: datetime) -> bool:
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "UPDATE tasks SET due_at = ? WHERE id = ? AND status = 'open'", (due_at.isoformat(), task_id)
+            )
+        return cursor.rowcount == 1
+
+    def process_update(self, update_id: int, action: Callable[[], str]) -> dict:
+        """Persist a Telegram mutation and its reply in one transaction."""
+        with self.transaction() as connection:
+            receipt = self.get_update(update_id)
+            if receipt is None:
+                reply = action()
+                connection.execute(
+                    "INSERT INTO telegram_updates(update_id, reply) VALUES (?, ?)", (update_id, reply)
+                )
+                return {"reply": reply, "delivered": False}
+            return receipt
+
+
+def create_database(settings):
+    if settings.database_backend == "firestore":
+        from .firestore_db import FirestoreDatabase
+
+        return FirestoreDatabase(
+            project_id=settings.firestore_project_id or None,
+            database_id=settings.firestore_database,
+            collection_prefix=settings.firestore_collection_prefix,
+        )
+    return Database(settings.database_path)

@@ -1,6 +1,5 @@
 import asyncio
 import json
-import subprocess
 from datetime import datetime
 from unittest.mock import AsyncMock, Mock
 
@@ -12,17 +11,17 @@ from fastapi.testclient import TestClient
 from chronos import main
 from chronos.ai import AIError
 from chronos.db import Database
-from chronos.projects import GitReadError, ProjectService, format_projects
 from chronos.settings import Settings
 from chronos.tasks import ParsedTask, TaskService, format_tasks
-from chronos.telegram import TelegramClient
+from chronos.telegram import TelegramClient, TelegramError
 
 
 @pytest.fixture
 def system(tmp_path, monkeypatch):
     config = Settings(_env_file=None, database_path=tmp_path / 'test.db',
-                      projects_root=tmp_path, telegram_chat_id=123,
-                      telegram_webhook_secret='test-hook', web_password='test-password')
+                      telegram_chat_id=123,
+                      telegram_webhook_secret='test-hook', scheduler_secret='test-scheduler',
+                      web_password='test-password')
     db = Database(config.database_path)
     service = TaskService(db, config.tz)
     bot = TelegramClient('test-token')
@@ -32,7 +31,6 @@ def system(tmp_path, monkeypatch):
     monkeypatch.setattr(main, 'db', db)
     monkeypatch.setattr(main, 'tasks', service)
     monkeypatch.setattr(main, 'telegram', bot)
-    monkeypatch.setattr(main, 'projects', ProjectService(tmp_path))
     monkeypatch.setattr(main, 'scheduler', AsyncIOScheduler(timezone=config.tz))
     monkeypatch.setattr(main.ai, 'parse', AsyncMock(return_value=ParsedTask('測試工作')))
     with TestClient(main.app, raise_server_exceptions=False) as client:
@@ -42,15 +40,17 @@ def system(tmp_path, monkeypatch):
 def test_web_auth_and_task_lifecycle(system):
     client, service, bot, config = system
     assert client.get('/health').json() == {'status': 'ok'}
-    for path in ['/', '/api/tasks', '/api/projects']:
+    for path in ['/', '/api/tasks']:
         assert client.get(path).status_code == 401
         assert client.get(path, auth=('chronos', 'wrong')).status_code == 401
     assert client.post('/api/tasks/natural', json={'text': '工作'}).status_code == 401
     assert client.post('/api/tasks/1/complete').status_code == 401
     client.auth = ('chronos', 'test-password')
-    assert 'Chronos' in client.get('/').text
+    homepage = client.get('/').text
+    assert 'Chronos' in homepage
+    assert '開發專案' not in homepage
+    assert client.get('/api/projects').status_code == 404
     assert client.get('/api/tasks').json() == []
-    assert client.get('/api/projects').json() == []
     created = client.post('/api/tasks/natural', json={'text': '新增工作'})
     assert created.status_code == 200
     task_id = created.json()['id']
@@ -81,6 +81,9 @@ def test_webhook_auth_and_commands(system):
     assert client.post('/telegram/webhook', headers=headers, json={'update_id': 0}).status_code == 200
     assert send('/start').status_code == 200
     assert '指令' in bot.send_message.call_args.args[1]
+    assert send('專案').status_code == 200
+    assert bot.send_message.call_args.args[1] == '專案追蹤功能已移除。'
+    assert service.list_open() == []
     assert send('新增工作').status_code == 200
     task_id = service.list_open()[0]['id']
     assert send('代辦').status_code == 200
@@ -90,8 +93,6 @@ def test_webhook_auth_and_commands(system):
     assert service.list_open()[0]['due_at'].startswith('2026-09-20T10:00')
     assert send(f'完成 {task_id}').status_code == 200
     assert service.list_open() == []
-    assert send('專案').status_code == 200
-    assert '找不到' in bot.send_message.call_args.args[1]
 
 
 def test_daily_reminder_schedule(system):
@@ -107,6 +108,27 @@ def test_daily_reminder_schedule(system):
     config.telegram_chat_id = None
     asyncio.run(main.send_daily_tasks())
     bot.send_message.assert_not_awaited()
+
+
+def test_daily_reminder_reports_delivery_failure(system):
+    _, service, bot, _ = system
+    service.create('無法投遞測試')
+    bot.send_message.return_value = {'ok': False, 'error_code': 403, 'description': 'Forbidden'}
+    with pytest.raises(RuntimeError, match='code 403') as error:
+        asyncio.run(main.send_daily_tasks())
+    assert 'test-token' not in str(error.value)
+
+
+def test_cloud_scheduler_endpoint(system):
+    client, service, bot, _ = system
+    service.create('Cloud Scheduler 測試')
+    assert client.post('/internal/daily').status_code == 403
+    assert client.post('/internal/daily', headers={
+        'X-Chronos-Scheduler-Secret': 'wrong'}).status_code == 403
+    response = client.post('/internal/daily', headers={
+        'X-Chronos-Scheduler-Secret': 'test-scheduler'})
+    assert response.status_code == 200
+    assert 'Cloud Scheduler 測試' in bot.send_message.call_args.args[1]
 
 
 def test_persistence_order_and_postpone(tmp_path):
@@ -126,39 +148,6 @@ def test_persistence_order_and_postpone(tmp_path):
     assert not reopened.complete(999)
 
 
-def test_real_git_scan(tmp_path):
-    repo = tmp_path / 'sample'
-    repo.mkdir()
-    def git(*args):
-        subprocess.run(['git', '-C', str(repo), *args], check=True, capture_output=True)
-    git('init', '-b', 'main')
-    git('config', 'user.name', 'Chronos Test')
-    git('config', 'user.email', 'test@example.invalid')
-    (repo / 'example.txt').write_text('first', encoding='utf-8')
-    git('add', '.')
-    git('commit', '-m', 'initial')
-    service = ProjectService(tmp_path)
-    clean = asyncio.run(service.scan())[0]
-    assert clean['branch'] == 'main' and not clean['dirty']
-    assert 'initial' in clean['last_commit']
-    (repo / 'example.txt').write_text('changed', encoding='utf-8')
-    dirty = asyncio.run(service.scan())[0]
-    assert dirty['dirty'] and dirty['change_count'] == 1
-    assert '1 項未 commit' in format_projects([dirty])
-    assert asyncio.run(ProjectService(tmp_path / 'missing').scan()) == []
-
-
-@pytest.mark.parametrize('status', [200, 403, 404, 429, 500])
-def test_github_responses(tmp_path, monkeypatch, status):
-    original = httpx.AsyncClient
-    def handler(request):
-        assert request.headers['Authorization'] == 'Bearer test-token'
-        return httpx.Response(status, json={'open_issues_count': 3, 'default_branch': 'main'})
-    monkeypatch.setattr(httpx, 'AsyncClient', lambda **kw: original(transport=httpx.MockTransport(handler), **kw))
-    result = asyncio.run(ProjectService(tmp_path, 'test-token')._github_status('owner/repo'))
-    assert result.get('open_issues') == 3 if status == 200 else result['error'] == status
-
-
 def test_telegram_transport(monkeypatch):
     original = httpx.AsyncClient
     requests = []
@@ -172,6 +161,26 @@ def test_telegram_transport(monkeypatch):
     assert asyncio.run(bot.set_webhook('https://example.invalid/telegram/webhook', 'test-secret'))['ok']
     assert b'test-secret' in requests[-1].content
     assert not asyncio.run(TelegramClient('').send_message(123, '測試'))['ok']
+
+
+def test_telegram_errors_do_not_expose_token(monkeypatch):
+    original = httpx.AsyncClient
+
+    def rejected(_request):
+        return httpx.Response(403, json={'ok': False, 'error_code': 403, 'description': 'Forbidden'})
+
+    monkeypatch.setattr(httpx, 'AsyncClient', lambda **kw: original(transport=httpx.MockTransport(rejected), **kw))
+    result = asyncio.run(TelegramClient('secret-token').send_message(123, '測試'))
+    assert result == {'ok': False, 'error_code': 403, 'description': 'Forbidden'}
+    assert 'secret-token' not in repr(result)
+
+    def failed(_request):
+        raise httpx.ConnectError('connection failed')
+
+    monkeypatch.setattr(httpx, 'AsyncClient', lambda **kw: original(transport=httpx.MockTransport(failed), **kw))
+    with pytest.raises(TelegramError) as error:
+        asyncio.run(TelegramClient('secret-token').send_message(123, '測試'))
+    assert 'secret-token' not in str(error.value)
 
 
 def test_webhook_duplicate_update(system):
@@ -233,8 +242,6 @@ def test_update_receipt_and_mutation_roll_back_together(system):
         connection.execute('DROP TRIGGER fail_receipt')
     assert client.post('/telegram/webhook', json=payload, headers=headers).status_code == 200
     assert len(service.list_open()) == 1
-
-
 def test_concurrent_duplicate_updates(system, monkeypatch):
     _, service, _, _ = system
     async def run():
@@ -334,124 +341,3 @@ def test_webhook_checks_secret_before_parsing_and_preserves_retry_id(system):
     payload['message']['text'] = '新增工作'
     assert client.post('/telegram/webhook', json=payload, headers=headers).status_code == 200
     assert len(service.list_open()) == 1
-
-
-@pytest.mark.parametrize('origin, expected', [
-    ('https://github.com/owner/my.repo.git', 'owner/my.repo'),
-    ('https://github.com/owner/my.repo', 'owner/my.repo'),
-    ('git@github.com:owner/my.repo.git', 'owner/my.repo'),
-    ('ssh://git@github.com/owner/my.repo.git', 'owner/my.repo'),
-    ('git://github.com/owner/repo.git', 'owner/repo'),
-    ('https://GITHUB.COM/Owner-1/my_repo-2.git/', 'Owner-1/my_repo-2'),
-    ('https://github.com/owner/.github.git', 'owner/.github'),
-    ('https://github.com/owner/repo.git.git', 'owner/repo.git'),
-])
-def test_github_repository_urls(origin, expected):
-    assert ProjectService._github_repo(origin) == expected
-
-
-@pytest.mark.parametrize('origin', [
-    '', 'https://notgithub.com/owner/repo.git',
-    'https://github.com.evil.example/owner/repo.git',
-    'https://github.com@evil.example/owner/repo.git',
-    'https://example.com/github.com/owner/repo.git',
-    'https://github.com/owner/repo/tree/main',
-    'https://github.com/owner/repo?query=1',
-    'https://github.com/owner/repo#fragment',
-    'https://github.com/owner/..', 'https://github.com/owner/repo%2Fextra',
-    'https://github.com//repo', 'https://github.com/owner/',
-    'C:/projects/repo', 'file://github.com/owner/repo', 'ssh://[invalid',
-])
-def test_non_repository_urls_are_rejected(origin):
-    assert ProjectService._github_repo(origin) is None
-
-
-@pytest.mark.parametrize('failure, expected', [
-    (httpx.ConnectError, 'connection_failed'), (httpx.ReadTimeout, 'timeout'),
-    (httpx.RemoteProtocolError, 'connection_failed'),
-])
-def test_github_offline_is_reported(tmp_path, monkeypatch, failure, expected):
-    original = httpx.AsyncClient
-    def handler(request):
-        raise failure('secret-must-not-leak', request=request)
-    monkeypatch.setattr(httpx, 'AsyncClient', lambda **kw: original(transport=httpx.MockTransport(handler), **kw))
-    result = asyncio.run(ProjectService(tmp_path, 'test')._github_status('owner/repo'))
-    assert result['error'] == expected
-    assert 'secret-must-not-leak' not in str(result)
-
-
-@pytest.mark.parametrize('body', ['not json', '[]', 'null'])
-def test_github_invalid_response(tmp_path, monkeypatch, body):
-    original = httpx.AsyncClient
-    monkeypatch.setattr(httpx, 'AsyncClient', lambda **kw: original(
-        transport=httpx.MockTransport(lambda request: httpx.Response(200, text=body)), **kw))
-    result = asyncio.run(ProjectService(tmp_path, 'test')._github_status('owner/repo'))
-    assert result['error'] == 'invalid_response'
-
-
-def test_projects_api_preserves_local_state_when_github_is_offline(system, monkeypatch):
-    client, _, _, config = system
-    for name in ['offline', 'healthy']:
-        (config.projects_root / name / '.git').mkdir(parents=True)
-    service = ProjectService(config.projects_root, 'test-token')
-    async def git(path, *args, **kwargs):
-        return {'branch': 'main', 'status': ' M work.txt',
-                'remote': f'https://github.com/owner/{path.name}.git',
-                'rev-parse': 'abcdef', 'log': 'abcdef Work saved'}[args[0]]
-    monkeypatch.setattr(service, '_git', git)
-    monkeypatch.setattr(main, 'projects', service)
-    original = httpx.AsyncClient
-    def handler(request):
-        if request.url.path.endswith('/offline'):
-            raise httpx.ConnectError('offline', request=request)
-        return httpx.Response(200, json={'open_issues_count': 2, 'default_branch': 'main'})
-    monkeypatch.setattr(httpx, 'AsyncClient', lambda **kw: original(transport=httpx.MockTransport(handler), **kw))
-    response = client.get('/api/projects', auth=('chronos', 'test-password'))
-    assert response.status_code == 200
-    projects = response.json()
-    assert len(projects) == 2
-    assert all(p['dirty'] and p['last_commit'] == 'abcdef Work saved' for p in projects)
-    assert projects[0]['github']['open_issues'] == 2
-    assert projects[1]['github']['error'] == 'connection_failed'
-    assert 'GitHub 資訊暫時無法取得' in format_projects(projects)
-
-
-def test_failed_git_is_not_clean(tmp_path, monkeypatch):
-    service = ProjectService(tmp_path)
-    monkeypatch.setattr(service, '_git', AsyncMock(side_effect=GitReadError('讀取被拒絕')))
-    result = asyncio.run(service._inspect(tmp_path))
-    assert result['error'] == '讀取被拒絕'
-    assert result['dirty'] is None and result['change_count'] is None
-    assert '乾淨' not in format_projects([result])
-    assert '狀態未知' in format_projects([result])
-
-
-def test_unborn_repository_and_invalid_repository(tmp_path):
-    good = tmp_path / 'good'
-    good.mkdir()
-    subprocess.run(['git', '-C', str(good), 'init', '-b', 'main'], check=True, capture_output=True)
-    bad = tmp_path / 'bad'
-    bad.mkdir()
-    (bad / '.git').mkdir()
-    projects = asyncio.run(ProjectService(tmp_path).scan())
-    assert len(projects) == 2
-    by_name = {p['name']: p for p in projects}
-    assert by_name['good']['dirty'] is False
-    assert by_name['good']['last_commit'] == '尚無 commit'
-    assert by_name['good']['origin'] == ''
-    assert by_name['bad']['dirty'] is None
-    assert by_name['bad']['error']
-
-
-def test_git_ownership_error_and_missing_binary(tmp_path, monkeypatch):
-    process = AsyncMock()
-    process.returncode = 128
-    process.communicate.return_value = (b'', b'fatal: detected dubious ownership')
-    spawn = AsyncMock(return_value=process)
-    monkeypatch.setattr(asyncio, 'create_subprocess_exec', spawn)
-    service = ProjectService(tmp_path)
-    with pytest.raises(GitReadError, match='擁有者'):
-        asyncio.run(service._git(tmp_path, 'status', '--porcelain'))
-    spawn.side_effect = FileNotFoundError()
-    with pytest.raises(GitReadError, match='無法執行'):
-        asyncio.run(service._git(tmp_path, 'status', '--porcelain'))

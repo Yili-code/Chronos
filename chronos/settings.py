@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Literal
 from zoneinfo import ZoneInfo
 
 from pydantic import Field
@@ -15,12 +16,16 @@ class Settings(BaseSettings):
     telegram_webhook_secret: str = ""
     telegram_chat_id: int | None = None
     public_base_url: str = ""
-    projects_root: Path = Path.home() / "Documents" / "Developing"
+    scheduler_secret: str = ""
+    enable_internal_scheduler: bool = True
     database_path: Path = Path("chronos.db")
-    github_token: str = ""
-    ai_base_url: str = ""
-    ai_api_key: str = ""
-    ai_model: str = ""
+    database_backend: Literal["sqlite", "firestore"] = "sqlite"
+    firestore_project_id: str = ""
+    firestore_database: str = "(default)"
+    firestore_collection_prefix: str = "chronos"
+    gemini_api_base: str = "https://generativelanguage.googleapis.com/v1beta"
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-3.8-flash"
     ai_timeout: float = Field(default=30, gt=0)
     web_username: str = "chronos"
     web_password: str = ""

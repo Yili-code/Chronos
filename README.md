@@ -1,16 +1,13 @@
 # Chronos
 
-以 Telegram 為主、Web 為輔的個人專案與代辦助理。
+以 Telegram 為主、Web 為輔的個人代辦助理。
 
 ## 功能
 
-- 掃描 `CHRONOS_PROJECTS_ROOT` 下的 Git repository（Windows 預設為使用者的 `Documents/Developing`）
-- 顯示 branch、未 commit 變更與最後一筆 commit
-- 使用 `GitHub token` 取得 repository 狀態
 - 透過 Telegram 自然語言新增、查詢、完成及延期代辦
 - 每天 `Asia/Taipei` 08:00 傳送未完成代辦
-- Web 儀表板提供專案與代辦概覽
-- SQLite 儲存代辦，不依賴外部資料庫
+- Web 儀表板提供代辦概覽
+- 本機使用 SQLite；Cloud Run 使用 Firestore
 
 ## 啟動
 
@@ -28,26 +25,25 @@ python -m venv .venv
 
 開啟 `http://127.0.0.1:8000`。
 
-先編輯 `.env`；路徑使用 `/`，例如 `C:/Users/User/Documents/Developing`。
-Telegram 與 GitHub 設定可先留空，以啟動本機 Web 功能。
+先編輯 `.env`。Telegram 設定可先留空，以啟動本機 Web 功能。
 專案包含 `tzdata` 依賴，供 Windows 使用 `Asia/Taipei` 時區。
 
-## 外部 AI 設定
+## Gemini 設定
 
-Web 與 Telegram 的自然語言新增、Telegram 延期共用外部 AI，使用供應商的 OpenAI-compatible Chat Completions 介面，不啟動本地模型。
+Web 與 Telegram 的自然語言新增、Telegram 延期共用 Gemini API，不啟動本地模型。程式呼叫 Gemini 原生 `generateContent` endpoint，要求 JSON response 並再次驗證輸出 schema。
 
 在既有 `.env` 加入以下設定（不要覆蓋原有內容）：
 
 ```dotenv
-CHRONOS_AI_BASE_URL=https://你的供應商提供的API根網址/v1
-CHRONOS_AI_API_KEY=你的API金鑰
-CHRONOS_AI_MODEL=供應商提供的模型名稱
+CHRONOS_GEMINI_API_BASE=https://generativelanguage.googleapis.com/v1beta
+CHRONOS_GEMINI_API_KEY=你的Gemini API金鑰
+CHRONOS_GEMINI_MODEL=gemini-3.8-flash
 CHRONOS_AI_TIMEOUT=30
 ```
 
-根網址依供應商文件填寫；程式會附加 `/chat/completions`，請勿填入完整 endpoint。模型需能依指示回傳 JSON。換供應商或模型只需更新設定並重啟，無需管理本機模型或 GPU。
+API key 可由 Google AI Studio 建立。若模型名稱在帳號或地區不可用，更新 `CHRONOS_GEMINI_MODEL` 後重啟即可。
 
-自然語言文字與目前時間會送至指定供應商；不會附帶 repository 內容或整份代辦清單。未設定、逾時或格式錯誤時會顯示錯誤且不寫入代辦，不會退回規則解析。代辦查詢、完成、專案掃描與每日提醒仍可獨立使用。API 費用依供應商計算。
+自然語言文字與目前時間會送至 Gemini；不會附帶整份代辦清單。未設定、逾時或格式錯誤時會顯示錯誤且不寫入代辦，不會退回規則解析。代辦查詢、完成與每日提醒仍可獨立使用。API 費用與限制依 Gemini 帳號方案計算。
 
 ## Telegram 設定
 
@@ -71,34 +67,73 @@ CHRONOS_PUBLIC_BASE_URL=https://你的公開網址
 代辦
 完成 3
 延期 3 到週五 10:00
-專案
 ```
 
 設定 `CHRONOS_TELEGRAM_CHAT_ID` 後，其他 chat 無法操作 bot。
 
 Webhook 會驗證 JSON 結構與整數 `update_id`，合法的非文字更新會略過。每筆文字更新的代辦變更與處理紀錄會一起儲存在 SQLite；重送同一 update 不會重複新增、完成或延期，重啟後仍有效。回覆失敗時，後續重送會重試原始回覆。若 Telegram 已收到回覆而程式尚未記錄送達就中斷，回覆文字仍可能重複，但代辦不會重複變更。去重紀錄目前不會自動清除。
 
-## GitHub 設定
-
-公開 repository 的本機狀態不需要 token。若要補充 GitHub repository metadata，建立最小權限的 fine-grained token，並設定：
-
-```dotenv
-CHRONOS_GITHUB_TOKEN=github_pat_...
-```
-
-token 只需讀取目標 repository 的 Metadata。不要將 `.env` commit。
-
-Git 讀取失敗會顯示「狀態未知」，不會推定專案乾淨。GitHub 斷線或逾時時仍保留本機 Git 資訊，並標示遠端資訊暫時無法取得。
-
 ## Docker
-
-`compose.yaml` 已將本機開發目錄以唯讀方式掛載至 container：
 
 ```bash
 docker compose up -d --build
 ```
 
-Docker Desktop 需使用 Linux containers。掛載來源取自 `.env` 的 `CHRONOS_PROJECTS_ROOT`；若帳號或路徑不同，修改該變數即可。
+Docker Desktop 需使用 Linux containers。SQLite 資料保存在 named volume `chronos-data`。
+
+## Cloud Run + Firestore 部署
+
+Cloud Run 使用 Firestore 保存代辦與 Telegram update receipts，不依賴 container 的暫存檔案系統。Gemini API key、Telegram bot token、Telegram chat ID、webhook secret、Web password 與 scheduler secret 由 Secret Manager 注入；secret 不會寫入 image 或 repository。
+
+先安裝 Google Cloud CLI 並登入：
+
+```powershell
+gcloud auth login
+gcloud auth application-default login
+```
+
+`.env` 需要本機保存以下兩項，部署腳本只會讀取值並送往 Secret Manager，不會 commit：
+
+```dotenv
+CHRONOS_TELEGRAM_BOT_TOKEN=...
+CHRONOS_TELEGRAM_CHAT_ID=...
+```
+
+若 `.env` 已有 `CHRONOS_GEMINI_API_KEY`，部署會使用該 key；否則腳本會在目標 GCP project 建立一把只允許 Gemini API 的 dedicated key，再將 key string 寫入 Secret Manager，全程不輸出 key。
+
+執行：
+
+```powershell
+pwsh -File .\scripts\deploy_cloud_run.ps1 -ProjectId YOUR_PROJECT_ID
+```
+
+部署腳本需要 PowerShell 7。重跑時會沿用既有的 Web password、webhook secret 與 scheduler secret；重新部署不等於旋轉憑證。
+
+腳本會：
+
+1. 啟用 Cloud Run、Cloud Build、Firestore、Secret Manager、API Keys、Gemini 與 Cloud Scheduler APIs。
+2. 建立最小權限的 `chronos-runtime` service account。
+3. 建立 Firestore Native `(default)` database，並啟用 delete protection。
+4. 建立或取得 Chronos 專用 Gemini API key，再建立 Secret Manager secrets 與版本，授權 runtime identity 讀取。
+5. 由目前 source build 並部署 Cloud Run。
+6. 將 Cloud Run URL 設成 Telegram webhook。
+7. 建立每天 `Asia/Taipei` 08:00 的 Cloud Scheduler job。
+8. 驗證 `/health` 與 Telegram `getWebhookInfo`。
+
+### 目前 production
+
+- GCP project：`yili-chronos-prod`
+- Cloud Run：<https://chronos-w42vzvnetq-de.a.run.app>
+- Web username：`chronos`
+- Telegram bot：`@Chronos_assistant_yili001_bot`
+
+Web password 只保存在 Secret Manager。需要登入時讀取目前版本：
+
+```powershell
+gcloud secrets versions access latest --secret chronos-web-password --project yili-chronos-prod
+```
+
+若 Telegram 顯示 bot 已封鎖，請先在 bot 對話解除封鎖並按 **Start**。這是 Telegram account-side permission，解除後不需重新部署。
 
 ## Web 安全
 

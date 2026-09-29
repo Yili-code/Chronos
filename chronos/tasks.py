@@ -18,38 +18,16 @@ class TaskService:
         self.tz = tz
 
     def create(self, title: str, due_at: datetime | None = None, project: str | None = None) -> dict:
-        now = datetime.now(self.tz).isoformat()
-        with self.db.connect() as connection:
-            cursor = connection.execute(
-                "INSERT INTO tasks(title, project, due_at, created_at) VALUES (?, ?, ?, ?)",
-                (title.strip(), project, due_at.isoformat() if due_at else None, now),
-            )
-            task_id = cursor.lastrowid
-            row = connection.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
-        return dict(row)
+        return self.db.create_task(title.strip(), due_at, project, datetime.now(self.tz))
 
     def list_open(self) -> list[dict]:
-        with self.db.connect() as connection:
-            rows = connection.execute(
-                "SELECT * FROM tasks WHERE status = 'open' ORDER BY due_at IS NULL, due_at, id"
-            ).fetchall()
-        return [dict(row) for row in rows]
+        return self.db.list_open_tasks()
 
     def complete(self, task_id: int) -> bool:
-        with self.db.connect() as connection:
-            cursor = connection.execute(
-                "UPDATE tasks SET status = 'done', completed_at = ? WHERE id = ? AND status = 'open'",
-                (datetime.now(self.tz).isoformat(), task_id),
-            )
-        return cursor.rowcount == 1
+        return self.db.complete_task(task_id, datetime.now(self.tz))
 
     def postpone(self, task_id: int, due_at: datetime) -> bool:
-        with self.db.connect() as connection:
-            cursor = connection.execute(
-                "UPDATE tasks SET due_at = ? WHERE id = ? AND status = 'open'",
-                (due_at.isoformat(), task_id),
-            )
-        return cursor.rowcount == 1
+        return self.db.postpone_task(task_id, due_at)
 
     def parse(self, text: str, now: datetime | None = None) -> ParsedTask:
         now = now or datetime.now(self.tz)

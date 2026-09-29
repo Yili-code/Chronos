@@ -27,8 +27,8 @@ class ExternalAI:
         if not text.strip():
             raise ValueError("代辦內容不可為空")
         config = self.settings
-        if not all((config.ai_base_url, config.ai_api_key, config.ai_model)):
-            raise AIError("外部 AI 尚未設定，請填寫 CHRONOS_AI_BASE_URL、CHRONOS_AI_API_KEY 與 CHRONOS_AI_MODEL。")
+        if not config.gemini_api_key:
+            raise AIError("Gemini 尚未設定，請填寫 CHRONOS_GEMINI_API_KEY。")
         now = now or datetime.now(config.tz)
         prompt = (
             "將使用者文字解析為單一代辦，只回傳 JSON 物件，欄位為 "
@@ -42,15 +42,28 @@ class ExternalAI:
         try:
             async with httpx.AsyncClient(timeout=config.ai_timeout) as client:
                 response = await client.post(
-                    config.ai_base_url.rstrip("/") + "/chat/completions",
-                    headers={"Authorization": f"Bearer {config.ai_api_key}"},
-                    json={"model": config.ai_model, "messages": [
-                        {"role": "system", "content": prompt},
-                        {"role": "user", "content": text},
-                    ]},
+                    f"{config.gemini_api_base.rstrip('/')}/models/{config.gemini_model}:generateContent",
+                    headers={"x-goog-api-key": config.gemini_api_key},
+                    json={
+                        "systemInstruction": {"parts": [{"text": prompt}]},
+                        "contents": [{"role": "user", "parts": [{"text": text}]}],
+                        "generationConfig": {
+                            "responseMimeType": "application/json",
+                            "responseJsonSchema": {
+                                "type": "object",
+                                "additionalProperties": False,
+                                "properties": {
+                                    "title": {"type": "string", "minLength": 1, "maxLength": 2000},
+                                    "due_at": {"anyOf": [{"type": "string", "format": "date-time"}, {"type": "null"}]},
+                                    "project": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+                                },
+                                "required": ["title", "due_at", "project"],
+                            },
+                        },
+                    },
                 )
                 response.raise_for_status()
-            content = response.json()["choices"][0]["message"]["content"]
+            content = response.json()["candidates"][0]["content"]["parts"][0]["text"]
             parsed = TaskOutput.model_validate(json.loads(content))
             if parsed.due_at is not None:
                 if parsed.due_at.utcoffset() is None:

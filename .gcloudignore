@@ -1,0 +1,12 @@
+.gcloudignore
+.git
+.gitignore
+.env
+.venv
+.pytest_cache
+.pytest-tmp
+__pycache__
+*.py[cod]
+chronos.db
+tests
+TEST_REPORT.md

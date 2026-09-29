@@ -1,53 +1,31 @@
-# Chronos 功能測試報告
+# Chronos 驗證報告
 
-日期：2026-09-17（Asia/Taipei）
+日期：2026-09-29（Asia/Taipei）
 
-最新結果：**93 passed、0 xfailed、3 dependency deprecation warnings**。下列 5 個缺陷皆已修復，每項分別測試、提交與推送。棄用警告來自 Starlette/httpx、AnyIO 與 pytest-asyncio 的相容性提示，非測試失敗。
+## 結果
 
-初次檢查結果：26 passed、5 xfailed、3 dependency deprecation warnings。以下缺陷清單保留初次檢查證據；最新修復結果見下節。
+- `60 passed`，3 個 dependency deprecation warnings，沒有測試失敗
+- Python compilation、PowerShell deployment syntax、`git diff --check` 通過
+- Cloud Run `chronos-00008-lk2` Ready，承接 100% traffic
+- Production `/health` 回傳 `ok`
+- 未授權 Web 為 `401`，正確帳密為 `200`
+- 已移除的 `/api/projects` 在 production 為 `404`
+- 未授權 scheduler request 為 `403`
 
-## 逐項修復紀錄
+## Production integration
 
-1. Git 狀態：已修復。讀取失敗回傳 `dirty: null` 與安全錯誤訊息，Web/Telegram 顯示狀態未知；正常的新 repository 仍顯示尚無 commit。防止 Git 往父層搜尋，誤讀其他 repository。新增真實空 repo、損壞 repo、ownership 拒絕與找不到 Git 的測試。完整測試：29 passed、4 xfailed。
-2. Telegram 去重：已修復。SQLite 保存 update_id、原始回覆及送達狀態；代辦變更與處理紀錄在同一 transaction 提交。重送不重複執行新增、完成、延期，傳送失敗只重試保存的回覆。測試涵蓋重開資料庫、同時收到重複請求、回覆逾時/拒絕、資料庫寫入失敗 rollback。完整測試：37 passed、3 xfailed。限制：若 Telegram 已收到回覆，但程式尚未記錄送達就中斷，重試可能重複回覆文字；代辦不會重複變更。去重紀錄目前保留於本機資料庫，不自動清除。
-3. GitHub 故障隔離：已修復。連線失敗、逾時、協定錯誤及無效 JSON 轉為該 repo 的錯誤狀態；本機 Git 結果與其他 repo 仍正常回傳。測試 HTTP API 同時取得正常與離線 repo、錯誤訊息不洩漏原始例外。完整測試：44 passed、2 xfailed。另以隔離服務和模擬專案資料實際開啟瀏覽器，確認 Git 失敗顯示「狀態未知」，GitHub 失敗仍顯示本機 branch、變更數、commit 與遠端資訊不可用提示。
-4. GitHub remote 解析：已修復。依 URL 主機與路徑解析 HTTPS/SSH/git remote，保留名稱中的句點，只移除結尾的 `.git`。測試 8 種有效格式及 15 種無效格式，包括相似域名、子路徑、query、fragment、URL 編碼與損壞網址。完整測試：67 passed、1 xfailed。
-5. webhook 驗證：已修復。secret 驗證後才解析 JSON；無效 JSON 回傳 400，結構或型別錯誤回傳 422。update_id 必須為可存入 SQLite 的非負整數，拒絕布林值、浮點數與字串；檢查巢狀 chat/text 結構，合法非文字更新回傳 200 並略過。拒絕的請求不呼叫 AI、不寫入代辦或消耗 update_id。完整測試：93 passed、0 xfailed。
+- Gemini 成功將「2026/09/30 09:00 Chronos 雲端部署驗證」解析成 Asia/Taipei 時間
+- Firestore 成功保存該任務；production 查詢可讀回同一筆資料
+- Telegram webhook 已註冊到 Cloud Run，chat ID 驗證為 private chat
+- Cloud Scheduler job 已啟用，時區為 `Asia/Taipei`，每天 08:00 執行
+- Cloud Run 使用 `chronos-runtime` service account；Firestore database 位於 `asia-east1` 且啟用 delete protection
+- Gemini key、Telegram token/chat ID、Web password、webhook secret、scheduler secret 均由 Secret Manager 注入
+- Telegram transport error 已改為安全錯誤，不會把 bot token 帶進新 log；live audit 確認近期 log 不含 token
 
-## 已驗證
+## 已移除
 
-| 功能 | 結果與驗證範圍 |
-| --- | --- |
-| Web/API | HTTP 層測試首頁、健康狀態、登入成功/失敗、未登入禁止讀寫、輸入驗證、新增、查詢、完成及不存在代辦 |
-| 網頁操作 | 隔離資料庫啟動實際服務，瀏覽器確認專案列表、代辦完成、特殊字元以純文字顯示、AI 未設定提示、失敗後保留輸入並恢復按鈕 |
-| SQLite | 新增、重新連線後保存、期限排序、完成、延期、已完成項目不可延期 |
-| AI | 模擬供應商成功、JSON 格式錯誤、缺少時區、空標題、401/429/500、逾時；失敗不寫入代辦 |
-| Telegram | 本機 HTTP webhook 測試 secret/chat 驗證、說明、新增、查詢、完成、延期、專案；傳送使用 mock |
-| 每日提醒 | 驗證 Asia/Taipei 08:00 排程，直接呼叫提醒函式檢查收件者與內容；未等待真實排程送達 |
-| Git | 建立隔離 repository，驗證 branch、commit、乾淨及修改狀態；實際開發目錄偵測到 4 個 repository |
-| GitHub | 模擬 metadata 成功及 HTTP 403/404/429/500；實際帳號 API 回傳 200 |
-| Telegram 連線 | 實際 getMe/getWebhookInfo 回傳 200；未註冊 webhook、pending updates 為 0 |
+Repository project tracking 已完整移除，包括 Web panel、`/api/projects`、Telegram 指令、Git/GitHub scanner、環境變數、Docker bind mount、deployment secrets、tests 與文件。代辦的 `#project` 分類標籤保留；它只是 task metadata，不會讀取或追蹤 Git repository。
 
-## 初次檢查重現的缺陷（現已修復）
+## 唯一外部限制
 
-1. **Git 失敗時誤報乾淨**：`chronos/projects.py` 的 `_git` 忽略 stderr，失敗回傳空字串。實際遇到 sandbox 帳號被 Git ownership 檢查拒絕，UI 顯示「乾淨／尚無 commit」。這代表未知狀態被當成正常狀態。
-2. **Telegram 重送造成重複代辦**：同一 `update_id` 連續送兩次，新增兩筆。webhook 未實作去重。
-3. **GitHub 網路錯誤中斷專案掃描**：模擬 ConnectError，`_github_status` 未捕捉；可一路傳遞至專案 API。HTTP 錯誤已有處理，但連線例外沒有。
-4. **含句點的 GitHub repo 名稱無法辨識**：`https://github.com/owner/my.repo.git` 解析為 None，略過 GitHub metadata。
-5. **格式錯誤的 webhook 回傳 500**：合法 JSON 陣列 `[]` 無法通過 `.get()`，應提供受控的輸入錯誤回應。
-
-## 尚未完成的實際環境驗證
-
-- 外部 AI 的網址、API key、模型皆未設定，不能驗證真實模型解析效果。
-- Telegram 公開網址與 webhook secret 未設定，Telegram 端也沒有 webhook；尚未驗證真正收件、回覆或每日提醒送達。此次未發送任何實際訊息。
-- Docker CLI 存在，但未連上 Docker engine；本次未驗證映像建置及容器運作。
-- 實際 GitHub 帳號認證成功不代表所有目標 repository metadata 權限均可用；metadata 功能使用模擬回應測試。
-- Web 密碼目前未設定；Basic Auth 功能以隔離設定驗證。
-
-## 重跑
-
-```powershell
-.\.venv\Scripts\python.exe -m pytest -q -rx --basetemp=.pytest-tmp/verify
-```
-
-測試位於 `tests/test_system.py` 等檔案。測試資料位於 `.pytest-tmp`，未修改使用者 `.env` 或正式代辦資料。初次瀏覽器測試服務已停止；後續實作修改與測試數量見逐項修復紀錄。
+Telegram API 對 `@Chronos_assistant_yili001_bot` 回覆 `Forbidden: bot was blocked by the user`。因此 Gemini、Firestore 與 webhook receipt 已運作，但 Telegram 最後投遞目前會回 `502`，每日排程也會安全失敗並重試。使用者在 Telegram 對此 bot 解除封鎖並按 **Start** 後即可恢復，無需重新部署。

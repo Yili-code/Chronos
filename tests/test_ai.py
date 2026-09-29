@@ -10,8 +10,8 @@ from chronos.settings import Settings
 
 
 def config(**changes):
-    return Settings(_env_file=None, ai_base_url="https://ai.example/v1",
-                    ai_api_key="test-secret", ai_model="test-model", **changes)
+    return Settings(_env_file=None, gemini_api_base="https://generativelanguage.example/v1beta",
+                    gemini_api_key="test-secret", gemini_model="test-model", **changes)
 
 
 def mock_provider(monkeypatch, handler):
@@ -22,14 +22,14 @@ def mock_provider(monkeypatch, handler):
 
 def test_external_parse(monkeypatch):
     def handler(request):
-        assert str(request.url) == "https://ai.example/v1/chat/completions"
-        assert request.headers["Authorization"] == "Bearer test-secret"
+        assert str(request.url) == "https://generativelanguage.example/v1beta/models/test-model:generateContent"
+        assert request.headers["x-goog-api-key"] == "test-secret"
         payload = json.loads(request.content)
-        assert payload["model"] == "test-model"
-        assert payload["messages"][1]["content"] == "明天五點交報告 #Chronos"
-        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps({
+        assert payload["contents"][0]["parts"][0]["text"] == "明天五點交報告 #Chronos"
+        assert payload["generationConfig"]["responseMimeType"] == "application/json"
+        return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": json.dumps({
             "title": "交報告", "due_at": "2026-09-18T17:00:00+08:00", "project": "Chronos"
-        })}}]})
+        })}]}}]})
     mock_provider(monkeypatch, handler)
     parsed = asyncio.run(ExternalAI(config()).parse("明天五點交報告 #Chronos"))
     assert parsed.title == "交報告"
@@ -42,14 +42,14 @@ def test_external_parse(monkeypatch):
     '{"title":"test","due_at":"2026-09-18T17:00:00","project":null}'])
 def test_invalid_output(monkeypatch, content):
     mock_provider(monkeypatch, lambda request: httpx.Response(200, json={
-        "choices": [{"message": {"content": content}}]}))
+        "candidates": [{"content": {"parts": [{"text": content}]}}]}))
     with pytest.raises(AIError, match="格式無效"):
         asyncio.run(ExternalAI(config()).parse("新增工作"))
 
 
 def test_missing_configuration():
     settings = config()
-    settings.ai_api_key = ""
+    settings.gemini_api_key = ""
     with pytest.raises(AIError, match="尚未設定"):
         asyncio.run(ExternalAI(settings).parse("新增工作"))
 
