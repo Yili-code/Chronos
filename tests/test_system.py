@@ -81,24 +81,29 @@ def test_webhook_auth_and_commands(system):
     assert client.post('/telegram/webhook', headers=headers, json={'update_id': 0}).status_code == 200
     assert send('/start').status_code == 200
     help_text = bot.send_message.call_args.args[1]
-    assert 'Chronos 使用說明' in help_text
-    assert '新增代辦' in help_text
-    assert '查看清單' in help_text
-    assert '完成代辦' in help_text
-    assert '修改期限' in help_text
+    assert help_text == main.HELP_TEXT
+    assert help_text.startswith('<b>Chronos</b>\n直接傳送一個代辦事項')
+    assert '（日期、時間與 #分類標籤皆可省略）' in help_text
+    assert '/help — 顯示說明' in help_text
+    assert '/tasks — 列出所有未完成代辦' in help_text
+    assert '/done 3 — 完成編號 3 的代辦' in help_text
+    assert '/postpone 3 明天 10:00 — 修改編號 3 的期限' in help_text
+    assert bot.send_message.call_args.kwargs == {'parse_mode': 'HTML'}
     assert send('/help').status_code == 200
     assert bot.send_message.call_args.args[1] == help_text
+    assert bot.send_message.call_args.kwargs == {'parse_mode': 'HTML'}
     assert send('專案').status_code == 200
     assert bot.send_message.call_args.args[1] == '專案追蹤功能已移除。'
+    assert bot.send_message.call_args.kwargs == {'parse_mode': None}
     assert service.list_open() == []
     assert send('新增工作').status_code == 200
     task_id = service.list_open()[0]['id']
     assert send('代辦').status_code == 200
     assert '測試工作' in bot.send_message.call_args.args[1]
     main.ai.parse.return_value = ParsedTask('更新期限', datetime(2026, 9, 20, 10, tzinfo=config.tz))
-    assert send(f'延期 {task_id} 到週日').status_code == 200
+    assert send(f'/postpone {task_id} 週日').status_code == 200
     assert service.list_open()[0]['due_at'].startswith('2026-09-20T10:00')
-    assert send(f'完成 {task_id}').status_code == 200
+    assert send(f'/done {task_id}').status_code == 200
     assert service.list_open() == []
 
 
@@ -165,6 +170,9 @@ def test_telegram_transport(monkeypatch):
     bot = TelegramClient('test-token')
     assert asyncio.run(bot.send_message(123, '測試'))['ok']
     assert requests[-1].url.path.endswith('/sendMessage')
+    assert b'parse_mode' not in requests[-1].content
+    assert asyncio.run(bot.send_message(123, '<b>測試</b>', parse_mode='HTML'))['ok']
+    assert json.loads(requests[-1].content)['parse_mode'] == 'HTML'
     assert asyncio.run(bot.set_webhook('https://example.invalid/telegram/webhook', 'test-secret'))['ok']
     assert b'test-secret' in requests[-1].content
     assert not asyncio.run(TelegramClient('').send_message(123, '測試'))['ok']

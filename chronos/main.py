@@ -27,6 +27,20 @@ ai = ExternalAI(settings)
 telegram = TelegramClient(settings.telegram_bot_token)
 scheduler = AsyncIOScheduler(timezone=settings.tz)
 
+HELP_TEXT = (
+    "<b>Chronos</b>\n"
+    "直接傳送一個代辦事項，我會自動解析：\n"
+    "• 明天 17:00 完成報告\n"
+    "• 週五 10:00 開會 #Chronos\n"
+    "• 買牛奶\n"
+    "（日期、時間與 #分類標籤皆可省略）\n\n"
+    "指令：\n"
+    "/help — 顯示說明\n"
+    "/tasks — 列出所有未完成代辦\n"
+    "/done 3 — 完成編號 3 的代辦\n"
+    "/postpone 3 明天 10:00 — 修改編號 3 的期限"
+)
+
 
 async def send_daily_tasks() -> None:
     if settings.telegram_chat_id and telegram.enabled:
@@ -159,7 +173,8 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         action = await prepare_message(text)
         receipt = db.process_update(update_id, action)
     if not receipt["delivered"]:
-        result = await telegram.send_message(chat_id, receipt["reply"])
+        parse_mode = "HTML" if receipt["reply"] == HELP_TEXT else None
+        result = await telegram.send_message(chat_id, receipt["reply"], parse_mode=parse_mode)
         if not result.get("ok"):
             raise HTTPException(status_code=502, detail="Telegram 回覆失敗，等待重試")
         db.mark_update_delivered(update_id)
@@ -174,14 +189,7 @@ async def prepare_message(text: str) -> Callable[[], str]:
     """Resolve external input first; the returned action performs no async work."""
     normalized = text.lstrip("/")
     if normalized in {"start", "help", "說明"}:
-        return lambda: (
-            "Chronos 使用說明\n\n"
-            "• 新增代辦：新增 明天 17:00 完成報告 #Chronos\n"
-            "• 查看清單：代辦\n"
-            "• 完成代辦：完成 3\n"
-            "• 修改期限：延期 3 到明天 10:00\n\n"
-            "輸入 /help 可再次查看本說明。"
-        )
+        return lambda: HELP_TEXT
     if normalized in {"代辦", "清單", "tasks"}:
         return lambda: format_tasks(tasks.list_open(), settings.tz)
     if normalized in {"專案", "狀態", "projects"}:
@@ -192,7 +200,7 @@ async def prepare_message(text: str) -> Callable[[], str]:
             ok = tasks.complete(int(completed.group(1)))
             return "已完成。" if ok else "找不到該未完成代辦。"
         return complete
-    postponed = re.fullmatch(r"延期\s*#?(\d+)\s*(?:到|至)?\s*(.+)", normalized)
+    postponed = re.fullmatch(r"(?:延期|postpone)\s*#?(\d+)\s*(?:到|至)?\s*(.+)", normalized, re.IGNORECASE)
     if postponed:
         try:
             parsed = await ai.parse(f"{postponed.group(2)} 更新期限")

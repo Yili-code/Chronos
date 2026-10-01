@@ -33,8 +33,11 @@ class TelegramClient:
             }
         return result
 
-    async def send_message(self, chat_id: int, text: str) -> dict:
-        return await self.request("sendMessage", {"chat_id": chat_id, "text": text})
+    async def send_message(self, chat_id: int, text: str, parse_mode: str | None = None) -> dict:
+        payload = {"chat_id": chat_id, "text": text}
+        if parse_mode:
+            payload["parse_mode"] = parse_mode
+        return await self.request("sendMessage", payload)
 
     async def set_webhook(self, url: str, secret: str = "") -> dict:
         payload = {"url": url, "allowed_updates": ["message"]}

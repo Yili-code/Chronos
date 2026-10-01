@@ -63,11 +63,15 @@ CHRONOS_PUBLIC_BASE_URL=https://你的公開網址
 支援的訊息：
 
 ```text
-新增 明天 17:00 完成報告 #Chronos
-代辦
-完成 3
-延期 3 到週五 10:00
+明天 17:00 完成報告 #Chronos
+/tasks
+/done 3
+/postpone 3 週五 10:00
 ```
+
+除了管理指令外，直接傳送自然語言就會新增一筆代辦，不必先輸入「新增」。
+`#Chronos` 是選填的分類標籤；`/done` 與 `/postpone` 後方的數字是 `/tasks` 清單顯示的項目編號。
+中文的 `代辦`、`完成 3` 與 `延期 3 到週五 10:00` 也能使用。
 
 設定 `CHRONOS_TELEGRAM_CHAT_ID` 後，其他 chat 無法操作 bot。
 
