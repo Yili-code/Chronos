@@ -2,7 +2,10 @@ from chronos.study_adapter import (
     BrowserSessionAdapter,
     ConnectorSignal,
     FakeBrowserConnector,
+    ResultStatus,
     SessionStatus,
+    classify_attachment,
+    classify_read,
 )
 
 
@@ -42,3 +45,61 @@ def test_state_model_contains_no_secret_material():
     assert "cookie" not in rendered.lower()
     assert "ticket" not in rendered.lower()
     assert "password" not in rendered.lower()
+
+
+def test_read_result_is_ok_only_for_authenticated_session():
+    state = BrowserSessionAdapter(
+        FakeBrowserConnector(ConnectorSignal.AUTHENTICATED_PAGE)
+    ).session()
+
+    result = classify_read(state, ["course-1"], operation="list_courses")
+
+    assert result.status is ResultStatus.OK
+    assert result.value == ["course-1"]
+    assert result.diagnostic.operation == "list_courses"
+    assert result.diagnostic.retryable is False
+
+
+def test_read_result_requires_reauth_after_cas_redirect():
+    state = BrowserSessionAdapter(
+        FakeBrowserConnector(ConnectorSignal.CAS_REDIRECT)
+    ).session()
+
+    result = classify_read(state, ["should-not-leak"], operation="list_courses")
+
+    assert result.status is ResultStatus.REAUTH_REQUIRED
+    assert result.value is None
+    assert result.diagnostic.retryable is False
+
+
+def test_attachment_persistence_failure_is_deferred():
+    state = BrowserSessionAdapter(
+        FakeBrowserConnector(ConnectorSignal.AUTHENTICATED_PAGE)
+    ).session()
+
+    result = classify_attachment(
+        state,
+        {"name": "lab.pdf"},
+        persisted=False,
+        operation="download_attachment",
+    )
+
+    assert result.status is ResultStatus.DEFERRED_ATTACHMENT
+    assert result.value is None
+    assert result.diagnostic.retryable is False
+
+
+def test_attachment_deferral_does_not_hide_reauth():
+    state = BrowserSessionAdapter(
+        FakeBrowserConnector(ConnectorSignal.CAS_REDIRECT)
+    ).session()
+
+    result = classify_attachment(
+        state,
+        {"name": "lab.pdf"},
+        persisted=False,
+        operation="download_attachment",
+    )
+
+    assert result.status is ResultStatus.REAUTH_REQUIRED
+    assert result.value is None

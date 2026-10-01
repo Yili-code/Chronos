@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Protocol
+from typing import Generic, Protocol, TypeVar
 
 
 class ConnectorSignal(str, Enum):
@@ -25,6 +25,29 @@ class SessionStatus(str, Enum):
     READY = "ready"
     REAUTH_REQUIRED = "reauth_required"
     UNKNOWN = "session_unknown"
+
+
+class ResultStatus(str, Enum):
+    OK = "ok"
+    REAUTH_REQUIRED = "reauth_required"
+    DEFERRED_ATTACHMENT = "deferred_attachment"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True)
+class SafeDiagnostic:
+    operation: str
+    retryable: bool
+
+
+T = TypeVar("T")
+
+
+@dataclass(frozen=True)
+class ReadResult(Generic[T]):
+    status: ResultStatus
+    value: T | None
+    diagnostic: SafeDiagnostic
 
 
 @dataclass(frozen=True)
@@ -69,3 +92,46 @@ class BrowserSessionAdapter:
             observed_at=datetime.now(timezone.utc),
             evidence=evidence,
         )
+
+
+def classify_read(
+    session: SessionState, value: T | None, *, operation: str
+) -> ReadResult[T]:
+    """Convert a safe session observation into a read result."""
+    if session.status is SessionStatus.READY:
+        return ReadResult(
+            status=ResultStatus.OK,
+            value=value,
+            diagnostic=SafeDiagnostic(operation=operation, retryable=False),
+        )
+    if session.status is SessionStatus.REAUTH_REQUIRED:
+        return ReadResult(
+            status=ResultStatus.REAUTH_REQUIRED,
+            value=None,
+            diagnostic=SafeDiagnostic(operation=operation, retryable=False),
+        )
+    return ReadResult(
+        status=ResultStatus.UNKNOWN,
+        value=None,
+        diagnostic=SafeDiagnostic(operation=operation, retryable=True),
+    )
+
+
+def classify_attachment(
+    session: SessionState,
+    attachment: T | None,
+    *,
+    persisted: bool,
+    operation: str,
+) -> ReadResult[T]:
+    """Classify attachment metadata without treating failed persistence as OK."""
+    read_result = classify_read(session, attachment, operation=operation)
+    if read_result.status is not ResultStatus.OK:
+        return read_result
+    if not persisted:
+        return ReadResult(
+            status=ResultStatus.DEFERRED_ATTACHMENT,
+            value=None,
+            diagnostic=SafeDiagnostic(operation=operation, retryable=False),
+        )
+    return read_result
