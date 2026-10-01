@@ -11,8 +11,8 @@ the Study Module or perform any TronClass write operation.
 | --- | --- | --- |
 | CAS account/password login | Partial / adapter route rejected | The credential probe completed two attempts; CAS issued a TGT and service ticket on both attempts. TronClass rejected both ticket-to-session exchanges and redirected back to CAS login. Browser-mediated manual login still works. |
 | Courses, announcements, assignments, deadlines, attachments | Confirmed read-only | The authenticated UI exposed course navigation, announcement HTML and links, assignment status/type, deadline ranges, and attachment names/sizes/download links. |
-| PDF download | Single-sample confirmed; repeatability deferred | The authenticated endpoint produced a local PDF file. The file was 522,673 bytes, began with `%PDF-`, parsed as PDF 1.7 with 13 pages, and rendered successfully. Only one successful persistence sample was verified; repeat-download stability is still a Phase 1 gate. |
-| Session reuse | Confirmed for the observed session | The authenticated session survived navigation from the `tcmedia` PDF tab back to TronClass, a full page reload, and a five-second wait followed by another reload. Expiry and refresh lifetimes were not measured. |
+| PDF download | Single-sample confirmed; repeatability deferred | The authenticated endpoint produced a local PDF file. The file was 522,673 bytes, began with `%PDF-`, parsed as PDF 1.7 with 13 pages, and rendered successfully. A second download attempt timed out in the browser connector and did not produce a second local file; repeat-download stability remains a Phase 1 gate. |
+| Session reuse | Confirmed for the observed session | The authenticated session survived navigation from the `tcmedia` PDF tab back to TronClass, a full page reload, and reloads at t=30s and t=60s. The observed session lifetime is therefore at least 60 seconds; actual expiry and refresh lifetimes were not measured. |
 | Cookie / CSRF lifecycle | Not inspected | Cookie values, headers, tokens, and browser storage were intentionally not read or logged. Their exact lifetime and renewal rules remain unknown. |
 | Official academic calendar parsing | Confirmed for the sampled source | The calendar probe parsed 103 dated events from the official NTOU academic-calendar page and found normal instruction, no-class/holiday, exam-period, and confirmation-needed cases. |
 
@@ -34,7 +34,7 @@ the Study Module or perform any TronClass write operation.
    link that redirected/opened a `tcmedia` PDF URL.
 9. Lifecycle checks did not inspect cookie values, CSRF tokens, local storage,
    or headers. The session remained authenticated after the observed reloads,
-   but no logout or forced-expiry action was performed.
+   including t=30s and t=60s. No logout or forced-expiry action was performed.
 
 No assignment submission, data edit, message, attendance action, or other
 TronClass write operation was performed.
@@ -79,8 +79,8 @@ explanation for the repeated TronClass redirect.
   additional anti-automation check, but this remains unconfirmed.
 - CAS ticket, TronClass session, CSRF token, and cookie expiration/renewal
   behavior.
-- Exact session expiration and renewal timing; current evidence only covers
-  reload and short-delay reuse.
+- Exact session expiration and renewal timing; current evidence establishes
+  only a 60-second lower bound.
 - Whether PDF downloads require an additional token, referer, or browser-only
   behavior that a server-side client cannot reproduce.
 - Whether repeated PDF downloads remain stable across a fresh browser session;
@@ -116,5 +116,5 @@ session establishment**: CAS ticket issuance passed twice, but both
 end-to-end exchanges returned to CAS login. PDF persistence passed for one
 sample but repeatability is deferred. Remaining blockers are a repeat-download
 test and measured expiration/renewal behavior. A browser-session adapter is the
-recommended design direction, but Phase 1 should not start until those gates
-are closed.
+recommended design direction, with `reauth_required` on CAS redirects; Phase 1
+should not start until attachment repeatability and lifecycle gates are closed.
