@@ -14,7 +14,7 @@ class FirestoreDatabase:
 
     def __init__(self, project_id: str | None, database_id: str, collection_prefix: str):
         if not re.fullmatch(r"[A-Za-z0-9_-]+", collection_prefix):
-            raise ValueError("CHRONOS_FIRESTORE_COLLECTION_PREFIX 只能包含英數字、底線與連字號")
+            raise ValueError("CHRONOS_FIRESTORE_COLLECTION_PREFIX may contain only letters, digits, underscores, and hyphens")
         self.client = firestore.Client(project=project_id, database=database_id)
         self.tasks = self.client.collection(f"{collection_prefix}_tasks")
         self.updates = self.client.collection(f"{collection_prefix}_telegram_updates")
@@ -66,7 +66,9 @@ class FirestoreDatabase:
 
     def list_open_tasks(self) -> list[dict]:
         query = self.tasks.where(filter=FieldFilter("status", "==", "open"))
-        result = [self._task_data(int(snapshot.id), snapshot.to_dict()) for snapshot in query.stream()]
+        active = self._transaction.get()
+        snapshots = query.stream(transaction=active) if active is not None else query.stream()
+        result = [self._task_data(int(snapshot.id), snapshot.to_dict()) for snapshot in snapshots]
         return sorted(result, key=lambda task: (task.get("due_at") is None, task.get("due_at") or "", task["id"]))
 
     def _update_open_task(self, task_id: int, values: dict) -> bool:

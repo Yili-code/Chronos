@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from .db import create_database
 from .ai import AIError, ExternalAI
 from .settings import settings
-from .tasks import TaskService, format_tasks
+from .tasks import TaskService, format_task, format_tasks
 from .telegram import TelegramClient
 from .web import PAGE
 
@@ -29,16 +29,16 @@ scheduler = AsyncIOScheduler(timezone=settings.tz)
 
 HELP_TEXT = (
     "<b>Chronos</b>\n"
-    "直接傳送一個代辦事項，我會自動解析：\n"
-    "• 明天 17:00 完成報告\n"
-    "• 週五 10:00 開會 #Chronos\n"
-    "• 買牛奶\n"
-    "（日期、時間與 #分類標籤皆可省略）\n\n"
-    "指令：\n"
-    "/help — 顯示說明\n"
-    "/tasks — 列出所有未完成代辦\n"
-    "/done 3 — 完成編號 3 的代辦\n"
-    "/postpone 3 明天 10:00 — 修改編號 3 的期限"
+    "Send a task in Chinese or English. I will store a concise English version:\n"
+    "• Finish the report tomorrow at 17:00\n"
+    "• Attend Friday's meeting at 10:00 #Chronos\n"
+    "• Buy milk\n"
+    "(Dates, times, and tags are optional.)\n\n"
+    "Commands:\n"
+    "/help — Show this guide\n"
+    "/tasks — List open tasks\n"
+    "/done 1 — Complete task 1\n"
+    "/reschedule 1 tomorrow at 10:00 — Change task 1's due time"
 )
 
 
@@ -63,7 +63,7 @@ async def lifespan(_: FastAPI):
             if not result.get("ok"):
                 raise RuntimeError(f"Telegram webhook registration failed with code {result.get('error_code', 'unknown')}")
         except Exception:
-            logger.exception("Telegram webhook 設定失敗")
+            logger.exception("Telegram webhook setup failed")
     yield
     if settings.enable_internal_scheduler:
         scheduler.shutdown(wait=False)
@@ -77,7 +77,7 @@ def require_web_auth(authorization: str | None = Header(default=None)) -> None:
         return
     expected = base64.b64encode(f"{settings.web_username}:{settings.web_password}".encode()).decode()
     if not authorization or not hmac.compare_digest(authorization, f"Basic {expected}"):
-        raise HTTPException(status_code=401, detail="需要驗證", headers={"WWW-Authenticate": "Basic"})
+        raise HTTPException(status_code=401, detail="Authentication required", headers={"WWW-Authenticate": "Basic"})
 
 
 class NaturalTask(BaseModel):
@@ -109,9 +109,9 @@ async def health() -> dict:
 @app.post("/internal/daily")
 async def trigger_daily_tasks(x_chronos_scheduler_secret: str | None = Header(default=None)) -> dict:
     if not settings.scheduler_secret:
-        raise HTTPException(status_code=503, detail="排程端點尚未設定")
+        raise HTTPException(status_code=503, detail="Scheduler endpoint is not configured")
     if not hmac.compare_digest(x_chronos_scheduler_secret or "", settings.scheduler_secret):
-        raise HTTPException(status_code=403, detail="無效排程憑證")
+        raise HTTPException(status_code=403, detail="Invalid scheduler credential")
     await send_daily_tasks()
     return {"ok": True}
 
@@ -140,7 +140,7 @@ async def create_natural_task(body: NaturalTask) -> dict:
 @app.post("/api/tasks/{task_id}/complete", dependencies=[Depends(require_web_auth)])
 async def complete_task(task_id: int) -> dict:
     if not tasks.complete(task_id):
-        raise HTTPException(status_code=404, detail="找不到未完成代辦")
+        raise HTTPException(status_code=404, detail="Open task not found")
     return {"ok": True}
 
 
@@ -149,20 +149,20 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
     if settings.telegram_webhook_secret and not hmac.compare_digest(
         x_telegram_bot_api_secret_token or "", settings.telegram_webhook_secret
     ):
-        raise HTTPException(status_code=403, detail="無效 webhook")
+        raise HTTPException(status_code=403, detail="Invalid webhook credential")
     try:
         payload = await request.json()
     except (json.JSONDecodeError, UnicodeDecodeError):
-        raise HTTPException(status_code=400, detail="webhook 內容必須為有效 JSON") from None
+        raise HTTPException(status_code=400, detail="Webhook body must be valid JSON") from None
     try:
         update = TelegramUpdate.model_validate(payload)
     except ValidationError:
-        raise HTTPException(status_code=422, detail="webhook 格式錯誤：請檢查 update_id、message、chat 與 text") from None
+        raise HTTPException(status_code=422, detail="Invalid webhook shape: check update_id, message, chat, and text") from None
     if update.message is None:
         return {"ok": True}
     chat_id = update.message.chat.id
     if settings.telegram_chat_id and chat_id != settings.telegram_chat_id:
-        raise HTTPException(status_code=403, detail="未授權 chat")
+        raise HTTPException(status_code=403, detail="Unauthorized chat")
     text = (update.message.text or "").strip()
     if not text:
         return {"ok": True}
@@ -176,7 +176,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         parse_mode = "HTML" if receipt["reply"] == HELP_TEXT else None
         result = await telegram.send_message(chat_id, receipt["reply"], parse_mode=parse_mode)
         if not result.get("ok"):
-            raise HTTPException(status_code=502, detail="Telegram 回覆失敗，等待重試")
+            raise HTTPException(status_code=502, detail="Telegram reply failed; waiting for retry")
         db.mark_update_delivered(update_id)
     return {"ok": True}
 
@@ -187,37 +187,45 @@ async def handle_message(text: str) -> str:
 
 async def prepare_message(text: str) -> Callable[[], str]:
     """Resolve external input first; the returned action performs no async work."""
-    normalized = text.lstrip("/")
-    if normalized in {"start", "help", "說明"}:
+    normalized = text.strip()
+    command = normalized[1:].strip() if normalized.startswith("/") else None
+    if command in {"start", "help"}:
         return lambda: HELP_TEXT
-    if normalized in {"代辦", "清單", "tasks"}:
+    if command == "tasks":
         return lambda: format_tasks(tasks.list_open(), settings.tz)
-    if normalized in {"專案", "狀態", "projects"}:
-        return lambda: "專案追蹤功能已移除。"
-    completed = re.fullmatch(r"(?:完成|done)\s*#?(\d+)", normalized, re.IGNORECASE)
+    completed = re.fullmatch(r"done\s+(\d+)", command or "", re.IGNORECASE)
     if completed:
         def complete() -> str:
-            ok = tasks.complete(int(completed.group(1)))
-            return "已完成。" if ok else "找不到該未完成代辦。"
+            position = int(completed.group(1))
+            task = tasks.complete_position(position)
+            if task is None:
+                return f"Task {position} not found.\n\n{format_tasks(tasks.list_open(), settings.tz)}"
+            return f"Completed: {task['title']}\n\n{format_tasks(tasks.list_open(), settings.tz)}"
         return complete
-    postponed = re.fullmatch(r"(?:延期|postpone)\s*#?(\d+)\s*(?:到|至)?\s*(.+)", normalized, re.IGNORECASE)
-    if postponed:
+    rescheduled = re.fullmatch(r"reschedule\s+(\d+)\s+(.+)", command or "", re.IGNORECASE)
+    if rescheduled:
+        position = int(rescheduled.group(1))
+        if tasks.get_open_by_position(position) is None:
+            return lambda: f"Task {position} not found.\n\n{format_tasks(tasks.list_open(), settings.tz)}"
         try:
-            parsed = await ai.parse(f"{postponed.group(2)} 更新期限")
+            parsed = await ai.parse(f"Reschedule to {rescheduled.group(2)}")
         except (AIError, ValueError) as error:
             return lambda reply=str(error): reply
         if not parsed.due_at:
-            return lambda: "請指定日期或時間。"
-        def postpone() -> str:
-            ok = tasks.postpone(int(postponed.group(1)), parsed.due_at)
-            return f"已延期至 {parsed.due_at:%m/%d %H:%M}。" if ok else "找不到該未完成代辦。"
-        return postpone
+            return lambda: "Please include a date or time."
+        def reschedule() -> str:
+            task = tasks.reschedule_position(position, parsed.due_at)
+            if task is None:
+                return f"Task {position} not found.\n\n{format_tasks(tasks.list_open(), settings.tz)}"
+            return f"Rescheduled: {format_task(task, settings.tz)}\n\n{format_tasks(tasks.list_open(), settings.tz)}"
+        return reschedule
+    if command is not None or re.fullmatch(r"(?:代辦|清單|完成\s*#?\d+|延期\s*#?\d+.*)", normalized):
+        return lambda: "Unknown command. Use /help to see available commands."
     try:
         parsed = await ai.parse(normalized)
     except (AIError, ValueError) as error:
         return lambda reply=str(error): reply
     def create() -> str:
         task = tasks.create(parsed.title, parsed.due_at, parsed.project)
-        due = f"，期限 {parsed.due_at:%m/%d %H:%M}" if parsed.due_at else ""
-        return f"已新增 #{task['id']}：{task['title']}{due}。"
+        return f"Created: {format_task(task, settings.tz)}"
     return create

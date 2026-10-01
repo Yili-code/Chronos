@@ -32,7 +32,7 @@ def system(tmp_path, monkeypatch):
     monkeypatch.setattr(main, 'tasks', service)
     monkeypatch.setattr(main, 'telegram', bot)
     monkeypatch.setattr(main, 'scheduler', AsyncIOScheduler(timezone=config.tz))
-    monkeypatch.setattr(main.ai, 'parse', AsyncMock(return_value=ParsedTask('測試工作')))
+    monkeypatch.setattr(main.ai, 'parse', AsyncMock(return_value=ParsedTask('Test task')))
     with TestClient(main.app, raise_server_exceptions=False) as client:
         yield client, service, bot, config
 
@@ -48,21 +48,26 @@ def test_web_auth_and_task_lifecycle(system):
     client.auth = ('chronos', 'test-password')
     homepage = client.get('/').text
     assert 'Chronos' in homepage
+    assert 'Open tasks' in homepage
+    assert 'No open tasks.' in homepage
+    assert '>Add</button>' in homepage
+    assert '>Complete</button>' in homepage
+    assert '<h2>代辦</h2>' not in homepage
     assert '開發專案' not in homepage
     assert client.get('/api/projects').status_code == 404
     assert client.get('/api/tasks').json() == []
     created = client.post('/api/tasks/natural', json={'text': '新增工作'})
     assert created.status_code == 200
     task_id = created.json()['id']
-    assert client.get('/api/tasks').json()[0]['title'] == '測試工作'
+    assert client.get('/api/tasks').json()[0]['title'] == 'Test task'
     assert client.post(f'/api/tasks/{task_id}/complete').status_code == 200
     assert client.get('/api/tasks').json() == []
     assert client.post(f'/api/tasks/{task_id}/complete').status_code == 404
     assert client.post('/api/tasks/natural', json={}).status_code == 422
-    main.ai.parse.side_effect = AIError('測試失敗')
+    main.ai.parse.side_effect = AIError('Test failure')
     assert client.post('/api/tasks/natural', json={'text': '工作'}).status_code == 503
     assert service.list_open() == []
-    main.ai.parse.side_effect = ValueError('空白')
+    main.ai.parse.side_effect = ValueError('Empty')
     assert client.post('/api/tasks/natural', json={'text': ''}).status_code == 422
 
 
@@ -82,29 +87,38 @@ def test_webhook_auth_and_commands(system):
     assert send('/start').status_code == 200
     help_text = bot.send_message.call_args.args[1]
     assert help_text == main.HELP_TEXT
-    assert help_text.startswith('<b>Chronos</b>\n直接傳送一個代辦事項')
-    assert '（日期、時間與 #分類標籤皆可省略）' in help_text
-    assert '/help — 顯示說明' in help_text
-    assert '/tasks — 列出所有未完成代辦' in help_text
-    assert '/done 3 — 完成編號 3 的代辦' in help_text
-    assert '/postpone 3 明天 10:00 — 修改編號 3 的期限' in help_text
+    assert help_text.startswith('<b>Chronos</b>\nSend a task in Chinese or English')
+    assert '(Dates, times, and tags are optional.)' in help_text
+    assert '/help — Show this guide' in help_text
+    assert '/tasks — List open tasks' in help_text
+    assert '/done 1 — Complete task 1' in help_text
+    assert '/reschedule 1 tomorrow at 10:00' in help_text
+    assert '/postpone' not in help_text
     assert bot.send_message.call_args.kwargs == {'parse_mode': 'HTML'}
     assert send('/help').status_code == 200
     assert bot.send_message.call_args.args[1] == help_text
     assert bot.send_message.call_args.kwargs == {'parse_mode': 'HTML'}
-    assert send('專案').status_code == 200
-    assert bot.send_message.call_args.args[1] == '專案追蹤功能已移除。'
+    assert send('代辦').status_code == 200
+    assert bot.send_message.call_args.args[1] == 'Unknown command. Use /help to see available commands.'
     assert bot.send_message.call_args.kwargs == {'parse_mode': None}
     assert service.list_open() == []
     assert send('新增工作').status_code == 200
-    task_id = service.list_open()[0]['id']
-    assert send('代辦').status_code == 200
-    assert '測試工作' in bot.send_message.call_args.args[1]
-    main.ai.parse.return_value = ParsedTask('更新期限', datetime(2026, 9, 20, 10, tzinfo=config.tz))
-    assert send(f'/postpone {task_id} 週日').status_code == 200
+    assert bot.send_message.call_args.args[1] == 'Created: Test task'
+    assert send('/tasks').status_code == 200
+    assert bot.send_message.call_args.args[1] == 'Open tasks:\n1. Test task'
+    main.ai.parse.return_value = ParsedTask('Reschedule task', datetime(2026, 9, 20, 10, tzinfo=config.tz))
+    assert send('/reschedule 1 週日').status_code == 200
     assert service.list_open()[0]['due_at'].startswith('2026-09-20T10:00')
-    assert send(f'/done {task_id}').status_code == 200
+    assert bot.send_message.call_args.args[1].startswith('Rescheduled: Test task | 09/20 10:00\n\nOpen tasks:')
+    assert send('/done 1').status_code == 200
+    assert bot.send_message.call_args.args[1] == 'Completed: Test task\n\nNo open tasks.'
     assert service.list_open() == []
+    assert send('/done 3').status_code == 200
+    assert bot.send_message.call_args.args[1] == 'Task 3 not found.\n\nNo open tasks.'
+    parse_count = main.ai.parse.await_count
+    assert send('/reschedule 4 tomorrow').status_code == 200
+    assert bot.send_message.call_args.args[1] == 'Task 4 not found.\n\nNo open tasks.'
+    assert main.ai.parse.await_count == parse_count
 
 
 def test_daily_reminder_schedule(system):
@@ -143,7 +157,7 @@ def test_cloud_scheduler_endpoint(system):
     assert 'Cloud Scheduler 測試' in bot.send_message.call_args.args[1]
 
 
-def test_persistence_order_and_postpone(tmp_path):
+def test_persistence_order_and_reschedule(tmp_path):
     db = Database(tmp_path / 'nested' / 'persist.db')
     db.initialize()
     tz = main.settings.tz
@@ -154,7 +168,9 @@ def test_persistence_order_and_postpone(tmp_path):
     db.initialize()
     reopened = TaskService(Database(db.path), tz)
     assert [x['id'] for x in reopened.list_open()] == [earlier['id'], later['id'], no_due['id']]
-    assert '#Chronos' in format_tasks(reopened.list_open(), tz)
+    formatted = format_tasks(reopened.list_open(), tz)
+    assert formatted.startswith('Open tasks:\n1. 較早 | 09/19 10:00')
+    assert '#Chronos' in formatted
     assert reopened.complete(earlier['id'])
     assert not reopened.postpone(earlier['id'], datetime.now(tz))
     assert not reopened.complete(999)
@@ -281,15 +297,15 @@ def test_concurrent_duplicate_updates(system, monkeypatch):
     assert len(service.list_open()) == 1
 
 
-@pytest.mark.parametrize('command', ['完成', '延期'])
+@pytest.mark.parametrize('command', ['done', 'reschedule'])
 def test_duplicate_other_mutations(system, monkeypatch, command):
     client, service, bot, config = system
-    task = service.create('原始工作')
-    main.ai.parse.return_value = ParsedTask('更新期限', datetime(2026, 9, 20, 10, tzinfo=config.tz))
-    method = 'complete' if command == '完成' else 'postpone'
+    service.create('Original task')
+    main.ai.parse.return_value = ParsedTask('Reschedule task', datetime(2026, 9, 20, 10, tzinfo=config.tz))
+    method = 'complete_position' if command == 'done' else 'reschedule_position'
     action = Mock(wraps=getattr(service, method))
     monkeypatch.setattr(service, method, action)
-    text = f"完成 {task['id']}" if command == '完成' else f"延期 {task['id']} 到明天"
+    text = '/done 1' if command == 'done' else '/reschedule 1 明天'
     payload = {'update_id': 49, 'message': {'chat': {'id': 123}, 'text': text}}
     for _ in range(2):
         assert client.post('/telegram/webhook', json=payload, headers={

@@ -15,7 +15,7 @@ class TelegramClient:
 
     async def request(self, method: str, payload: dict) -> dict:
         if not self.enabled:
-            return {"ok": False, "description": "Telegram 尚未設定"}
+            return {"ok": False, "description": "Telegram is not configured"}
         try:
             async with httpx.AsyncClient(timeout=15) as client:
                 response = await client.post(f"https://api.telegram.org/bot{self.token}/{method}", json=payload)
@@ -24,12 +24,12 @@ class TelegramClient:
         try:
             result = response.json()
         except ValueError:
-            return {"ok": False, "error_code": response.status_code, "description": "Telegram API 回傳非 JSON 內容"}
+            return {"ok": False, "error_code": response.status_code, "description": "Telegram API returned non-JSON content"}
         if not response.is_success:
             return {
                 "ok": False,
                 "error_code": result.get("error_code", response.status_code),
-                "description": result.get("description", "Telegram API 拒絕請求"),
+                "description": result.get("description", "Telegram API rejected the request"),
             }
         return result
 

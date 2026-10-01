@@ -4,7 +4,7 @@
 
 ## 功能
 
-- 透過 Telegram 自然語言新增、查詢、完成及延期代辦
+- 透過 Telegram 自然語言新增、查詢、完成及改期代辦
 - 每天 `Asia/Taipei` 08:00 傳送未完成代辦
 - Web 儀表板提供代辦概覽
 - 本機使用 SQLite；Cloud Run 使用 Firestore
@@ -30,7 +30,7 @@ python -m venv .venv
 
 ## Gemini 設定
 
-Web 與 Telegram 的自然語言新增、Telegram 延期共用 Gemini API，不啟動本地模型。程式呼叫 Gemini 原生 `generateContent` endpoint，要求 JSON response 並再次驗證輸出 schema。
+Web 與 Telegram 的自然語言新增、Telegram 改期共用 Gemini API，不啟動本地模型。程式呼叫 Gemini 原生 `generateContent` endpoint，要求 JSON response 並再次驗證輸出 schema。
 
 在既有 `.env` 加入以下設定（不要覆蓋原有內容）：
 
@@ -43,7 +43,7 @@ CHRONOS_AI_TIMEOUT=30
 
 API key 可由 Google AI Studio 建立。若模型名稱在帳號或地區不可用，更新 `CHRONOS_GEMINI_MODEL` 後重啟即可。
 
-自然語言文字與目前時間會送至 Gemini；不會附帶整份代辦清單。未設定、逾時或格式錯誤時會顯示錯誤且不寫入代辦，不會退回規則解析。代辦查詢、完成與每日提醒仍可獨立使用。API 費用與限制依 Gemini 帳號方案計算。
+自然語言文字與目前時間會送至 Gemini；不會附帶整份代辦清單。輸入可使用中文或英文，儲存時會正規化成自然、精簡的英文 action phrase；一般分類標籤轉成英文 lowercase kebab-case，品牌、正式專案名與技術術語保留原名。原始中文不另行保存。未設定、逾時或格式錯誤時會顯示錯誤且不寫入代辦，不會退回規則解析。代辦查詢、完成與每日提醒仍可獨立使用。API 費用與限制依 Gemini 帳號方案計算。
 
 Gemini 遇到 `429`、`5xx`、timeout 或 transport failure 時，會在同一個總 timeout 內最多嘗試 3 次，退避 1 秒、2 秒。`401/403`（金鑰或權限）、`404`（模型）、`429`（請求限制或額度）、`5xx`（服務暫時繁忙）與網路錯誤會回覆不同訊息；所有失敗都維持 no-write，不會建立或修改代辦。
 
@@ -67,17 +67,17 @@ CHRONOS_PUBLIC_BASE_URL=https://你的公開網址
 ```text
 明天 17:00 完成報告 #Chronos
 /tasks
-/done 3
-/postpone 3 週五 10:00
+/done 1
+/reschedule 1 週五 10:00
 ```
 
-除了管理指令外，直接傳送自然語言就會新增一筆代辦，不必先輸入「新增」。
-`#Chronos` 是選填的分類標籤；`/done` 與 `/postpone` 後方的數字是 `/tasks` 清單顯示的項目編號。
-中文的 `代辦`、`完成 3` 與 `延期 3 到週五 10:00` 也能使用。
+除了 slash commands 外，直接傳送中英文自然語言就會新增一筆代辦。Telegram 與 Web 的互動文字統一使用英文。
+`/tasks` 依「期限最早、無期限最後、同期限較早建立者優先」排序，並將目前未完成代辦動態編為 `1..n`；永久 database ID 不會顯示。`/done` 與 `/reschedule` 使用這個當下位置，完成或改期後會回覆操作內容及更新後清單。不存在的位置會顯示錯誤及最新清單。每天 08:00 的清單使用同一格式。
+`/reschedule` 可提前或延後期限，時間文字可使用中文或英文。舊的中文 commands 與 `/postpone` 不再支援；`/start` 與 `/help` 都會顯示英文使用說明。
 
 設定 `CHRONOS_TELEGRAM_CHAT_ID` 後，其他 chat 無法操作 bot。
 
-Webhook 會驗證 JSON 結構與整數 `update_id`，合法的非文字更新會略過。每筆文字更新的代辦變更與處理紀錄會一起儲存在 SQLite；重送同一 update 不會重複新增、完成或延期，重啟後仍有效。回覆失敗時，後續重送會重試原始回覆。若 Telegram 已收到回覆而程式尚未記錄送達就中斷，回覆文字仍可能重複，但代辦不會重複變更。去重紀錄目前不會自動清除。
+Webhook 會驗證 JSON 結構與整數 `update_id`，合法的非文字更新會略過。每筆文字更新的代辦變更與處理紀錄會一起儲存在 SQLite；動態位置會在同一 transaction 內解析成永久 ID，重送同一 update 不會重複新增、完成或改期，重啟後仍有效。回覆失敗時，後續重送會重試原始回覆。若 Telegram 已收到回覆而程式尚未記錄送達就中斷，回覆文字仍可能重複，但代辦不會重複變更。去重紀錄目前不會自動清除。
 
 ## Docker
 

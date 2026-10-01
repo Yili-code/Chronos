@@ -44,7 +44,8 @@ class FakeQuery:
     def __init__(self, collection):
         self.collection = collection
 
-    def stream(self):
+    def stream(self, transaction=None):
+        self.collection.client.last_query_transaction = transaction
         return [
             FakeSnapshot(FakeDocument(self.collection.client, self.collection.name, document_id), data)
             for (name, document_id), data in self.collection.client.data.items()
@@ -83,6 +84,7 @@ class FakeTransaction:
 class FakeClient:
     def __init__(self, **kwargs):
         self.data = {}
+        self.last_query_transaction = None
 
     def collection(self, name):
         return FakeCollection(self, name)
@@ -127,6 +129,23 @@ def test_firestore_update_receipt_deduplicates_mutation(monkeypatch):
     assert len(service.list_open()) == 1
     db.mark_update_delivered(100)
     assert db.get_update(100)["delivered"] is True
+
+
+def test_firestore_position_is_resolved_inside_receipt_transaction(monkeypatch):
+    db = database(monkeypatch)
+    service = TaskService(db, TZ)
+    later = service.create("Later", datetime(2026, 9, 21, 10, tzinfo=TZ))
+    earlier = service.create("Earlier", datetime(2026, 9, 20, 10, tzinfo=TZ))
+
+    def action():
+        task = service.complete_position(1)
+        return f"Completed: {task['title']}"
+
+    assert db.process_update(101, action)["reply"] == "Completed: Earlier"
+    assert db.client.last_query_transaction is not None
+    remaining = service.list_open()
+    assert [task["id"] for task in remaining] == [later["id"]]
+    assert all(task["id"] != earlier["id"] for task in remaining)
 
 
 def test_firestore_collection_prefix_is_validated(monkeypatch):

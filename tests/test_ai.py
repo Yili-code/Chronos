@@ -28,7 +28,7 @@ def skip_retry_wait(monkeypatch):
 
 def valid_response():
     return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": json.dumps({
-        "title": "交報告", "due_at": "2026-09-18T17:00:00+08:00", "project": "Chronos"
+        "title": "Submit report", "due_at": "2026-09-18T17:00:00+08:00", "project": "Chronos"
     })}]}}]})
 
 
@@ -39,39 +39,44 @@ def test_external_parse(monkeypatch):
         payload = json.loads(request.content)
         assert payload["contents"][0]["parts"][0]["text"] == "明天五點交報告 #Chronos"
         assert payload["generationConfig"]["responseMimeType"] == "application/json"
+        prompt = payload["systemInstruction"]["parts"][0]["text"]
+        assert "concise, natural English action phrase" in prompt
+        assert "lowercase kebab-case" in prompt
         return valid_response()
     mock_provider(monkeypatch, handler)
     parsed = asyncio.run(ExternalAI(config()).parse("明天五點交報告 #Chronos"))
-    assert parsed.title == "交報告"
+    assert parsed.title == "Submit report"
     assert parsed.project == "Chronos"
     assert parsed.due_at == datetime.fromisoformat("2026-09-18T17:00:00+08:00")
 
 
 @pytest.mark.parametrize("content", ["not json", '{}',
     '{"title":"  ","due_at":null,"project":null}',
-    '{"title":"test","due_at":"2026-09-18T17:00:00","project":null}'])
+    '{"title":"test","due_at":"2026-09-18T17:00:00","project":null}',
+    '{"title":"Deploy app","due_at":null,"project":"部署"}',
+    '{"title":"Review budget","due_at":null,"project":"personal finance"}'])
 def test_invalid_output(monkeypatch, content):
     mock_provider(monkeypatch, lambda request: httpx.Response(200, json={
         "candidates": [{"content": {"parts": [{"text": content}]}}]}))
-    with pytest.raises(AIError, match="格式無效"):
+    with pytest.raises(AIError, match="invalid response"):
         asyncio.run(ExternalAI(config()).parse("新增工作"))
 
 
 def test_missing_configuration():
     settings = config()
     settings.gemini_api_key = ""
-    with pytest.raises(AIError, match="尚未設定"):
+    with pytest.raises(AIError, match="not configured"):
         asyncio.run(ExternalAI(settings).parse("新增工作"))
 
 
 @pytest.mark.parametrize(("status", "message", "attempts"), [
-    (400, "拒絕請求", 1),
-    (401, "驗證失敗", 1),
-    (403, "驗證失敗", 1),
-    (404, "模型不可用", 1),
-    (429, "請求受限", 3),
-    (500, "暫時繁忙", 3),
-    (503, "暫時繁忙", 3),
+    (400, "rejected", 1),
+    (401, "authentication failed", 1),
+    (403, "authentication failed", 1),
+    (404, "model is unavailable", 1),
+    (429, "rate-limited", 3),
+    (500, "temporarily busy", 3),
+    (503, "temporarily busy", 3),
 ])
 def test_provider_error_is_classified_and_safe(monkeypatch, status, message, attempts):
     calls = 0
@@ -97,7 +102,7 @@ def test_transient_provider_error_recovers(monkeypatch):
     mock_provider(monkeypatch, handler)
     parsed = asyncio.run(ExternalAI(config()).parse("明天五點交報告 #Chronos"))
     assert calls == 3
-    assert parsed.title == "交報告"
+    assert parsed.title == "Submit report"
 
 
 def test_timeout(monkeypatch):
@@ -108,7 +113,7 @@ def test_timeout(monkeypatch):
         raise httpx.ReadTimeout("timeout", request=request)
     skip_retry_wait(monkeypatch)
     mock_provider(monkeypatch, handler)
-    with pytest.raises(AIError, match="逾時"):
+    with pytest.raises(AIError, match="timed out"):
         asyncio.run(ExternalAI(config()).parse("新增工作"))
     assert calls == 3
 
@@ -121,7 +126,7 @@ def test_transport_error_is_retried(monkeypatch):
         raise httpx.ConnectError("test-secret", request=request)
     skip_retry_wait(monkeypatch)
     mock_provider(monkeypatch, handler)
-    with pytest.raises(AIError, match="網路連線失敗") as error:
+    with pytest.raises(AIError, match="could not be reached") as error:
         asyncio.run(ExternalAI(config()).parse("新增工作"))
     assert calls == 3
     assert "test-secret" not in str(error.value)

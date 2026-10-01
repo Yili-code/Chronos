@@ -1,5 +1,5 @@
 PAGE = """<!doctype html>
-<html lang="zh-Hant">
+<html lang="en">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Chronos</title>
@@ -18,12 +18,12 @@ PAGE = """<!doctype html>
   </style>
 </head>
 <body><main><header><div><h1>Chronos</h1><small>Task command center</small></div><small id="clock"></small></header>
-<section class="panel"><h2>代辦</h2><form id="task-form"><input id="task" placeholder="例：明天 17:00 完成報告 #Chronos" autocomplete="off"><button>新增</button></form><div id="tasks"></div></section></main>
+<section class="panel"><h2>Open tasks</h2><form id="task-form"><input id="task" placeholder="e.g. Finish the report tomorrow at 17:00 #Chronos" autocomplete="off"><button>Add</button></form><div id="tasks"></div></section></main>
 <script>
 const esc=s=>String(s??'').replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]));
 const api=async(path,opt={})=>{const r=await fetch(path,{headers:{'Content-Type':'application/json'},...opt});if(!r.ok)throw Error(await r.text());return r.json()};
-async function loadTasks(){const xs=await api('/api/tasks');document.querySelector('#tasks').innerHTML=xs.length?xs.map(x=>`<div class="item row"><div>${esc(x.title)}<div class="tag">${x.due_at?new Date(x.due_at).toLocaleString('zh-TW',{timeZone:'Asia/Taipei'}):'無期限'}${x.project?' · #'+esc(x.project):''}</div></div><button class="done" onclick="completeTask(${x.id})">完成</button></div>`).join(''):'<div class="muted">目前沒有未完成代辦。</div>'}
+async function loadTasks(){const xs=await api('/api/tasks');document.querySelector('#tasks').innerHTML=xs.length?xs.map(x=>{const meta=[x.due_at?new Date(x.due_at).toLocaleString('en-GB',{timeZone:'Asia/Taipei'}):'',x.project?'#'+esc(x.project):''].filter(Boolean).join(' · ');return `<div class="item row"><div>${esc(x.title)}${meta?`<div class="tag">${meta}</div>`:''}</div><button class="done" onclick="completeTask(${x.id})">Complete</button></div>`}).join(''):'<div class="muted">No open tasks.</div>'}
 async function completeTask(id){await api('/api/tasks/'+id+'/complete',{method:'POST'});loadTasks()}
 document.querySelector('#task-form').onsubmit=async e=>{e.preventDefault();const input=document.querySelector('#task');const button=e.target.querySelector('button');if(button.disabled||!input.value.trim())return;button.disabled=true;try{await api('/api/tasks/natural',{method:'POST',body:JSON.stringify({text:input.value})});input.value='';await loadTasks()}catch(error){let message=error.message;try{message=JSON.parse(message).detail||message}catch{}alert(message)}finally{button.disabled=false}};
-setInterval(()=>document.querySelector('#clock').textContent=new Date().toLocaleString('zh-TW',{timeZone:'Asia/Taipei'}),1000);loadTasks();
+setInterval(()=>document.querySelector('#clock').textContent=new Date().toLocaleString('en-GB',{timeZone:'Asia/Taipei'}),1000);loadTasks();
 </script></body></html>"""

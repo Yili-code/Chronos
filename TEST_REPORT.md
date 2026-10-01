@@ -4,13 +4,22 @@
 
 ## 結果
 
-- `66 passed`，3 個 dependency deprecation warnings，沒有測試失敗
+- `70 passed`，3 個 dependency deprecation warnings，沒有測試失敗
 - Python compilation、PowerShell deployment syntax、`git diff --check` 通過
 - Cloud Run `chronos-00014-mrj` Ready，承接 100% traffic
 - Production `/health` 回傳 `ok`
 - 未授權 Web 為 `401`，正確帳密為 `200`
 - 已移除的 `/api/projects` 在 production 為 `404`
 - 未授權 scheduler request 為 `403`
+
+## Pending release（尚未部署）
+
+- Telegram 與 Web 互動介面統一為英文；自然語言仍接受中文與英文
+- Gemini 將標題正規化為精簡英文 action phrase，並將一般分類轉為英文 lowercase kebab-case
+- `/tasks` 使用目前未完成清單的動態位置 `1..n`，永久 database ID 不顯示
+- `/done` 與 `/reschedule` 在 transaction 內將動態位置解析為永久 ID，成功或找不到位置時都附上最新清單
+- `/postpone` 與中文 commands 已移除；`/start` 保留並顯示 `/help` 內容
+- 依使用者要求，本次只 commit/push；production 仍為 `chronos-00014-mrj`，等待自然語言修改與一鍵清除功能完成後再部署
 
 ## Production integration
 

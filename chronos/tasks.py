@@ -29,6 +29,24 @@ class TaskService:
     def postpone(self, task_id: int, due_at: datetime) -> bool:
         return self.db.postpone_task(task_id, due_at)
 
+    def get_open_by_position(self, position: int) -> dict | None:
+        open_tasks = self.list_open()
+        if position < 1 or position > len(open_tasks):
+            return None
+        return open_tasks[position - 1]
+
+    def complete_position(self, position: int) -> dict | None:
+        task = self.get_open_by_position(position)
+        if task is None or not self.complete(task["id"]):
+            return None
+        return task
+
+    def reschedule_position(self, position: int, due_at: datetime) -> dict | None:
+        task = self.get_open_by_position(position)
+        if task is None or not self.postpone(task["id"], due_at):
+            return None
+        return {**task, "due_at": due_at.isoformat()}
+
     def parse(self, text: str, now: datetime | None = None) -> ParsedTask:
         now = now or datetime.now(self.tz)
         cleaned = re.sub(r"^(新增|加入|提醒我|記下|代辦)\s*[:：]?\s*", "", text.strip())
@@ -42,7 +60,7 @@ class TaskService:
         cleaned = re.sub(r"(?:早上|上午|中午|下午|晚上)?\s*\d{1,2}(?::|：)\d{2}", "", cleaned)
         cleaned = re.sub(r"\s+", " ", cleaned).strip(" ，,。")
         if not cleaned:
-            raise ValueError("代辦內容不可為空")
+            raise ValueError("Task text cannot be empty.")
         return ParsedTask(title=cleaned, due_at=due_at, project=project)
 
     def _extract_due(self, text: str, now: datetime) -> datetime | None:
@@ -87,14 +105,19 @@ class TaskService:
 
 def format_tasks(tasks: list[dict], tz) -> str:
     if not tasks:
-        return "目前沒有未完成代辦。"
-    lines = ["未完成代辦："]
-    for task in tasks:
-        due = ""
-        if task["due_at"]:
-            value = datetime.fromisoformat(task["due_at"]).astimezone(tz)
-            due = f"｜{value:%m/%d %H:%M}"
-        project = f"｜#{task['project']}" if task["project"] else ""
-        lines.append(f"{task['id']}. {task['title']}{due}{project}")
+        return "No open tasks."
+    lines = ["Open tasks:"]
+    for position, task in enumerate(tasks, start=1):
+        lines.append(f"{position}. {format_task(task, tz)}")
     return "\n".join(lines)
+
+
+def format_task(task: dict, tz) -> str:
+    parts = [task["title"]]
+    if task.get("due_at"):
+        value = datetime.fromisoformat(task["due_at"]).astimezone(tz)
+        parts.append(f"{value:%m/%d %H:%M}")
+    if task.get("project"):
+        parts.append(f"#{task['project']}")
+    return " | ".join(parts)
 
