@@ -11,7 +11,7 @@ the Study Module or perform any TronClass write operation.
 | --- | --- | --- |
 | CAS account/password login | Partial / adapter route rejected | The credential probe completed two attempts; CAS issued a TGT and service ticket on both attempts. TronClass rejected both ticket-to-session exchanges and redirected back to CAS login. Browser-mediated manual login still works. |
 | Courses, announcements, assignments, deadlines, attachments | Confirmed read-only | The authenticated UI exposed course navigation, announcement HTML and links, assignment status/type, deadline ranges, and attachment names/sizes/download links. |
-| PDF download | Partial | A `.pdf` attachment was visible and its authenticated `tcmedia` download endpoint was triggered. The connector lost debugger control during the download and no new local Downloads file was observed, so file persistence and content validation remain unproven. |
+| PDF download | Single-sample confirmed; repeatability deferred | The authenticated endpoint produced a local PDF file. The file was 522,673 bytes, began with `%PDF-`, parsed as PDF 1.7 with 13 pages, and rendered successfully. Only one successful persistence sample was verified; repeat-download stability is still a Phase 1 gate. |
 | Session reuse | Confirmed for the observed session | Navigation from a course page back to the TronClass root retained the authenticated student UI without another login. Expiry and refresh lifetimes were not measured. |
 | Cookie / CSRF lifecycle | Not inspected | Cookie values, headers, tokens, and browser storage were intentionally not read or logged. Their exact lifetime and renewal rules remain unknown. |
 | Official academic calendar parsing | Confirmed for the sampled source | The calendar probe parsed 103 dated events from the official NTOU academic-calendar page and found normal instruction, no-class/holiday, exam-period, and confirmation-needed cases. |
@@ -68,6 +68,9 @@ not match the declared file.
   behavior.
 - Whether PDF downloads require an additional token, referer, or browser-only
   behavior that a server-side client cannot reproduce.
+- Whether repeated PDF downloads remain stable across a fresh browser session;
+  until that is demonstrated, attachment persistence remains deferred for
+  Phase 1. Browser viewing is the safe fallback.
 - Stable read endpoints and pagination semantics across courses and semesters.
 - Whether announcement HTML and external links should be stored verbatim,
   sanitized, or reduced to plain text.
@@ -95,6 +98,7 @@ Phase 0 is **not fully complete**. The core read-only TronClass surface and
 session reuse are feasible, and the official calendar path is feasible. The
 tested credential-based REST route is currently **not reliable for TronClass
 session establishment**: CAS ticket issuance passed twice, but both
-end-to-end exchanges returned to CAS login. Remaining blockers are PDF
-persistence verification and measured token/session lifecycle behavior. Phase
-1 should not start until those decisions and tests are closed.
+end-to-end exchanges returned to CAS login. PDF persistence passed for one
+sample but repeatability is deferred. Remaining blockers are a repeat-download
+test and measured token/session lifecycle behavior. Phase 1 should not start
+until those gates are closed.
