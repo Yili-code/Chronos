@@ -1,12 +1,12 @@
 # Chronos 驗證報告
 
-日期：2026-09-29（Asia/Taipei）
+日期：2026-10-01（Asia/Taipei）
 
 ## 結果
 
-- `60 passed`，3 個 dependency deprecation warnings，沒有測試失敗
+- `66 passed`，3 個 dependency deprecation warnings，沒有測試失敗
 - Python compilation、PowerShell deployment syntax、`git diff --check` 通過
-- Cloud Run `chronos-00012-qp5` Ready，承接 100% traffic
+- Cloud Run `chronos-00014-mrj` Ready，承接 100% traffic
 - Production `/health` 回傳 `ok`
 - 未授權 Web 為 `401`，正確帳密為 `200`
 - 已移除的 `/api/projects` 在 production 為 `404`
@@ -15,6 +15,8 @@
 ## Production integration
 
 - Gemini 成功將「2026/09/30 09:00 Chronos 雲端部署驗證」解析成 Asia/Taipei 時間
+- Gemini 的 `429`、`5xx`、timeout 與 transport failure 會在 30 秒總限制內最多嘗試 3 次；永久錯誤不重試，使用者訊息依驗證、模型、額度、服務繁忙與網路問題分類
+- Production 成功建立 synthetic task `#2`，驗證 Gemini → Firestore 後已立即完成清理
 - Firestore 成功保存該任務；production 查詢可讀回同一筆資料
 - Telegram webhook 已註冊到 Cloud Run，chat ID 驗證為 private chat
 - Production `/help` webhook 回傳 `200`；新版自然語言範例與 slash command 格式已實際送至 Telegram

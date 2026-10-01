@@ -45,6 +45,8 @@ API key 可由 Google AI Studio 建立。若模型名稱在帳號或地區不可
 
 自然語言文字與目前時間會送至 Gemini；不會附帶整份代辦清單。未設定、逾時或格式錯誤時會顯示錯誤且不寫入代辦，不會退回規則解析。代辦查詢、完成與每日提醒仍可獨立使用。API 費用與限制依 Gemini 帳號方案計算。
 
+Gemini 遇到 `429`、`5xx`、timeout 或 transport failure 時，會在同一個總 timeout 內最多嘗試 3 次，退避 1 秒、2 秒。`401/403`（金鑰或權限）、`404`（模型）、`429`（請求限制或額度）、`5xx`（服務暫時繁忙）與網路錯誤會回覆不同訊息；所有失敗都維持 no-write，不會建立或修改代辦。
+
 ## Telegram 設定
 
 1. 在 Telegram 對 `@BotFather` 執行 `/newbot`，取得 bot token。
