@@ -1,12 +1,31 @@
 from chronos.study_adapter import (
     BrowserSessionAdapter,
+    ChromeBrowserConnector,
     ConnectorSignal,
     FakeBrowserConnector,
     ResultStatus,
     SessionStatus,
+    STATUS_LABELS_ZH,
     classify_attachment,
     classify_read,
 )
+
+
+class FakeTab:
+    def __init__(self, url: str = "", text: str = "", error: Exception | None = None):
+        self.url = url
+        self.text = text
+        self.error = error
+
+    def current_url(self):
+        if self.error:
+            raise self.error
+        return self.url
+
+    def visible_text(self):
+        if self.error:
+            raise self.error
+        return self.text
 
 
 def test_session_state_transitions_ready_to_reauth_to_unknown():
@@ -103,3 +122,34 @@ def test_attachment_deferral_does_not_hide_reauth():
 
     assert result.status is ResultStatus.REAUTH_REQUIRED
     assert result.value is None
+
+
+def test_chrome_connector_classifies_authenticated_tab():
+    connector = ChromeBrowserConnector(FakeTab(
+        "https://tronclass.ntou.edu.tw/user/index#/",
+        "張壹理 學生 我的課程",
+    ))
+
+    assert connector.observe() is ConnectorSignal.AUTHENTICATED_PAGE
+
+
+def test_chrome_connector_classifies_cas_redirect():
+    connector = ChromeBrowserConnector(FakeTab(
+        "https://tccas.ntou.edu.tw/cas/login?service=redacted",
+        "請登入",
+    ))
+
+    assert connector.observe() is ConnectorSignal.CAS_REDIRECT
+
+
+def test_chrome_connector_classifies_transport_failure_as_timeout():
+    connector = ChromeBrowserConnector(FakeTab(error=TimeoutError()))
+
+    assert connector.observe() is ConnectorSignal.TIMEOUT
+
+
+def test_user_facing_status_labels_are_plain_language():
+    assert STATUS_LABELS_ZH[SessionStatus.READY] == "登入正常"
+    assert STATUS_LABELS_ZH[SessionStatus.REAUTH_REQUIRED] == "需要重新登入"
+    assert STATUS_LABELS_ZH[SessionStatus.UNKNOWN] == "暫時無法確認登入狀態"
+    assert "附件" in STATUS_LABELS_ZH[ResultStatus.DEFERRED_ATTACHMENT]

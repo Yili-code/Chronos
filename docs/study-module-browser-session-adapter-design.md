@@ -196,6 +196,20 @@ TronClass marker (for example, student identity plus a protected navigation
 link). The minimum evidence for `REAUTH_REQUIRED` is a visible CAS login page
 or a final URL on the CAS login origin.
 
+The first implementation seam is `BrowserTabTransport`: it exposes only the
+current URL and visible page text. `ChromeBrowserConnector` classifies those
+observations into `AUTHENTICATED_PAGE`, `CAS_REDIRECT`, or `TIMEOUT`; it does
+not expose cookies, browser storage, passwords, or raw response headers.
+
+User-facing labels are intentionally plain language:
+
+| Internal state | User-facing label |
+| --- | --- |
+| `READY` | 登入正常 |
+| `REAUTH_REQUIRED` | 需要重新登入 |
+| `UNKNOWN` | 暫時無法確認登入狀態 |
+| `DEFERRED_ATTACHMENT` | 附件暫緩保存，請先用瀏覽器查看 |
+
 ## Phase 1 gates
 
 Phase 1 may implement this interface only after:
