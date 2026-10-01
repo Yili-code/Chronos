@@ -64,6 +64,14 @@ class FakeCollection:
     def where(self, filter):
         return FakeQuery(self)
 
+    def stream(self, transaction=None):
+        self.client.last_query_transaction = transaction
+        return [
+            FakeSnapshot(FakeDocument(self.client, self.name, document_id), data)
+            for (name, document_id), data in list(self.client.data.items())
+            if name == self.name
+        ]
+
 
 class FakeTransaction:
     def __init__(self, client):
@@ -79,6 +87,9 @@ class FakeTransaction:
 
     def update(self, reference, values):
         self.client.data[reference.key].update(values)
+
+    def delete(self, reference):
+        del self.client.data[reference.key]
 
 
 class FakeClient:
@@ -121,6 +132,17 @@ def test_firestore_edit_updates_open_task(monkeypatch):
     assert service.list_open()[0]["due_at"] == due.isoformat()
     assert service.complete(task["id"])
     assert service.edit(task["id"], "No", None, None) is None
+
+
+def test_firestore_clear_deletes_open_and_completed_tasks(monkeypatch):
+    db = database(monkeypatch)
+    service = TaskService(db, TZ)
+    completed = service.create("Completed")
+    service.create("Open")
+    assert service.complete(completed["id"])
+    assert service.clear() == 2
+    assert db.client.last_query_transaction is not None
+    assert service.list_open() == []
 
 
 def test_firestore_update_receipt_deduplicates_mutation(monkeypatch):

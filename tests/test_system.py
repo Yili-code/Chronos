@@ -26,6 +26,7 @@ def system(tmp_path, monkeypatch):
     service = TaskService(db, config.tz)
     bot = TelegramClient('test-token')
     monkeypatch.setattr(bot, 'send_message', AsyncMock(return_value={'ok': True}))
+    monkeypatch.setattr(bot, 'answer_callback_query', AsyncMock(return_value={'ok': True}))
     monkeypatch.setattr(bot, 'set_webhook', AsyncMock(return_value={'ok': True}))
     monkeypatch.setattr(main, 'settings', config)
     monkeypatch.setattr(main, 'db', db)
@@ -94,6 +95,7 @@ def test_webhook_auth_and_commands(system):
     assert '/done 1 — Complete task 1' in help_text
     assert '/reschedule 1 tomorrow at 10:00' in help_text
     assert '/edit 1 move it to Friday and rename it' in help_text
+    assert '/clear — Delete all tasks after confirmation' in help_text
     assert '/postpone' not in help_text
     assert bot.send_message.call_args.kwargs == {'parse_mode': 'HTML'}
     assert send('/help').status_code == 200
@@ -197,8 +199,15 @@ def test_telegram_transport(monkeypatch):
     assert b'parse_mode' not in requests[-1].content
     assert asyncio.run(bot.send_message(123, '<b>測試</b>', parse_mode='HTML'))['ok']
     assert json.loads(requests[-1].content)['parse_mode'] == 'HTML'
+    keyboard = {'inline_keyboard': [[{'text': 'Delete all tasks', 'callback_data': 'clear:confirm'}]]}
+    assert asyncio.run(bot.send_message(123, 'Confirm', reply_markup=keyboard))['ok']
+    assert json.loads(requests[-1].content)['reply_markup'] == keyboard
+    assert asyncio.run(bot.answer_callback_query('callback-1'))['ok']
+    assert requests[-1].url.path.endswith('/answerCallbackQuery')
     assert asyncio.run(bot.set_webhook('https://example.invalid/telegram/webhook', 'test-secret'))['ok']
-    assert b'test-secret' in requests[-1].content
+    webhook_payload = json.loads(requests[-1].content)
+    assert webhook_payload['secret_token'] == 'test-secret'
+    assert webhook_payload['allowed_updates'] == ['message', 'callback_query']
     assert not asyncio.run(TelegramClient('').send_message(123, '測試'))['ok']
 
 
@@ -328,6 +337,40 @@ def test_duplicate_other_mutations(system, monkeypatch, command):
     assert bot.send_message.await_count == 1
 
 
+def test_clear_requires_button_confirmation_and_deletes_every_task(system):
+    client, service, bot, _ = system
+    completed = service.create('Completed')
+    service.create('Open')
+    assert service.complete(completed['id'])
+    headers = {'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}
+    assert client.post('/telegram/webhook', headers=headers, json={
+        'update_id': 60, 'message': {'chat': {'id': 123}, 'text': '/clear'}}).status_code == 200
+    assert len(service.list_open()) == 1
+    assert bot.send_message.call_args.args[1] == main.CLEAR_CONFIRM_TEXT
+    assert bot.send_message.call_args.kwargs['reply_markup'] == main.CLEAR_KEYBOARD
+
+    callback = {'update_id': 61, 'callback_query': {
+        'id': 'clear-1', 'data': 'clear:confirm', 'message': {'chat': {'id': 123}}}}
+    assert client.post('/telegram/webhook', headers=headers, json=callback).status_code == 200
+    assert service.list_open() == []
+    assert bot.send_message.call_args.args[1] == 'Deleted 2 tasks.\n\nNo open tasks.'
+    bot.answer_callback_query.assert_awaited_with('clear-1')
+    for _ in range(2):
+        assert client.post('/telegram/webhook', headers=headers, json=callback).status_code == 200
+    assert bot.send_message.await_count == 2
+
+
+def test_clear_can_be_cancelled(system):
+    client, service, bot, _ = system
+    service.create('Keep me')
+    response = client.post('/telegram/webhook', headers={
+        'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}, json={'update_id': 62, 'callback_query': {
+            'id': 'cancel-1', 'data': 'clear:cancel', 'message': {'chat': {'id': 123}}}})
+    assert response.status_code == 200
+    assert len(service.list_open()) == 1
+    assert bot.send_message.call_args.args[1] == 'Clear cancelled.'
+
+
 @pytest.mark.parametrize('payload', [
     [], None, 'secret-input', 1, {}, {'update_id': True}, {'update_id': '1'},
     {'update_id': 1.0}, {'update_id': -1}, {'update_id': 2**63},
@@ -338,6 +381,7 @@ def test_duplicate_other_mutations(system, monkeypatch, command):
     {'update_id': 1, 'message': {'chat': {'id': 2**63}, 'text': '工作'}},
     {'update_id': 1, 'message': {'chat': {'id': 123}, 'text': []}},
     {'update_id': 1, 'message': {'chat': {'id': 123}, 'text': 123}},
+    {'update_id': 1, 'callback_query': {'data': 'ignored'}},
 ])
 def test_webhook_invalid_shape(system, payload):
     client, service, bot, _ = system
@@ -363,7 +407,6 @@ def test_webhook_invalid_json(system, body):
 
 
 @pytest.mark.parametrize('payload', [
-    {'update_id': 1, 'callback_query': {'data': 'ignored'}},
     {'update_id': 2, 'message': {'chat': {'id': 123}, 'photo': []}},
     {'update_id': 3, 'message': {'chat': {'id': 123}, 'text': '  '}},
 ])

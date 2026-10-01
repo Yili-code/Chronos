@@ -95,6 +95,16 @@ class FirestoreDatabase:
             {"title": title, "due_at": due_at.isoformat() if due_at else None, "project": project},
         )
 
+    def clear_tasks(self) -> int:
+        def clear(transaction):
+            snapshots = list(self.tasks.stream(transaction=transaction))
+            for snapshot in snapshots:
+                transaction.delete(snapshot.reference)
+            return len(snapshots)
+
+        active = self._transaction.get()
+        return clear(active) if active is not None else self._run_transaction(clear)
+
     def get_update(self, update_id: int) -> dict | None:
         reference = self.updates.document(str(update_id))
         active = self._transaction.get()

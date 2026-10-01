@@ -4,7 +4,7 @@
 
 ## 結果
 
-- `76 passed`，3 個 dependency deprecation warnings，沒有測試失敗（第一階段：自然語言修改單一 task）
+- `80 passed`，3 個 dependency deprecation warnings，沒有測試失敗
 - Python compilation、PowerShell deployment syntax、`git diff --check` 通過
 - Cloud Run `chronos-00014-mrj` Ready，承接 100% traffic
 - Production `/health` 回傳 `ok`
@@ -19,8 +19,10 @@
 - `/tasks` 使用目前未完成清單的動態位置 `1..n`，永久 database ID 不顯示
 - `/done` 與 `/reschedule` 在 transaction 內將動態位置解析為永久 ID，成功或找不到位置時都附上最新清單
 - `/edit <position> <instruction>` 接受中英文自然語言，同時支援修改或移除標題、期限與分類；未指定欄位由 Gemini 保留，最終只儲存英文 action phrase
+- `/clear` 必須再按 English inline button 確認，才會刪除 SQLite 或 Firestore 中所有 open 與 completed task records；Cancel 不變更資料
+- Telegram webhook 已接受 `callback_query`，callback mutation 與 update receipt 在同一 transaction 中處理，重送不會重複清除
 - `/postpone` 與中文 commands 已移除；`/start` 保留並顯示 `/help` 內容
-- 依使用者要求，本次只 commit/push；production 仍為 `chronos-00014-mrj`，等待自然語言修改與一鍵清除功能完成後再部署
+- 兩項新功能完成 local validation 後分為兩個 commit/push；production 部署與 live verification 待執行
 
 ## Production integration
 

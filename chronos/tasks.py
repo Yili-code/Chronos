@@ -39,6 +39,9 @@ class TaskService:
             "project": project,
         }
 
+    def clear(self) -> int:
+        return self.db.clear_tasks()
+
     def get_open_by_position(self, position: int) -> dict | None:
         open_tasks = self.list_open()
         if position < 1 or position > len(open_tasks):

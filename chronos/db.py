@@ -110,6 +110,11 @@ class Database:
             )
         return cursor.rowcount == 1
 
+    def clear_tasks(self) -> int:
+        with self.connect() as connection:
+            cursor = connection.execute("DELETE FROM tasks")
+        return cursor.rowcount
+
     def process_update(self, update_id: int, action: Callable[[], str]) -> dict:
         """Persist a Telegram mutation and its reply in one transaction."""
         with self.transaction() as connection:

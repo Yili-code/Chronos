@@ -39,8 +39,17 @@ HELP_TEXT = (
     "/tasks — List open tasks\n"
     "/done 1 — Complete task 1\n"
     "/reschedule 1 tomorrow at 10:00 — Change task 1's due time\n"
-    "/edit 1 move it to Friday and rename it — Edit task 1"
+    "/edit 1 move it to Friday and rename it — Edit task 1\n"
+    "/clear — Delete all tasks after confirmation"
 )
+
+CLEAR_CONFIRM_TEXT = "Delete all tasks? This cannot be undone."
+CLEAR_KEYBOARD = {
+    "inline_keyboard": [
+        [{"text": "Delete all tasks", "callback_data": "clear:confirm"}],
+        [{"text": "Cancel", "callback_data": "clear:cancel"}],
+    ]
+}
 
 
 async def send_daily_tasks() -> None:
@@ -96,10 +105,18 @@ class TelegramMessage(BaseModel):
     text: str | None = None
 
 
+class TelegramCallbackQuery(BaseModel):
+    model_config = ConfigDict(strict=True)
+    id: str = Field(min_length=1, max_length=128)
+    message: TelegramMessage
+    data: str | None = None
+
+
 class TelegramUpdate(BaseModel):
     model_config = ConfigDict(strict=True)
     update_id: int = Field(ge=0, le=2**63 - 1)
     message: TelegramMessage | None = None
+    callback_query: TelegramCallbackQuery | None = None
 
 
 @app.get("/health")
@@ -158,27 +175,53 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
     try:
         update = TelegramUpdate.model_validate(payload)
     except ValidationError:
-        raise HTTPException(status_code=422, detail="Invalid webhook shape: check update_id, message, chat, and text") from None
-    if update.message is None:
+        raise HTTPException(
+            status_code=422,
+            detail="Invalid webhook shape: check update_id, message or callback_query, chat, and text",
+        ) from None
+    source_message = update.message or (update.callback_query.message if update.callback_query else None)
+    if source_message is None:
         return {"ok": True}
-    chat_id = update.message.chat.id
+    chat_id = source_message.chat.id
     if settings.telegram_chat_id and chat_id != settings.telegram_chat_id:
         raise HTTPException(status_code=403, detail="Unauthorized chat")
-    text = (update.message.text or "").strip()
-    if not text:
-        return {"ok": True}
     update_id = update.update_id
     receipt = db.get_update(update_id)
-    if receipt is None:
-        # Network work happens before acquiring the persistence transaction.
-        action = await prepare_message(text)
-        receipt = db.process_update(update_id, action)
+    if update.callback_query:
+        if receipt is None:
+            data = update.callback_query.data
+            if data == "clear:confirm":
+                def action() -> str:
+                    deleted = tasks.clear()
+                    noun = "task" if deleted == 1 else "tasks"
+                    return f"Deleted {deleted} {noun}.\n\n{format_tasks(tasks.list_open(), settings.tz)}"
+            elif data == "clear:cancel":
+                action = lambda: "Clear cancelled."
+            else:
+                action = lambda: "This action is no longer available."
+            receipt = db.process_update(update_id, action)
+    else:
+        text = (source_message.text or "").strip()
+        if not text:
+            return {"ok": True}
+        if receipt is None:
+            # Network work happens before acquiring the persistence transaction.
+            action = await prepare_message(text)
+            receipt = db.process_update(update_id, action)
     if not receipt["delivered"]:
         parse_mode = "HTML" if receipt["reply"] == HELP_TEXT else None
-        result = await telegram.send_message(chat_id, receipt["reply"], parse_mode=parse_mode)
+        reply_markup = CLEAR_KEYBOARD if receipt["reply"] == CLEAR_CONFIRM_TEXT else None
+        send_options = {"parse_mode": parse_mode}
+        if reply_markup:
+            send_options["reply_markup"] = reply_markup
+        result = await telegram.send_message(chat_id, receipt["reply"], **send_options)
         if not result.get("ok"):
             raise HTTPException(status_code=502, detail="Telegram reply failed; waiting for retry")
         db.mark_update_delivered(update_id)
+    if update.callback_query:
+        result = await telegram.answer_callback_query(update.callback_query.id)
+        if not result.get("ok"):
+            raise HTTPException(status_code=502, detail="Telegram callback acknowledgement failed")
     return {"ok": True}
 
 
@@ -194,6 +237,8 @@ async def prepare_message(text: str) -> Callable[[], str]:
         return lambda: HELP_TEXT
     if command == "tasks":
         return lambda: format_tasks(tasks.list_open(), settings.tz)
+    if command == "clear":
+        return lambda: CLEAR_CONFIRM_TEXT
     completed = re.fullmatch(r"done\s+(\d+)", command or "", re.IGNORECASE)
     if completed:
         def complete() -> str:

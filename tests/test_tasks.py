@@ -66,3 +66,13 @@ def test_edit_updates_all_fields_and_requires_open_task(tmp_path):
     assert tasks.complete(original["id"])
     assert tasks.edit(original["id"], "Should not change", None, None) is None
 
+
+def test_clear_deletes_open_and_completed_tasks(tmp_path):
+    tasks = service(tmp_path)
+    completed = tasks.create("Completed")
+    tasks.create("Open")
+    assert tasks.complete(completed["id"])
+    assert tasks.clear() == 2
+    assert tasks.list_open() == []
+    assert tasks.clear() == 0
+
