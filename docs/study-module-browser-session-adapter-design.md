@@ -198,8 +198,11 @@ or a final URL on the CAS login origin.
 
 The first implementation seam is `BrowserTabTransport`: it exposes only the
 current URL and visible page text. `ChromeBrowserConnector` classifies those
-observations into `AUTHENTICATED_PAGE`, `CAS_REDIRECT`, or `TIMEOUT`; it does
-not expose cookies, browser storage, passwords, or raw response headers.
+observations into `AUTHENTICATED_PAGE`, `CAS_REDIRECT`, `UNKNOWN_PAGE`, or
+`TIMEOUT`; it does not expose cookies, browser storage, passwords, or raw
+response headers. Host names and authenticated markers are provided through a
+small immutable `ChromeConnectorConfig`, so the classifier is testable without
+opening a real browser.
 
 User-facing labels are intentionally plain language:
 
@@ -207,7 +210,7 @@ User-facing labels are intentionally plain language:
 | --- | --- |
 | `READY` | 登入正常 |
 | `REAUTH_REQUIRED` | 需要重新登入 |
-| `UNKNOWN` | 暫時無法確認登入狀態 |
+| `UNKNOWN` | 暫時無法確認登入狀態（頁面不明或 connector timeout） |
 | `DEFERRED_ATTACHMENT` | 附件暫緩保存，請先用瀏覽器查看 |
 
 ## Phase 1 gates

@@ -20,6 +20,7 @@ class ConnectorSignal(str, Enum):
     AUTHENTICATED_PAGE = "authenticated_page"
     CAS_REDIRECT = "cas_redirect"
     TIMEOUT = "timeout"
+    UNKNOWN_PAGE = "unknown_page"
 
 
 class SessionStatus(str, Enum):
@@ -79,11 +80,23 @@ class BrowserTabTransport(Protocol):
     def visible_text(self) -> str: ...
 
 
+@dataclass(frozen=True)
+class ChromeConnectorConfig:
+    tronclass_host: str = "tronclass.ntou.edu.tw"
+    cas_host: str = "tccas.ntou.edu.tw"
+    authenticated_markers: tuple[str, ...] = ("學生", "我的課程")
+
+
 class ChromeBrowserConnector:
     """Classify a user-owned Chrome tab without reading browser secrets."""
 
-    def __init__(self, tab: BrowserTabTransport) -> None:
+    def __init__(
+        self,
+        tab: BrowserTabTransport,
+        config: ChromeConnectorConfig | None = None,
+    ) -> None:
         self._tab = tab
+        self._config = config or ChromeConnectorConfig()
 
     def observe(self) -> ConnectorSignal:
         try:
@@ -93,15 +106,14 @@ class ChromeBrowserConnector:
             return ConnectorSignal.TIMEOUT
 
         parsed = urlparse(url)
-        if parsed.netloc == "tccas.ntou.edu.tw" and parsed.path.startswith("/cas/login"):
+        if self._config.cas_host == parsed.netloc and parsed.path.startswith("/cas/login"):
             return ConnectorSignal.CAS_REDIRECT
         if (
-            parsed.netloc == "tronclass.ntou.edu.tw"
-            and "學生" in text
-            and ("我的課程" in text or "/user/index" in parsed.path)
+            self._config.tronclass_host == parsed.netloc
+            and all(marker in text for marker in self._config.authenticated_markers)
         ):
             return ConnectorSignal.AUTHENTICATED_PAGE
-        return ConnectorSignal.TIMEOUT
+        return ConnectorSignal.UNKNOWN_PAGE
 
 
 class FakeBrowserConnector:
@@ -128,6 +140,7 @@ class BrowserSessionAdapter:
             ConnectorSignal.AUTHENTICATED_PAGE: SessionStatus.READY,
             ConnectorSignal.CAS_REDIRECT: SessionStatus.REAUTH_REQUIRED,
             ConnectorSignal.TIMEOUT: SessionStatus.UNKNOWN,
+            ConnectorSignal.UNKNOWN_PAGE: SessionStatus.UNKNOWN,
         }[evidence]
         return SessionState(
             status=status,

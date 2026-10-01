@@ -1,6 +1,7 @@
 from chronos.study_adapter import (
     BrowserSessionAdapter,
     ChromeBrowserConnector,
+    ChromeConnectorConfig,
     ConnectorSignal,
     FakeBrowserConnector,
     ResultStatus,
@@ -146,6 +147,27 @@ def test_chrome_connector_classifies_transport_failure_as_timeout():
     connector = ChromeBrowserConnector(FakeTab(error=TimeoutError()))
 
     assert connector.observe() is ConnectorSignal.TIMEOUT
+
+
+def test_chrome_connector_classifies_ambiguous_page_as_unknown():
+    connector = ChromeBrowserConnector(FakeTab(
+        "https://tronclass.ntou.edu.tw/public-course#/all",
+        "發現課程",
+    ))
+
+    assert connector.observe() is ConnectorSignal.UNKNOWN_PAGE
+
+
+def test_chrome_connector_accepts_explicit_host_config():
+    connector = ChromeBrowserConnector(
+        FakeTab("https://learn.example/user/index", "學生 我的課程"),
+        ChromeConnectorConfig(
+            tronclass_host="learn.example",
+            cas_host="sso.example",
+        ),
+    )
+
+    assert connector.observe() is ConnectorSignal.AUTHENTICATED_PAGE
 
 
 def test_user_facing_status_labels_are_plain_language():
