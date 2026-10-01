@@ -62,17 +62,14 @@ def valid_service_ticket(ticket: str) -> bool:
     return bool(re.fullmatch(r"ST-[A-Za-z0-9._~-]+", ticket.strip()))
 
 
-def run_probe(username: str, password: str) -> dict:
+def _run_single_attempt(username: str, password: str, context: ssl.SSLContext) -> dict:
     report: dict[str, object] = {
-        "cas_rest_endpoint": "available",
-        "credential_attempts": 1,
         "tgt_issued": False,
         "service_ticket_issued": False,
         "tronclass_authenticated": False,
         "session_reuse_authenticated": False,
         "cookie_count": 0,
     }
-    context = create_tls_context()
     try:
         with httpx.Client(verify=context, follow_redirects=False, timeout=20) as cas:
             try:
@@ -83,9 +80,6 @@ def run_probe(username: str, password: str) -> dict:
                 )
             except httpx.HTTPError:
                 raise ProbeFailure("cas_transport") from None
-            finally:
-                username = ""
-                password = ""
             if tgt_response.status_code != 201:
                 raise ProbeFailure("cas_credentials", tgt_response.status_code)
             tgt_location = tgt_response.headers.get("location", "")
@@ -143,6 +137,22 @@ def run_probe(username: str, password: str) -> dict:
         if failure.status_code is not None:
             report["failure_status"] = failure.status_code
     return report
+
+
+def run_probe(username: str, password: str) -> dict:
+    """Run two independent login attempts without exposing credential material."""
+    context = create_tls_context()
+    attempts = [_run_single_attempt(username, password, context) for _ in range(2)]
+    successful = [
+        attempt for attempt in attempts if attempt.get("session_reuse_authenticated")
+    ]
+    return {
+        "cas_rest_endpoint": "available",
+        "credential_attempts": len(attempts),
+        "successful_attempts": len(successful),
+        "repeatable_login": len(successful) == len(attempts),
+        "attempts": attempts,
+    }
 
 
 def main() -> int:

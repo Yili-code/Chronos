@@ -74,8 +74,10 @@ not match the declared file.
   `tests/test_study_calendar_spike.py` cover the official calendar sample.
 - `scripts/spikes/tronclass_auth_probe.py` and
   `tests/test_tronclass_auth_spike.py` provide secret-safe CAS ticket/session
-  validation helpers and redaction tests. The live credential path was not
-  executed in this report.
+  validation helpers and redaction tests. The probe now performs two
+  independent CAS-to-TronClass attempts from one hidden credential input;
+  the live credential path still requires the account owner to enter the
+  credentials at runtime and was not executed in this report.
 - The live browser observation was performed read-only on 2026-10-01. It is
   evidence of the current account/session and site behavior, not a guarantee
   that future sessions or server-side requests will behave identically.
