@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "Chronos Study Read-only Bridge",
+  "version": "0.1.0",
+  "description": "Expose redacted, read-only TronClass page observations to Chronos.",
+  "permissions": ["activeTab"],
+  "host_permissions": [
+    "https://tronclass.ntou.edu.tw/*",
+    "https://tccas.ntou.edu.tw/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://tronclass.ntou.edu.tw/*",
+        "https://tccas.ntou.edu.tw/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

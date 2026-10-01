@@ -253,3 +253,12 @@ internet.
 `ChromeBrowserConnector`. It requests one opaque tab id, validates the payload,
 and exposes only the sanitized URL and visible text. A malformed or
 secret-bearing payload fails closed before session classification.
+
+## Extension-first implementation stage
+
+The first extension skeleton lives under `chrome-extension/`. It is Manifest
+V3, restricted to the NTOU CAS and TronClass origins, and responds only to an
+explicit `chronos.observe_read_only` message. It has no automatic network
+destination yet. This keeps the first installed artifact useful for validating
+the observation contract without prematurely creating a local listener or
+transmitting page data.
