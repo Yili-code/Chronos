@@ -248,3 +248,8 @@ Chronos. Payloads containing cookies, headers, browser storage, passwords,
 tokens, CSRF values, or authorization fields are rejected. This is a local
 transport contract, not an instruction to expose the browser to the public
 internet.
+
+`BridgeTabTransport` is the in-process seam between that payload and
+`ChromeBrowserConnector`. It requests one opaque tab id, validates the payload,
+and exposes only the sanitized URL and visible text. A malformed or
+secret-bearing payload fails closed before session classification.

@@ -44,6 +44,23 @@ class LocalBrowserBridge(Protocol):
         """Return URL and visible text only; never return browser secrets."""
 
 
+class BridgeTabTransport:
+    """Adapt one local bridge tab to the connector's narrow tab interface."""
+
+    def __init__(self, bridge: LocalBrowserBridge, tab_id: str) -> None:
+        self._bridge = bridge
+        self._tab_id = tab_id
+
+    def _observation(self) -> BrowserObservation:
+        return parse_observation(self._bridge.observe_tab(self._tab_id))
+
+    def current_url(self) -> str:
+        return self._observation().url
+
+    def visible_text(self) -> str:
+        return self._observation().visible_text
+
+
 def parse_observation(payload: Mapping[str, object]) -> BrowserObservation:
     """Validate and normalize one bridge payload without retaining secrets."""
     if FORBIDDEN_FIELDS.intersection(payload):
