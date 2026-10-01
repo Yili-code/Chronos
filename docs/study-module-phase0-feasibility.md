@@ -70,6 +70,9 @@ state. Chronos must not collect or persist the password, cookies, or CSRF
 tokens. The REST credential adapter remains rejected pending a documented
 explanation for the repeated TronClass redirect.
 
+The detailed interface and state contract is in
+`docs/study-module-browser-session-adapter-design.md`.
+
 ## Remaining risks and decisions before Phase 1
 
 - Whether automation may use a credential-based CAS flow at all, or must rely
