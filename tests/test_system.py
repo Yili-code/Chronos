@@ -93,6 +93,7 @@ def test_webhook_auth_and_commands(system):
     assert '/tasks — List open tasks' in help_text
     assert '/done 1 — Complete task 1' in help_text
     assert '/reschedule 1 tomorrow at 10:00' in help_text
+    assert '/edit 1 move it to Friday and rename it' in help_text
     assert '/postpone' not in help_text
     assert bot.send_message.call_args.kwargs == {'parse_mode': 'HTML'}
     assert send('/help').status_code == 200
@@ -119,6 +120,13 @@ def test_webhook_auth_and_commands(system):
     assert send('/reschedule 4 tomorrow').status_code == 200
     assert bot.send_message.call_args.args[1] == 'Task 4 not found.\n\nNo open tasks.'
     assert main.ai.parse.await_count == parse_count
+    service.create('Draft roadmap')
+    main.ai.edit = AsyncMock(return_value=ParsedTask(
+        'Finalize roadmap', datetime(2026, 10, 3, 18, tzinfo=config.tz), 'Chronos'))
+    assert send('/edit 1 改成完成 roadmap 並移到 10/03 18:00').status_code == 200
+    assert bot.send_message.call_args.args[1] == (
+        'Updated: Finalize roadmap | 10/03 18:00 | #Chronos\n\n'
+        'Open tasks:\n1. Finalize roadmap | 10/03 18:00 | #Chronos')
 
 
 def test_daily_reminder_schedule(system):
@@ -297,15 +305,21 @@ def test_concurrent_duplicate_updates(system, monkeypatch):
     assert len(service.list_open()) == 1
 
 
-@pytest.mark.parametrize('command', ['done', 'reschedule'])
+@pytest.mark.parametrize('command', ['done', 'reschedule', 'edit'])
 def test_duplicate_other_mutations(system, monkeypatch, command):
     client, service, bot, config = system
     service.create('Original task')
     main.ai.parse.return_value = ParsedTask('Reschedule task', datetime(2026, 9, 20, 10, tzinfo=config.tz))
-    method = 'complete_position' if command == 'done' else 'reschedule_position'
+    method = {'done': 'complete_position', 'reschedule': 'reschedule_position', 'edit': 'edit'}[command]
     action = Mock(wraps=getattr(service, method))
     monkeypatch.setattr(service, method, action)
-    text = '/done 1' if command == 'done' else '/reschedule 1 明天'
+    if command == 'done':
+        text = '/done 1'
+    elif command == 'reschedule':
+        text = '/reschedule 1 明天'
+    else:
+        text = '/edit 1 rename it'
+        main.ai.edit = AsyncMock(return_value=ParsedTask('Renamed task'))
     payload = {'update_id': 49, 'message': {'chat': {'id': 123}, 'text': text}}
     for _ in range(2):
         assert client.post('/telegram/webhook', json=payload, headers={

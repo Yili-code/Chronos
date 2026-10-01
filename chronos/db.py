@@ -102,6 +102,14 @@ class Database:
             )
         return cursor.rowcount == 1
 
+    def edit_task(self, task_id: int, title: str, due_at: datetime | None, project: str | None) -> bool:
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "UPDATE tasks SET title = ?, due_at = ?, project = ? WHERE id = ? AND status = 'open'",
+                (title, due_at.isoformat() if due_at else None, project, task_id),
+            )
+        return cursor.rowcount == 1
+
     def process_update(self, update_id: int, action: Callable[[], str]) -> dict:
         """Persist a Telegram mutation and its reply in one transaction."""
         with self.transaction() as connection:

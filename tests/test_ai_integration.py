@@ -47,3 +47,27 @@ def test_failure_does_not_change_tasks(task_service, monkeypatch):
     assert task_service.list_open() == before
     assert "Original task" in asyncio.run(main.handle_message("/tasks"))
     assert asyncio.run(main.handle_message("/done 1")) == "Completed: Original task\n\nNo open tasks."
+
+
+def test_edit_uses_natural_language_and_returns_latest_list(task_service, monkeypatch):
+    original = task_service.create("Draft launch plan", project="Chronos")
+    due = datetime(2026, 10, 3, 18, tzinfo=main.settings.tz)
+    edit = AsyncMock(return_value=ParsedTask("Finalize launch plan", due, None))
+    monkeypatch.setattr(main.ai, "edit", edit)
+    reply = asyncio.run(main.handle_message("/edit 1 改成完成 launch plan，期限 10/03 18:00 並移除專案"))
+    edit.assert_awaited_once()
+    assert edit.call_args.args[0]["id"] == original["id"]
+    assert reply == (
+        "Updated: Finalize launch plan | 10/03 18:00\n\n"
+        "Open tasks:\n1. Finalize launch plan | 10/03 18:00"
+    )
+    stored = task_service.list_open()[0]
+    assert stored["title"] == "Finalize launch plan"
+    assert stored["project"] is None
+
+
+def test_edit_missing_position_skips_ai(task_service, monkeypatch):
+    edit = AsyncMock()
+    monkeypatch.setattr(main.ai, "edit", edit)
+    assert asyncio.run(main.handle_message("/edit 1 rename it")) == "Task 1 not found.\n\nNo open tasks."
+    edit.assert_not_awaited()

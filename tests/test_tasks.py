@@ -56,3 +56,13 @@ def test_dynamic_positions_hide_permanent_ids(tmp_path):
     assert tasks.get_open_by_position(0) is None
     assert tasks.get_open_by_position(3) is None
 
+
+def test_edit_updates_all_fields_and_requires_open_task(tmp_path):
+    tasks = service(tmp_path)
+    original = tasks.create("Old title", datetime(2026, 9, 20, 10, tzinfo=TZ), "Chronos")
+    edited = tasks.edit(original["id"], "New title", None, None)
+    assert edited == {"id": original["id"], "title": "New title", "due_at": None, "project": None}
+    assert tasks.list_open()[0]["title"] == "New title"
+    assert tasks.complete(original["id"])
+    assert tasks.edit(original["id"], "Should not change", None, None) is None
+

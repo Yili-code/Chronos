@@ -112,6 +112,17 @@ def test_firestore_task_lifecycle_and_order(monkeypatch):
     assert not service.complete(no_due["id"])
 
 
+def test_firestore_edit_updates_open_task(monkeypatch):
+    db = database(monkeypatch)
+    service = TaskService(db, TZ)
+    task = service.create("Old", project="Chronos")
+    due = datetime(2026, 10, 3, 18, tzinfo=TZ)
+    assert service.edit(task["id"], "New", due, None)["title"] == "New"
+    assert service.list_open()[0]["due_at"] == due.isoformat()
+    assert service.complete(task["id"])
+    assert service.edit(task["id"], "No", None, None) is None
+
+
 def test_firestore_update_receipt_deduplicates_mutation(monkeypatch):
     db = database(monkeypatch)
     service = TaskService(db, TZ)

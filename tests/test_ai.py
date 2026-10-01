@@ -50,6 +50,27 @@ def test_external_parse(monkeypatch):
     assert parsed.due_at == datetime.fromisoformat("2026-09-18T17:00:00+08:00")
 
 
+def test_external_edit_returns_complete_final_task(monkeypatch):
+    def handler(request):
+        payload = json.loads(request.content)
+        assert payload["contents"][0]["parts"][0]["text"] == "改成星期五，移除專案"
+        prompt = payload["systemInstruction"]["parts"][0]["text"]
+        assert '"title": "Review proposal"' in prompt
+        assert '"project": "Chronos"' in prompt
+        assert "Preserve every field the instruction does not change" in prompt
+        assert "must set that field to null" in prompt
+        return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": json.dumps({
+            "title": "Review proposal", "due_at": "2026-09-18T09:00:00+08:00", "project": None
+        })}]}}]})
+    mock_provider(monkeypatch, handler)
+    parsed = asyncio.run(ExternalAI(config()).edit({
+        "title": "Review proposal", "due_at": None, "project": "Chronos"
+    }, "改成星期五，移除專案"))
+    assert parsed.title == "Review proposal"
+    assert parsed.project is None
+    assert parsed.due_at == datetime.fromisoformat("2026-09-18T09:00:00+08:00")
+
+
 @pytest.mark.parametrize("content", ["not json", '{}',
     '{"title":"  ","due_at":null,"project":null}',
     '{"title":"test","due_at":"2026-09-18T17:00:00","project":null}',

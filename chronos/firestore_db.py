@@ -89,6 +89,12 @@ class FirestoreDatabase:
     def postpone_task(self, task_id: int, due_at: datetime) -> bool:
         return self._update_open_task(task_id, {"due_at": due_at.isoformat()})
 
+    def edit_task(self, task_id: int, title: str, due_at: datetime | None, project: str | None) -> bool:
+        return self._update_open_task(
+            task_id,
+            {"title": title, "due_at": due_at.isoformat() if due_at else None, "project": project},
+        )
+
     def get_update(self, update_id: int) -> dict | None:
         reference = self.updates.document(str(update_id))
         active = self._transaction.get()

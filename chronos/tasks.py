@@ -29,6 +29,16 @@ class TaskService:
     def postpone(self, task_id: int, due_at: datetime) -> bool:
         return self.db.postpone_task(task_id, due_at)
 
+    def edit(self, task_id: int, title: str, due_at: datetime | None, project: str | None) -> dict | None:
+        if not self.db.edit_task(task_id, title.strip(), due_at, project):
+            return None
+        return {
+            "id": task_id,
+            "title": title.strip(),
+            "due_at": due_at.isoformat() if due_at else None,
+            "project": project,
+        }
+
     def get_open_by_position(self, position: int) -> dict | None:
         open_tasks = self.list_open()
         if position < 1 or position > len(open_tasks):

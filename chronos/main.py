@@ -38,7 +38,8 @@ HELP_TEXT = (
     "/help — Show this guide\n"
     "/tasks — List open tasks\n"
     "/done 1 — Complete task 1\n"
-    "/reschedule 1 tomorrow at 10:00 — Change task 1's due time"
+    "/reschedule 1 tomorrow at 10:00 — Change task 1's due time\n"
+    "/edit 1 move it to Friday and rename it — Edit task 1"
 )
 
 
@@ -219,6 +220,23 @@ async def prepare_message(text: str) -> Callable[[], str]:
                 return f"Task {position} not found.\n\n{format_tasks(tasks.list_open(), settings.tz)}"
             return f"Rescheduled: {format_task(task, settings.tz)}\n\n{format_tasks(tasks.list_open(), settings.tz)}"
         return reschedule
+    edited = re.fullmatch(r"edit\s+(\d+)\s+(.+)", command or "", re.IGNORECASE)
+    if edited:
+        position = int(edited.group(1))
+        current = tasks.get_open_by_position(position)
+        if current is None:
+            return lambda: f"Task {position} not found.\n\n{format_tasks(tasks.list_open(), settings.tz)}"
+        try:
+            parsed = await ai.edit(current, edited.group(2))
+        except (AIError, ValueError) as error:
+            return lambda reply=str(error): reply
+        task_id = current["id"]
+        def edit() -> str:
+            task = tasks.edit(task_id, parsed.title, parsed.due_at, parsed.project)
+            if task is None:
+                return f"Task {position} is no longer open.\n\n{format_tasks(tasks.list_open(), settings.tz)}"
+            return f"Updated: {format_task(task, settings.tz)}\n\n{format_tasks(tasks.list_open(), settings.tz)}"
+        return edit
     if command is not None or re.fullmatch(r"(?:代辦|清單|完成\s*#?\d+|延期\s*#?\d+.*)", normalized):
         return lambda: "Unknown command. Use /help to see available commands."
     try:
