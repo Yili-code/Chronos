@@ -1,6 +1,7 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from chronos import main
 from chronos import firestore_db
 from chronos.firestore_db import FirestoreDatabase
 from chronos.tasks import TaskService
@@ -45,6 +46,8 @@ class FakeQuery:
         self.collection = collection
 
     def stream(self, transaction=None):
+        if transaction is not None and transaction.has_writes:
+            raise RuntimeError("Firestore does not allow reads after writes in a transaction")
         self.collection.client.last_query_transaction = transaction
         return [
             FakeSnapshot(FakeDocument(self.collection.client, self.collection.name, document_id), data)
@@ -65,6 +68,8 @@ class FakeCollection:
         return FakeQuery(self)
 
     def stream(self, transaction=None):
+        if transaction is not None and transaction.has_writes:
+            raise RuntimeError("Firestore does not allow reads after writes in a transaction")
         self.client.last_query_transaction = transaction
         return [
             FakeSnapshot(FakeDocument(self.client, self.name, document_id), data)
@@ -76,19 +81,24 @@ class FakeCollection:
 class FakeTransaction:
     def __init__(self, client):
         self.client = client
+        self.has_writes = False
 
     def set(self, reference, values):
+        self.has_writes = True
         self.client.data[reference.key] = dict(values)
 
     def create(self, reference, values):
+        self.has_writes = True
         if reference.key in self.client.data:
             raise RuntimeError("already exists")
         self.client.data[reference.key] = dict(values)
 
     def update(self, reference, values):
+        self.has_writes = True
         self.client.data[reference.key].update(values)
 
     def delete(self, reference):
+        self.has_writes = True
         del self.client.data[reference.key]
 
 
@@ -142,6 +152,18 @@ def test_firestore_clear_deletes_open_and_completed_tasks(monkeypatch):
     assert service.complete(completed["id"])
     assert service.clear() == 2
     assert db.client.last_query_transaction is not None
+    assert service.list_open() == []
+
+
+def test_firestore_clear_callback_does_not_read_after_writing(monkeypatch):
+    db = database(monkeypatch)
+    service = TaskService(db, TZ)
+    service.create("Open")
+    monkeypatch.setattr(main, "tasks", service)
+
+    receipt = db.process_update(102, main.clear_tasks_reply)
+
+    assert receipt == {"reply": "Deleted 1 task.\n\nNo open tasks.", "delivered": False}
     assert service.list_open() == []
 
 

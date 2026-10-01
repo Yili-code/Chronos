@@ -52,6 +52,15 @@ CLEAR_KEYBOARD = {
 }
 
 
+def clear_tasks_reply() -> str:
+    deleted = tasks.clear()
+    noun = "task" if deleted == 1 else "tasks"
+    # The clear operation runs inside the same Firestore transaction as the
+    # update receipt. Firestore forbids reads after the first write, and the
+    # post-clear state is already known without another query.
+    return f"Deleted {deleted} {noun}.\n\nNo open tasks."
+
+
 async def send_daily_tasks() -> None:
     if settings.telegram_chat_id and telegram.enabled:
         result = await telegram.send_message(settings.telegram_chat_id, format_tasks(tasks.list_open(), settings.tz))
@@ -191,10 +200,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         if receipt is None:
             data = update.callback_query.data
             if data == "clear:confirm":
-                def action() -> str:
-                    deleted = tasks.clear()
-                    noun = "task" if deleted == 1 else "tasks"
-                    return f"Deleted {deleted} {noun}.\n\n{format_tasks(tasks.list_open(), settings.tz)}"
+                action = clear_tasks_reply
             elif data == "clear:cancel":
                 action = lambda: "Clear cancelled."
             else:
