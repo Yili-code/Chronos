@@ -229,3 +229,22 @@ Phase 1 may implement this interface only after:
 
 Until then, this document is an architecture contract, not permission to
 implement the full Study Module.
+
+## Local browser bridge
+
+Cloud Run cannot directly access YiLi's local Chrome profile. A future local
+bridge (extension or companion process) must therefore expose only a redacted
+observation payload:
+
+```json
+{
+  "url": "https://tronclass.ntou.edu.tw/user/index",
+  "visible_text": "張壹理 學生 我的課程"
+}
+```
+
+The bridge boundary strips query strings and fragments before data enters
+Chronos. Payloads containing cookies, headers, browser storage, passwords,
+tokens, CSRF values, or authorization fields are rejected. This is a local
+transport contract, not an instruction to expose the browser to the public
+internet.
