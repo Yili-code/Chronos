@@ -9,7 +9,7 @@ the Study Module or perform any TronClass write operation.
 
 | Goal | Status | Evidence / limitation |
 | --- | --- | --- |
-| CAS account/password login | Partial | A user-operated Chrome login reached the authenticated TronClass page. A repeatable credential probe exists, but no credential-bearing probe was run in this report. One successful manual login is not proof of reliable repeated login. |
+| CAS account/password login | Partial / adapter route rejected | The credential probe completed two attempts; CAS issued a TGT and service ticket on both attempts. TronClass rejected both ticket-to-session exchanges and redirected back to CAS login. Browser-mediated manual login still works. |
 | Courses, announcements, assignments, deadlines, attachments | Confirmed read-only | The authenticated UI exposed course navigation, announcement HTML and links, assignment status/type, deadline ranges, and attachment names/sizes/download links. |
 | PDF download | Partial | A `.pdf` attachment was visible and its authenticated `tcmedia` download endpoint was triggered. The connector lost debugger control during the download and no new local Downloads file was observed, so file persistence and content validation remain unproven. |
 | Session reuse | Confirmed for the observed session | Navigation from a course page back to the TronClass root retained the authenticated student UI without another login. Expiry and refresh lifetimes were not measured. |
@@ -21,13 +21,16 @@ the Study Module or perform any TronClass write operation.
 1. The browser reached NTOU CAS and the user completed login manually.
 2. CAS redirected to TronClass.
 3. TronClass displayed the student identity and course dashboard.
-4. A course page exposed separate routes for chapters, announcements,
+4. A separate secret-safe REST probe ran twice with the same credentials. Both
+   attempts received a CAS TGT and service ticket, but both ended at the CAS
+   login path instead of an authenticated TronClass path.
+5. A course page exposed separate routes for chapters, announcements,
    courseware, homework, exams, forums, questionnaires, and classroom activity.
-5. The homework view showed both assignment type and a concrete time range,
+6. The homework view showed both assignment type and a concrete time range,
    for example `2026-09-30 12:30 ~ 2026-10-07 23:59`.
-6. Announcement pages rendered rich text, external links, update timestamps,
+7. Announcement pages rendered rich text, external links, update timestamps,
    and attachment metadata.
-7. Reference files exposed an authenticated `/api/uploads/reference/.../blob`
+8. Reference files exposed an authenticated `/api/uploads/reference/.../blob`
    link that redirected/opened a `tcmedia` PDF URL.
 
 No assignment submission, data edit, message, attendance action, or other
@@ -37,9 +40,10 @@ TronClass write operation was performed.
 
 Use a read-only adapter with these explicit stages:
 
-1. `CasSessionProvider`: obtain a short-lived authenticated session through a
-   user-approved login flow; never persist the password, ticket, cookie value,
-   or CSRF token in application logs or source control.
+1. `CasSessionProvider`: prefer a user-mediated browser session for now. The
+   tested REST ticket exchange can obtain CAS tickets but did not establish a
+   TronClass session twice, so it must not be treated as a production login
+   path until the service-side rejection is explained.
 2. `TronClassClient`: request only known read endpoints and preserve the
    session transport internally.
 3. `CourseMapper`: normalize course identity and links to announcements,
@@ -57,6 +61,9 @@ not match the declared file.
 
 - Whether automation may use a credential-based CAS flow at all, or must rely
   on a user-owned browser session.
+- Why TronClass redirects valid CAS-ticket attempts back to CAS login; likely
+  candidates include required browser state, service-string details, or an
+  additional anti-automation check, but this remains unconfirmed.
 - CAS ticket, TronClass session, CSRF token, and cookie expiration/renewal
   behavior.
 - Whether PDF downloads require an additional token, referer, or browser-only
@@ -76,8 +83,8 @@ not match the declared file.
   `tests/test_tronclass_auth_spike.py` provide secret-safe CAS ticket/session
   validation helpers and redaction tests. The probe now performs two
   independent CAS-to-TronClass attempts from one hidden credential input;
-  the live credential path still requires the account owner to enter the
-  credentials at runtime and was not executed in this report.
+  the live run issued CAS tickets twice but failed both TronClass session
+  checks. Only redacted status fields were retained.
 - The live browser observation was performed read-only on 2026-10-01. It is
   evidence of the current account/session and site behavior, not a guarantee
   that future sessions or server-side requests will behave identically.
@@ -86,6 +93,8 @@ not match the declared file.
 
 Phase 0 is **not fully complete**. The core read-only TronClass surface and
 session reuse are feasible, and the official calendar path is feasible. The
-remaining blockers are repeatable CAS reliability evidence, PDF persistence
-verification, and measured token/session lifecycle behavior. Phase 1 should
-not start until those decisions and tests are closed.
+tested credential-based REST route is currently **not reliable for TronClass
+session establishment**: CAS ticket issuance passed twice, but both
+end-to-end exchanges returned to CAS login. Remaining blockers are PDF
+persistence verification and measured token/session lifecycle behavior. Phase
+1 should not start until those decisions and tests are closed.
