@@ -5,6 +5,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Iterator
 
+from .course_tracking import ProgressSession
+from .course_tracking_store import session_from_firestore, session_to_firestore
+
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS tasks (
@@ -21,6 +24,17 @@ CREATE TABLE IF NOT EXISTS telegram_updates (
     update_id INTEGER PRIMARY KEY,
     reply TEXT NOT NULL,
     delivered INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS course_sessions (
+    session_id TEXT PRIMARY KEY,
+    course_key TEXT NOT NULL,
+    course_name TEXT NOT NULL,
+    class_date TEXT NOT NULL,
+    prompt_message_id INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    reminder_count INTEGER NOT NULL DEFAULT 0,
+    reported_progress TEXT,
+    reply_message_id INTEGER
 );
 """
 
@@ -126,6 +140,43 @@ class Database:
                 )
                 return {"reply": reply, "delivered": False}
             return receipt
+
+    def create_course_session(self, session: ProgressSession) -> ProgressSession:
+        data = session_to_firestore(session)
+        with self.connect() as connection:
+            connection.execute(
+                """INSERT OR IGNORE INTO course_sessions
+                (session_id, course_key, course_name, class_date, prompt_message_id,
+                 status, reminder_count, reported_progress, reply_message_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                tuple(data[field] for field in (
+                    "session_id", "course_key", "course_name", "class_date",
+                    "prompt_message_id", "status", "reminder_count",
+                    "reported_progress", "reply_message_id",
+                )),
+            )
+        return self.get_course_session(session.session_id) or session
+
+    def get_course_session(self, session_id: str) -> ProgressSession | None:
+        with self.connect() as connection:
+            row = connection.execute("SELECT * FROM course_sessions WHERE session_id = ?", (session_id,)).fetchone()
+        return session_from_firestore(dict(row)) if row else None
+
+    def save_course_session(self, session: ProgressSession) -> ProgressSession:
+        data = session_to_firestore(session)
+        with self.connect() as connection:
+            cursor = connection.execute(
+                """UPDATE course_sessions SET course_key=?, course_name=?, class_date=?,
+                prompt_message_id=?, status=?, reminder_count=?, reported_progress=?, reply_message_id=?
+                WHERE session_id=?""",
+                tuple(data[field] for field in (
+                    "course_key", "course_name", "class_date", "prompt_message_id",
+                    "status", "reminder_count", "reported_progress", "reply_message_id",
+                )) + (session.session_id,),
+            )
+        if cursor.rowcount != 1:
+            raise KeyError(session.session_id)
+        return session
 
 
 def create_database(settings):
