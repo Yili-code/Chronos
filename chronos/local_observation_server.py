@@ -15,7 +15,7 @@ from typing import Mapping
 from urllib.parse import urlsplit
 
 from .chrome_bridge import BrowserBridgeError, BrowserObservation, parse_observation
-from .material_bridge import validate_material_observation
+from .material_bridge import MaterialObservationStore
 
 
 MAX_BODY_BYTES = 256_000
@@ -90,7 +90,7 @@ class _ObservationHandler(BaseHTTPRequestHandler):
             if not isinstance(payload, dict):
                 raise BrowserBridgeError("observation must be an object")
             if self.path == "/v1/browser-materials":
-                self.server.material_observation = validate_material_observation(payload)
+                self.server.material_store.put(payload)
             else:
                 observation = _validate_payload(payload)
                 self.server.observation_store.put(observation)  # type: ignore[attr-defined]
@@ -110,7 +110,7 @@ class LocalObservationServer(ThreadingHTTPServer):
     def __init__(self, port: int = 8765) -> None:
         super().__init__(("127.0.0.1", port), _ObservationHandler)
         self.observation_store = ObservationStore()
-        self.material_observation = None
+        self.material_store = MaterialObservationStore()
 
 
 def main() -> None:

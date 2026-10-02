@@ -1,5 +1,33 @@
 """Strict metadata-only browser handoff. No raw URLs or download credentials."""
 import re
+from threading import Lock
+from copy import deepcopy
+
+
+class MaterialObservationStore:
+    """In-memory snapshots by activity; unknown observations never erase data."""
+    def __init__(self):
+        self._lock = Lock()
+        self._activities = {}
+
+    def put(self, payload: dict) -> None:
+        observation = validate_material_observation(payload)
+        if observation['status'] != 'observed':
+            return
+        identities = {(row['course_id'], row['activity_id']) for row in observation['materials']}
+        if len(identities) != 1:
+            raise ValueError('one activity per observation is required')
+        with self._lock:
+            self._activities[next(iter(identities))] = observation['materials']
+
+    def course_materials(self, course_id: str) -> list[dict]:
+        with self._lock:
+            by_source = {}
+            for (course, _activity), rows in self._activities.items():
+                if course == course_id:
+                    for row in rows:
+                        by_source[row['source_id']] = row
+            return deepcopy(list(by_source.values()))
 
 
 def validate_material_observation(payload: dict) -> dict:

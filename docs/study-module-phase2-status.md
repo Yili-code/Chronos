@@ -19,14 +19,20 @@ multi-selection and a generation fingerprint that includes content, progress and
 model/prompt version. Repeated selection callbacks use set membership, not toggles.
 The fingerprint is not a database lock and does not alone prevent concurrent jobs.
 
-163 repository tests pass, including four material-selection tests. No Phase 2
-browser retrieval, Telegram button integration, Gemini summary or notes storage
-has been verified yet.
+173 Python tests pass. The extension extracts visible activity PDF metadata and
+has an explicit handoff button; the loopback receiver validates metadata and
+accumulates isolated per-activity snapshots in memory. An HTTP regression test
+confirms rejected extra fields cannot alter an accepted snapshot. Unknown
+observations do not erase prior snapshots. This is not durable storage, a complete
+course inventory, or freshness evidence.
+
+Live extension-to-receiver delivery, PDF byte retrieval, Telegram button
+integration, Gemini summaries and notes storage remain unverified.
 
 ## Integration gaps
 
-The extension currently exports redacted page observations only. It does not yet
-provide course PDF metadata/bytes to the deployed service. A verified-material
+The extension can export redacted observations and visible PDF metadata locally.
+It does not yet provide course PDF metadata/bytes to the deployed service. A verified-material
 catalog is only a downstream contract; real metadata must be discoverable before
 download and deferred attachments must remain representable. Do not call the
 feature complete using manual uploads or synthetic catalogs as a substitute.

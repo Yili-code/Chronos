@@ -4,6 +4,33 @@ from http.client import HTTPConnection
 from chronos.local_observation_server import LocalObservationServer
 
 
+def test_material_http_rejection_preserves_previous_snapshot():
+    import threading
+
+    server = LocalObservationServer(0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    payload = {"status": "observed", "materials": [{
+        "source_id": "1", "course_id": "2", "activity_id": "3",
+        "filename": "lecture.pdf", "uploaded_at": None,
+    }]}
+    try:
+        for value, expected in ((payload, 202), ({**payload, "cookies": "rejected"}, 400)):
+            connection = HTTPConnection("127.0.0.1", server.server_port)
+            connection.request(
+                "POST", "/v1/browser-materials", body=json.dumps(value),
+                headers={"Content-Type": "application/json", "X-Chronos-Bridge": "1"},
+            )
+            response = connection.getresponse()
+            assert response.status == expected
+            response.read()
+            connection.close()
+        assert server.material_store.course_materials("2") == payload["materials"]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_loopback_receiver_accepts_redacted_observation():
     server = LocalObservationServer(0)
     try:

@@ -24,3 +24,18 @@ def test_unobserved_timestamp_is_rejected():
     data['materials'][0]['uploaded_at'] = '2026-10-02'
     with pytest.raises(ValueError):
         validate_material_observation(data)
+
+
+def test_activity_snapshots_accumulate_without_cross_course_leakage():
+    from chronos.material_bridge import MaterialObservationStore
+    store = MaterialObservationStore()
+    store.put(payload())
+    another = payload()
+    another['materials'][0].update(source_id='4', activity_id='5')
+    store.put(another)
+    store.put({'status':'unknown','materials':[]})
+    assert len(store.course_materials('2')) == 2
+    assert store.course_materials('99') == []
+    exposed = store.course_materials('2')
+    exposed[0]['filename'] = 'changed.pdf'
+    assert store.course_materials('2')[0]['filename'] == 'lecture.pdf'
