@@ -15,10 +15,11 @@ from .course_tracking_store import session_from_firestore, session_to_firestore
 class FirestoreDatabase:
     """Firestore-backed task and Telegram receipt repository for Cloud Run."""
 
-    def __init__(self, project_id: str | None, database_id: str, collection_prefix: str):
+    def __init__(self, project_id: str | None, database_id: str, collection_prefix: str, *, credentials=None):
         if not re.fullmatch(r"[A-Za-z0-9_-]+", collection_prefix):
             raise ValueError("CHRONOS_FIRESTORE_COLLECTION_PREFIX may contain only letters, digits, underscores, and hyphens")
-        self.client = firestore.Client(project=project_id, database=database_id)
+        options = {"credentials": credentials} if credentials is not None else {}
+        self.client = firestore.Client(project=project_id, database=database_id, **options)
         self.tasks = self.client.collection(f"{collection_prefix}_tasks")
         self.updates = self.client.collection(f"{collection_prefix}_telegram_updates")
         self.meta = self.client.collection(f"{collection_prefix}_meta")
