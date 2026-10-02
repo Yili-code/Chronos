@@ -30,13 +30,25 @@ class SelectionStore:
 
     def create(self, key, chat_id, selection):
         self.validate_key(key)
-        state = {"chat_id": chat_id, "revision": 0, "selection": encode(selection)}
+        state = {"chat_id": chat_id, "revision": 0, "message_id": None, "selection": encode(selection)}
         def transition(previous):
             if previous is not None:
                 if previous["chat_id"] != chat_id or previous["selection"]["session_id"] != selection.session_id:
                     raise ValueError("selection identity conflict")
                 return previous
             return state
+        return self.db.mutate_material_selection(key, transition)
+
+    def bind_message(self, key, chat_id, message_id):
+        self.validate_key(key)
+        if type(message_id) is not int or message_id <= 0:
+            raise ValueError("invalid selection message")
+        def transition(previous):
+            if previous is None or previous["chat_id"] != chat_id:
+                raise ValueError("selection not available")
+            if previous.get("message_id") not in {None, message_id}:
+                raise ValueError("selection already bound")
+            return {**previous, "message_id": message_id}
         return self.db.mutate_material_selection(key, transition)
 
     def apply(self, key, chat_id, revision, *, source_id=None, selected=None, confirm=False):

@@ -19,7 +19,7 @@ multi-selection and a generation fingerprint that includes content, progress and
 model/prompt version. Repeated selection callbacks use set membership, not toggles.
 The fingerprint is not a database lock and does not alone prevent concurrent jobs.
 
-219 Python tests pass. The extension extracts visible activity PDF metadata and
+220 Python tests pass. The extension extracts visible activity PDF metadata and
 has an explicit handoff button; the loopback receiver validates metadata and
 accumulates isolated per-activity snapshots in memory. An HTTP regression test
 confirms rejected extra fields cannot alter an accepted snapshot. Unknown
@@ -148,3 +148,9 @@ test covers two-file selection, a duplicated event and confirmation against
 SQLite with mocked Telegram edits. Initial catalog-message delivery, callback
 message binding, generation dispatch and live interaction remain pending; this
 supersedes only the missing callback-routing item above.
+
+Selection prompts now have a claimed send service and immutable message binding.
+Callbacks from any other message are rejected. A saved successful receipt can
+restore interrupted binding without resending. One SQLite-backed test covers this
+recovery plus incorrect-message rejection. The service still needs real catalog
+ingestion and confirmed-selection generation dispatch; no live prompt was sent.

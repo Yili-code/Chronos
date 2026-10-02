@@ -232,7 +232,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
     if update.callback_query and (update.callback_query.data or "").startswith("pdf:"):
         from .selection_buttons import apply_callback
         try:
-            text, markup = apply_callback(db, chat_id, update.callback_query.data)
+            text, markup = apply_callback(db, chat_id, update.callback_query.data, message_id=source_message.message_id)
         except ValueError:
             await telegram.request("answerCallbackQuery", {"callback_query_id": update.callback_query.id,
                                    "text": "選擇無效、尚未選檔，或此清單已失效。"})

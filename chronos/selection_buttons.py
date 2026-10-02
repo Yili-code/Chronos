@@ -31,7 +31,7 @@ def selection_view(key, state, page=0):
     return f"請選擇 PDF（{page + 1}/{pages} 頁，已選 {len(selection.selected_ids)} 份）；按完成選擇才確認。", {"inline_keyboard": rows}
 
 
-def apply_callback(db, chat_id, data):
+def apply_callback(db, chat_id, data, *, message_id):
     match = re.fullmatch(r"pdf:([A-Za-z0-9_-]{1,40}):(\d{1,8}):(done|[sup]\d{1,5})", data or "")
     if not match:
         raise ValueError("invalid selection action")
@@ -39,6 +39,8 @@ def apply_callback(db, chat_id, data):
     state = db.get_material_selection(key)
     if state is None or state["chat_id"] != chat_id:
         raise ValueError("selection not available")
+    if type(message_id) is not int or state.get("message_id") != message_id:
+        raise ValueError("selection message mismatch")
     page = 0
     if action.startswith("p"):
         page = int(action[1:])

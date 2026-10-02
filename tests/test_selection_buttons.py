@@ -9,6 +9,7 @@ from test_system import system
 def test_webhook_selection_is_explicit_and_duplicate_safe(system, monkeypatch):
     client, _, bot, _ = system
     initial = SelectionStore(main.db).create("pick", 123, selection())
+    SelectionStore(main.db).bind_message("pick", 123, 5)
     text, markup = selection_view("pick", initial)
     assert "已選 0" in text
     assert markup["inline_keyboard"][-1][0]["callback_data"] == "pdf:pick:0:done"
