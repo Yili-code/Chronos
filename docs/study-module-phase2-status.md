@@ -19,7 +19,7 @@ multi-selection and a generation fingerprint that includes content, progress and
 model/prompt version. Repeated selection callbacks use set membership, not toggles.
 The fingerprint is not a database lock and does not alone prevent concurrent jobs.
 
-233 Python tests pass. The extension extracts visible activity PDF metadata and
+234 Python tests pass. The extension extracts visible activity PDF metadata and
 has an explicit handoff button; the loopback receiver validates metadata and
 accumulates isolated per-activity snapshots in memory. An HTTP regression test
 confirms rejected extra fields cannot alter an accepted snapshot. Unknown
@@ -201,3 +201,13 @@ a generated PDF; another test checks timeout classification and credential-env
 exclusion. POSIX CPU/address-space limits are implemented but not tested here.
 Windows hard memory limits remain missing. This is process isolation, not a
 security sandbox: filesystem/network capability restrictions are not enforced.
+
+## Local attachment index checkpoint
+
+PdfStore now persists course/source identity, filename, activity, hash, byte count
+and local save time in a gitignored SQLite index beside the blobs. Reads require
+the expected hash and revalidate bytes; changed, missing or cross-course sources
+fail closed. File replacement precedes index commit, so interruption can leave an
+orphan blob but not a partially written indexed file. A restart/corruption test
+passes. Local save time is not upload time, the saved subset is not a complete
+course catalog, and this does not establish browser-to-cloud synchronization.
