@@ -10,10 +10,23 @@ const contentSource = fs.readFileSync(path.join(root, "content.js"), "utf8");
 
 function loadExtension({ href, bodyText }) {
   let listener;
+  const pageMessageListeners = [];
+  const postedMessages = [];
   const context = {
     URL,
-    window: { location: { href } },
-    document: { body: { innerText: bodyText } },
+    window: {
+      location: { href },
+      addEventListener(_type, callback) {
+        pageMessageListeners.push(callback);
+      },
+      postMessage(message, targetOrigin) {
+        postedMessages.push({ message, targetOrigin });
+      },
+    },
+    document: {
+      body: { innerText: bodyText },
+      documentElement: { setAttribute: () => {} },
+    },
     chrome: {
       runtime: {
         onMessage: {
@@ -27,7 +40,7 @@ function loadExtension({ href, bodyText }) {
   vm.createContext(context);
   vm.runInContext(observationSource, context);
   vm.runInContext(contentSource, context);
-  return { context, listener };
+  return { context, listener, pageMessageListeners, postedMessages };
 }
 
 test("redacts query and fragment and caps visible text", () => {
@@ -59,5 +72,29 @@ test("only explicit read-only message invokes the observation", () => {
   assert.deepEqual(JSON.parse(JSON.stringify(responses)), [{
     url: "https://tronclass.ntou.edu.tw/user/index",
     visible_text: "張壹理 學生 我的課程",
+  }]);
+});
+
+test("page-facing probe returns a redacted read-only observation", () => {
+  const { context, pageMessageListeners, postedMessages } = loadExtension({
+    href: "https://tronclass.ntou.edu.tw/user/index?ticket=secret",
+    bodyText: "首頁 我的課程",
+  });
+
+  pageMessageListeners[0]({
+    source: context.window,
+    data: { type: "chronos.observe_read_only_request", request_id: "smoke-1" },
+  });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(postedMessages)), [{
+    targetOrigin: "*",
+    message: {
+      type: "chronos.observe_read_only_response",
+      request_id: "smoke-1",
+      observation: {
+        url: "https://tronclass.ntou.edu.tw/user/index",
+        visible_text: "首頁 我的課程",
+      },
+    },
   }]);
 });

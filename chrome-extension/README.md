@@ -2,8 +2,8 @@
 
 This is the first Chrome Extension skeleton for the Study Module.
 
-It responds only to an explicit `chronos.observe_read_only` message and
-returns:
+It responds only to an explicit `chronos.observe_read_only` message or the
+page-facing `chronos.observe_read_only_request` probe and returns:
 
 ```json
 {
@@ -21,6 +21,10 @@ It does not:
 
 The local bridge transport is intentionally a later step. Until that boundary
 is implemented and reviewed, this extension has no external destination.
+
+The page-facing probe exists only to make a local smoke test possible. It is
+not an authentication channel and does not grant access to cookies, storage,
+or request headers.
 
 The pure observation helpers and message handler can be checked locally with:
 
