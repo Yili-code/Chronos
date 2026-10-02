@@ -13,9 +13,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Lock
 from typing import Mapping
 from urllib.parse import urlsplit
+from pathlib import Path
 
 from .chrome_bridge import BrowserBridgeError, BrowserObservation, parse_observation
 from .material_bridge import MaterialObservationStore
+from .pdf_store import PdfStore, MAX_PDF_BYTES
 
 
 MAX_BODY_BYTES = 256_000
@@ -76,7 +78,7 @@ class _ObservationHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_POST(self) -> None:  # noqa: N802
-        if self.path not in {"/v1/browser-observation", "/v1/browser-materials"}:
+        if self.path not in {"/v1/browser-observation", "/v1/browser-materials", "/v1/browser-pdf"}:
             self._send_json(404, {"error": "not_found"})
             return
         if not self._allowed_origin() or self.headers.get("X-Chronos-Bridge") != "1":
@@ -84,18 +86,28 @@ class _ObservationHandler(BaseHTTPRequestHandler):
             return
         try:
             content_length = int(self.headers.get("Content-Length", "-1"))
-            if content_length < 0 or content_length > MAX_BODY_BYTES:
+            limit = 4 * ((MAX_PDF_BYTES + 2) // 3) + 1024 if self.path == "/v1/browser-pdf" else MAX_BODY_BYTES
+            if content_length < 0 or content_length > limit:
                 raise BrowserBridgeError("request body exceeds limit")
             payload = json.loads(self.rfile.read(content_length))
             if not isinstance(payload, dict):
                 raise BrowserBridgeError("observation must be an object")
-            if self.path == "/v1/browser-materials":
+            if self.path == "/v1/browser-pdf":
+                if set(payload) != {"course_id", "download"} or not isinstance(payload["course_id"], str) or not isinstance(payload["download"], dict):
+                    raise ValueError("invalid PDF handoff")
+                receipt = self.server.pdf_store.accept(payload["download"], self.server.material_store.course_materials(payload["course_id"]))
+                self._send_json(202, receipt)
+                return
+            elif self.path == "/v1/browser-materials":
                 self.server.material_store.put(payload)
             else:
                 observation = _validate_payload(payload)
                 self.server.observation_store.put(observation)  # type: ignore[attr-defined]
         except (BrowserBridgeError, ValueError, json.JSONDecodeError):
             self._send_json(400, {"error": "invalid_observation"})
+            return
+        except OSError:
+            self._send_json(503, {"error": "local_storage_unavailable"})
             return
         self._send_json(202, {"status": "accepted"})
 
@@ -107,10 +119,11 @@ class _ObservationHandler(BaseHTTPRequestHandler):
 class LocalObservationServer(ThreadingHTTPServer):
     """A loopback-only HTTP server for explicit popup handoffs."""
 
-    def __init__(self, port: int = 8765) -> None:
+    def __init__(self, port: int = 8765, pdf_directory: Path | None = None) -> None:
         super().__init__(("127.0.0.1", port), _ObservationHandler)
         self.observation_store = ObservationStore()
         self.material_store = MaterialObservationStore()
+        self.pdf_store = PdfStore(pdf_directory or Path(".study-data/pdfs"))
 
 
 def main() -> None:

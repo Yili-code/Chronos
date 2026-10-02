@@ -4,6 +4,36 @@ from http.client import HTTPConnection
 from chronos.local_observation_server import LocalObservationServer
 
 
+def test_pdf_handoff_requires_catalog_and_persists_bytes(tmp_path):
+    import base64
+    import threading
+    server = LocalObservationServer(0, pdf_directory=tmp_path)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    data = b"%PDF-1.7\n" + b"x" * 40 + b"\n%%EOF"
+    payload = {"course_id": "2", "download": {"status": "downloaded", "source_id": "1",
+               "byte_count": len(data), "data_base64": base64.b64encode(data).decode()}}
+    try:
+        for expected in (400, 202):
+            connection = HTTPConnection("127.0.0.1", server.server_port)
+            connection.request("POST", "/v1/browser-pdf", body=json.dumps(payload),
+                               headers={"X-Chronos-Bridge": "1", "Content-Type": "application/json"})
+            response = connection.getresponse()
+            assert response.status == expected
+            receipt = json.loads(response.read())
+            connection.close()
+            if expected == 400:
+                assert list(tmp_path.iterdir()) == []
+                server.material_store.put({"status": "observed", "materials": [{
+                    "source_id": "1", "course_id": "2", "activity_id": "3",
+                    "filename": "lecture.pdf", "uploaded_at": None}]})
+            else:
+                assert receipt["status"] == "persisted"
+                assert (tmp_path / f"{receipt['sha256']}.pdf").read_bytes() == data
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_material_http_rejection_preserves_previous_snapshot():
     import threading
 

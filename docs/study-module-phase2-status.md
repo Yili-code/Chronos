@@ -19,7 +19,7 @@ multi-selection and a generation fingerprint that includes content, progress and
 model/prompt version. Repeated selection callbacks use set membership, not toggles.
 The fingerprint is not a database lock and does not alone prevent concurrent jobs.
 
-180 Python tests pass. The extension extracts visible activity PDF metadata and
+187 Python tests pass. The extension extracts visible activity PDF metadata and
 has an explicit handoff button; the loopback receiver validates metadata and
 accumulates isolated per-activity snapshots in memory. An HTTP regression test
 confirms rejected extra fields cannot alter an accepted snapshot. Unknown
@@ -43,6 +43,14 @@ redirects are rejected, transfers time out after 30 seconds, and streams above
 not a PDF parser. Twelve JavaScript tests pass with mocked download responses;
 no live download or local byte handoff is established by these tests. The handler
 is extension-runtime-only and is not exposed through the page-facing probe.
+
+The local `/v1/browser-pdf` endpoint now accepts bounded base64 PDF bytes only
+for sources already in the received course catalog. It validates the byte count
+and PDF envelope, computes SHA-256 itself, and atomically saves a hash-named file
+under gitignored `.study-data/pdfs/`. Six storage tests and one HTTP integration
+test cover repeat persistence and rejected input. These use synthetic envelopes,
+not parseable lecture PDFs; parser validation, retention limits, strict extension
+identity authentication, popup byte handoff and live browser evidence remain open.
 
 ## Integration gaps
 
