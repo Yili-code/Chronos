@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Lock
@@ -64,6 +65,10 @@ class _ObservationHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(encoded)))
         self.send_header("Cache-Control", "no-store")
+        origin = self.headers.get("Origin")
+        if origin and self._allowed_origin():
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
         self.end_headers()
         self.wfile.write(encoded)
 
@@ -113,13 +118,17 @@ class _ObservationHandler(BaseHTTPRequestHandler):
 
     def _allowed_origin(self) -> bool:
         origin = self.headers.get("Origin")
-        return origin is None or origin.startswith("chrome-extension://")
+        return origin is None or origin == self.server.extension_origin
 
 
 class LocalObservationServer(ThreadingHTTPServer):
     """A loopback-only HTTP server for explicit popup handoffs."""
 
-    def __init__(self, port: int = 8765, pdf_directory: Path | None = None, catalog_path: Path | None = None) -> None:
+    def __init__(self, port: int = 8765, pdf_directory: Path | None = None, catalog_path: Path | None = None,
+                 extension_id: str | None = None) -> None:
+        if extension_id is not None and not re.fullmatch(r"[a-p]{32}", extension_id):
+            raise ValueError("invalid Chrome extension ID")
+        self.extension_origin = f"chrome-extension://{extension_id}" if extension_id else None
         super().__init__(("127.0.0.1", port), _ObservationHandler)
         self.observation_store = ObservationStore()
         self.material_store = MaterialObservationStore(catalog_path)
@@ -130,8 +139,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run the local Chronos observation receiver")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--catalog-path", type=Path, default=Path(".study-data/catalog.sqlite3"))
+    parser.add_argument("--extension-id", required=True, help="Exact installed Chronos extension ID, not a secret")
     args = parser.parse_args()
-    server = LocalObservationServer(args.port, catalog_path=args.catalog_path)
+    server = LocalObservationServer(args.port, catalog_path=args.catalog_path, extension_id=args.extension_id)
     print(f"Chronos local observation receiver listening on 127.0.0.1:{args.port}")
     try:
         server.serve_forever()

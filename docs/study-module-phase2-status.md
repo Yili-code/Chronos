@@ -19,7 +19,7 @@ multi-selection and a generation fingerprint that includes content, progress and
 model/prompt version. Repeated selection callbacks use set membership, not toggles.
 The fingerprint is not a database lock and does not alone prevent concurrent jobs.
 
-252 Python tests pass. The extension extracts visible activity PDF metadata and
+258 Python tests pass. The extension extracts visible activity PDF metadata and
 has an explicit handoff button; the loopback receiver validates metadata and
 accumulates isolated per-activity snapshots in memory. An HTTP regression test
 confirms rejected extra fields cannot alter an accepted snapshot. Unknown
@@ -317,3 +317,15 @@ deduplicated generic owner notices for uncertain, exhausted or context-mismatche
 work, using the delivery ledger; unknown notice outcomes are not blindly resent.
 Two shared-adapter notice tests and strengthened pipeline assertions pass within
 the 252-test suite. This is local integration evidence, not a live failure test.
+
+## Receiver origin restriction
+
+The receiver now requires `--extension-id <installed-Chronos-ID>` when launched
+from the CLI and accepts only that exact chrome-extension Origin. Other extension
+origins, prefix lookalikes, websites and null origins are rejected; accepted
+responses include matching CORS headers. Six tests bring the full suite to 258.
+Example launch: `.venv\\Scripts\\python.exe -m chronos.local_observation_server
+--extension-id <32-letter-installed-ID>`. The ID is public, not a secret. Requests
+without Origin remain allowed for trusted local tools; Origin checks do not
+authenticate arbitrary local processes. Live installed-extension interoperability
+still requires the actual ID, reload and explicit popup test.
