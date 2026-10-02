@@ -1,4 +1,10 @@
 import httpx
+import logging
+
+# Telegram credentials appear in request paths. Never permit library transport
+# logs to print those paths, even when the application's root logger is INFO.
+logging.getLogger("httpx").disabled = True
+logging.getLogger("httpcore").disabled = True
 
 
 class TelegramError(RuntimeError):
