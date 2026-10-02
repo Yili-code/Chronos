@@ -19,7 +19,7 @@ multi-selection and a generation fingerprint that includes content, progress and
 model/prompt version. Repeated selection callbacks use set membership, not toggles.
 The fingerprint is not a database lock and does not alone prevent concurrent jobs.
 
-234 Python tests pass. The extension extracts visible activity PDF metadata and
+236 Python tests pass. The extension extracts visible activity PDF metadata and
 has an explicit handoff button; the loopback receiver validates metadata and
 accumulates isolated per-activity snapshots in memory. An HTTP regression test
 confirms rejected extra fields cannot alter an accepted snapshot. Unknown
@@ -211,3 +211,14 @@ fail closed. File replacement precedes index commit, so interruption can leave a
 orphan blob but not a partially written indexed file. A restart/corruption test
 passes. Local save time is not upload time, the saved subset is not a complete
 course catalog, and this does not establish browser-to-cloud synchronization.
+
+## Local summary input checkpoint
+
+`generate_local_summary` now resolves only explicitly confirmed selections from
+the persistent PDF index, verifies bytes and parser page counts, and feeds the
+summary pipeline. Missing, renamed or already-hash-bound changed attachments
+return deferred_attachment before model invocation. Two tests use actual generated
+PDFs and cover selected-only loading, changed content and missing-file refusal.
+First-resolved hashes are not yet written back to durable selection state, so the
+caller still needs a freeze step before cross-process generation retries. This is
+not cloud synchronization or automatic callback-to-generation dispatch.
