@@ -19,7 +19,7 @@ multi-selection and a generation fingerprint that includes content, progress and
 model/prompt version. Repeated selection callbacks use set membership, not toggles.
 The fingerprint is not a database lock and does not alone prevent concurrent jobs.
 
-227 Python tests pass. The extension extracts visible activity PDF metadata and
+231 Python tests pass. The extension extracts visible activity PDF metadata and
 has an explicit handoff button; the loopback receiver validates metadata and
 accumulates isolated per-activity snapshots in memory. An HTTP regression test
 confirms rejected extra fields cannot alter an accepted snapshot. Unknown
@@ -181,3 +181,15 @@ billing guarantee. No live Gemini request or PDF upload has occurred.
 API references checked: https://ai.google.dev/api/generate-content and
 https://ai.google.dev/gemini-api/docs/structured-output . Live schema compatibility
 and actual model availability still require verification.
+
+## PDF parser checkpoint
+
+The generation pipeline now validates PDF structure with pypdf 6.19 and compares
+the actual page-tree count with supplied metadata before claiming generation.
+Malformed envelopes, encryption, empty page trees and over-limit page counts are
+rejected with generic errors. Four parser tests and updated pipeline fixtures use
+real generated blank PDFs, not lecture content. This proves structural parsing,
+not rendering quality, semantic evidence or live lecture download. Parsing is
+currently in-process: process isolation/time-memory enforcement remain required
+before exposing this path to untrusted production files. Local persistence still
+uses envelope checks; structural verification is enforced at generation entry.

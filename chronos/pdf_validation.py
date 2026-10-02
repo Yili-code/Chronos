@@ -1,0 +1,31 @@
+"""Structural PDF checks; not semantic accuracy or visual-layout validation."""
+from io import BytesIO
+import logging
+from pypdf import PdfReader
+from .pdf_persistence import inspect_pdf_bytes, PdfEvidenceStatus
+
+# Parser diagnostics can include untrusted document strings. Return only codes.
+logging.getLogger("pypdf").disabled = True
+logging.getLogger("pypdf").addHandler(logging.NullHandler())
+logging.getLogger("pypdf").propagate = False
+logging.getLogger("pypdf._reader").disabled = True
+
+
+def pdf_page_count(data: bytes) -> int:
+    if not isinstance(data, bytes) or not 32 <= len(data) <= 12 * 1024 * 1024:
+        raise ValueError("pdf_size_invalid")
+    if inspect_pdf_bytes(data).status is not PdfEvidenceStatus.VALID:
+        raise ValueError("pdf_envelope_invalid")
+    try:
+        reader = PdfReader(BytesIO(data), strict=True)
+        if reader.is_encrypted:
+            raise ValueError("encrypted")
+        count = len(reader.pages)
+        if not 1 <= count <= 1000:
+            raise ValueError("page_limit")
+        for page in reader.pages:
+            if len(page.mediabox) != 4:
+                raise ValueError("invalid_page")
+        return count
+    except Exception:
+        raise ValueError("pdf_unreadable_or_unsupported") from None

@@ -1,4 +1,6 @@
 import hashlib
+from io import BytesIO
+from pypdf import PdfWriter
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 import pytest
@@ -12,7 +14,11 @@ from chronos.summary_pipeline import PdfInput, generate_selected_summary
 async def test_pipeline_persists_before_delivery_and_never_regenerates(tmp_path, valid):
     db = Database(tmp_path / "pipeline.db")
     db.initialize()
-    data = b"synthetic-parser-input"
+    writer = PdfWriter()
+    writer.add_blank_page(width=612, height=792)
+    output = BytesIO()
+    writer.write(output)
+    data = output.getvalue()
     item = PdfMaterial("a", "course", "lecture.pdf", None, hashlib.sha256(data).hexdigest())
     selected = MaterialSelection("session", "course", "chapter one", (item,)).choose("a", selected=True).confirm()
     point = {"text": "概念" * (270 if valid else 1), "citations": [{"source_id": "a", "page": 1}]}
