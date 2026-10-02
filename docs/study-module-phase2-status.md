@@ -19,7 +19,7 @@ multi-selection and a generation fingerprint that includes content, progress and
 model/prompt version. Repeated selection callbacks use set membership, not toggles.
 The fingerprint is not a database lock and does not alone prevent concurrent jobs.
 
-231 Python tests pass. The extension extracts visible activity PDF metadata and
+233 Python tests pass. The extension extracts visible activity PDF metadata and
 has an explicit handoff button; the loopback receiver validates metadata and
 accumulates isolated per-activity snapshots in memory. An HTTP regression test
 confirms rejected extra fields cannot alter an accepted snapshot. Unknown
@@ -193,3 +193,11 @@ not rendering quality, semantic evidence or live lecture download. Parsing is
 currently in-process: process isolation/time-memory enforcement remain required
 before exposing this path to untrusted production files. Local persistence still
 uses envelope checks; structural verification is enforced at generation entry.
+
+Generation entry now uses an isolated Python parser subprocess with a ten-second
+wall timeout, sanitized environment, suppressed diagnostics and no shell. The
+async pipeline runs it off the event loop. A real Windows subprocess test reads
+a generated PDF; another test checks timeout classification and credential-env
+exclusion. POSIX CPU/address-space limits are implemented but not tested here.
+Windows hard memory limits remain missing. This is process isolation, not a
+security sandbox: filesystem/network capability restrictions are not enforced.

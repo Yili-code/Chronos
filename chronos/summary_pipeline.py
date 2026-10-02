@@ -2,11 +2,12 @@
 from dataclasses import dataclass
 import hashlib
 import re
+import asyncio
 from .note_record import NoteRecord, NoteSource
 from .note_delivery import deliver_summary
 from .study_notes import SummaryDraft, render_note
 from .summary_jobs import SummaryJobs
-from .pdf_validation import pdf_page_count
+from .pdf_validation import isolated_pdf_page_count
 
 
 class GenerationRejected(Exception):
@@ -33,7 +34,7 @@ async def generate_selected_summary(db, generator, telegram, *, selection, pdfs,
             raise ValueError("selected PDF content changed")
         if type(source.page_count) is not int or source.page_count < 1:
             raise ValueError("verified PDF page count required")
-        if pdf_page_count(source.data) != source.page_count:
+        if await asyncio.to_thread(isolated_pdf_page_count, source.data) != source.page_count:
             raise ValueError("PDF page count mismatch")
     jobs = SummaryJobs(db)
     claim = jobs.claim(key, now)
