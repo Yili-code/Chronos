@@ -137,6 +137,20 @@ def test_course_reply_shares_receipt_transaction(monkeypatch):
     assert db.get_update(1234) == receipt
 
 
+def test_delivery_claim_survives_new_ledger_instance(monkeypatch):
+    from datetime import timezone, timedelta
+    from chronos.study_delivery import StudyDeliveryLedger
+    db = database(monkeypatch)
+    now = datetime(2026, 10, 2, tzinfo=timezone.utc)
+    claim = StudyDeliveryLedger(db).claim("security:2026-10-05:prompt", now)
+    assert claim is not None
+    recreated = StudyDeliveryLedger(db)
+    assert recreated.claim("security:2026-10-05:prompt", now) is None
+    assert recreated.claim("security:2026-10-05:prompt", now + timedelta(minutes=3)) is None
+    result = recreated.finish("security:2026-10-05:prompt", claim, now, message_id=123)
+    assert result["status"] == "sent"
+
+
 def test_firestore_task_lifecycle_and_order(monkeypatch):
     db = database(monkeypatch)
     service = TaskService(db, TZ)

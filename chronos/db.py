@@ -1,4 +1,5 @@
 import sqlite3
+import json
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime
@@ -36,6 +37,10 @@ CREATE TABLE IF NOT EXISTS course_sessions (
     reported_progress TEXT,
     reply_message_id INTEGER
 );
+CREATE TABLE IF NOT EXISTS study_deliveries (
+    delivery_key TEXT PRIMARY KEY,
+    state_json TEXT NOT NULL
+);
 """
 
 
@@ -48,6 +53,19 @@ class Database:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as connection:
             connection.executescript(SCHEMA)
+
+    def mutate_study_delivery(self, key: str, transition: Callable) -> dict:
+        """Atomically apply a pure delivery-state transition; never send here."""
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT state_json FROM study_deliveries WHERE delivery_key=?", (key,)
+            ).fetchone()
+            state = transition(json.loads(row[0]) if row else None)
+            connection.execute(
+                "INSERT INTO study_deliveries VALUES (?, ?) ON CONFLICT(delivery_key) "
+                "DO UPDATE SET state_json=excluded.state_json", (key, json.dumps(state))
+            )
+            return state
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:

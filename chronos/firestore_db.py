@@ -23,6 +23,7 @@ class FirestoreDatabase:
         self.updates = self.client.collection(f"{collection_prefix}_telegram_updates")
         self.meta = self.client.collection(f"{collection_prefix}_meta")
         self.course_sessions = self.client.collection(f"{collection_prefix}_course_sessions")
+        self.study_deliveries = self.client.collection(f"{collection_prefix}_study_deliveries")
         self._transaction: ContextVar[firestore.Transaction | None] = ContextVar(
             "firestore_transaction", default=None
         )
@@ -30,6 +31,17 @@ class FirestoreDatabase:
     def initialize(self) -> None:
         # Firestore collections are created on their first write.
         return None
+
+    def mutate_study_delivery(self, key: str, transition: Callable) -> dict:
+        """Transaction callbacks must be pure: Firestore can replay them."""
+        def mutate(transaction):
+            reference = self.study_deliveries.document(key)
+            snapshot = reference.get(transaction=transaction)
+            state = transition(snapshot.to_dict() if snapshot.exists else None)
+            transaction.set(reference, state)
+            return state
+
+        return self._run_transaction(mutate)
 
     @staticmethod
     def _task_data(task_id: int, data: dict) -> dict:

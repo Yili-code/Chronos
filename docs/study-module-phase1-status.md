@@ -26,6 +26,12 @@ Answered/missed sessions cannot return to a reminder state.
 
 ## Required before completion
 
+The delivery ledger now supports atomic claims in SQLite and Firestore. Competing
+senders cannot claim the same key; interrupted sends become uncertain after two
+minutes and are not automatically resent. Explicit rejection allows at most three
+attempts with five-minute spacing. These rules are tested locally (including
+SQLite concurrency and fake Firestore recreation); runtime service wiring remains.
+
 - Persist delivery intent atomically before sending prompts/reminders. The current
   send-then-save service can duplicate a message after a crash or concurrent call;
   sequential fake tests do not prove retry-safe delivery.
