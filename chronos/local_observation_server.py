@@ -15,6 +15,7 @@ from typing import Mapping
 from urllib.parse import urlsplit
 
 from .chrome_bridge import BrowserBridgeError, BrowserObservation, parse_observation
+from .material_bridge import validate_material_observation
 
 
 MAX_BODY_BYTES = 256_000
@@ -75,7 +76,7 @@ class _ObservationHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_POST(self) -> None:  # noqa: N802
-        if self.path != "/v1/browser-observation":
+        if self.path not in {"/v1/browser-observation", "/v1/browser-materials"}:
             self._send_json(404, {"error": "not_found"})
             return
         if not self._allowed_origin() or self.headers.get("X-Chronos-Bridge") != "1":
@@ -88,8 +89,11 @@ class _ObservationHandler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(content_length))
             if not isinstance(payload, dict):
                 raise BrowserBridgeError("observation must be an object")
-            observation = _validate_payload(payload)
-            self.server.observation_store.put(observation)  # type: ignore[attr-defined]
+            if self.path == "/v1/browser-materials":
+                self.server.material_observation = validate_material_observation(payload)
+            else:
+                observation = _validate_payload(payload)
+                self.server.observation_store.put(observation)  # type: ignore[attr-defined]
         except (BrowserBridgeError, ValueError, json.JSONDecodeError):
             self._send_json(400, {"error": "invalid_observation"})
             return
@@ -106,6 +110,7 @@ class LocalObservationServer(ThreadingHTTPServer):
     def __init__(self, port: int = 8765) -> None:
         super().__init__(("127.0.0.1", port), _ObservationHandler)
         self.observation_store = ObservationStore()
+        self.material_observation = None
 
 
 def main() -> None:
