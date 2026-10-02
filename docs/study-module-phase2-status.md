@@ -19,7 +19,7 @@ multi-selection and a generation fingerprint that includes content, progress and
 model/prompt version. Repeated selection callbacks use set membership, not toggles.
 The fingerprint is not a database lock and does not alone prevent concurrent jobs.
 
-211 Python tests pass. The extension extracts visible activity PDF metadata and
+214 Python tests pass. The extension extracts visible activity PDF metadata and
 has an explicit handoff button; the loopback receiver validates metadata and
 accumulates isolated per-activity snapshots in memory. An HTTP regression test
 confirms rejected extra fields cannot alter an accepted snapshot. Unknown
@@ -121,3 +121,14 @@ owner/secret rejection before note reads, missing-note feedback, duplicate updat
 handling and uncertain-send suppression, with the real SQLite repository and a
 mocked Telegram sender. Automatic
 summary chunk delivery is still unimplemented.
+
+## Summary delivery service checkpoint
+
+`deliver_summary` now splits immutable canonical Markdown into ordered plain-text
+messages. Per-chat, fingerprint, chunk-version and index receipts skip confirmed
+chunks on retry; explicit rejection stops until retry eligibility, while unknown
+outcomes stop without automatic resending. Three SQLite-backed service tests
+verify full 6,500-character preservation, middle-chunk resume and uncertain-stop
+behavior with mocked Telegram. This supersedes the missing chunk-service note
+above, but generation completion and scheduler integration remain pending; no live
+automatic summary delivery has been verified.
