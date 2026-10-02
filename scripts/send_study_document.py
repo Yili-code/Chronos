@@ -3,12 +3,16 @@
 Secrets remain in memory. Never print request exceptions, URLs or responses.
 """
 import logging
+import argparse
 from pathlib import Path
 
 import httpx
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--phase', choices=('0', '1'), default='0')
+    phase = parser.parse_args().phase
     logging.disable(logging.CRITICAL)
     try:
         settings = {}
@@ -18,11 +22,12 @@ def main():
                 settings[key.strip()] = value.strip().strip('\"').strip("'")
         token = settings['TELEGRAM_BOT_TOKEN']
         chat = settings['TELEGRAM_CHAT_ID']
-        document = Path(__file__).resolve().parents[1] / 'docs/study-module-interview-prep.md'
+        filename = 'study-module-interview-prep.md' if phase == '0' else 'study-module-phase1-interview-prep.md'
+        document = Path(__file__).resolve().parents[1] / 'docs' / filename
         with document.open('rb') as stream:
             response = httpx.post(
                 f'https://api.telegram.org/bot{token}/sendDocument',
-                data={'chat_id': chat, 'caption': 'Chronos Phase 0 面試準備文件：完整 Markdown 附件。'},
+                data={'chat_id': chat, 'caption': f'Chronos Phase {phase} 面試準備文件：完整 Markdown 附件。'},
                 files={'document': (document.name, stream, 'text/markdown')}, timeout=40,
             )
         result = response.json()
