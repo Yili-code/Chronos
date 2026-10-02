@@ -36,6 +36,14 @@ This does not verify factual entailment, obtain page counts, enforce the final
 Live extension-to-receiver delivery, PDF byte retrieval, Telegram button
 integration, Gemini summaries and notes storage remain unverified.
 
+The extension now includes a bounded PDF GET handler for sources present in the
+current visible activity catalog. Browser-managed credentials stay in Chrome;
+redirects are rejected, transfers time out after 30 seconds, and streams above
+12 MiB are cancelled. HTML responses fail the PDF envelope check. This check is
+not a PDF parser. Twelve JavaScript tests pass with mocked download responses;
+no live download or local byte handoff is established by these tests. The handler
+is extension-runtime-only and is not exposed through the page-facing probe.
+
 ## Integration gaps
 
 The extension can export redacted observations and visible PDF metadata locally.
