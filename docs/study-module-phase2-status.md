@@ -19,7 +19,7 @@ multi-selection and a generation fingerprint that includes content, progress and
 model/prompt version. Repeated selection callbacks use set membership, not toggles.
 The fingerprint is not a database lock and does not alone prevent concurrent jobs.
 
-246 Python tests pass. The extension extracts visible activity PDF metadata and
+247 Python tests pass. The extension extracts visible activity PDF metadata and
 has an explicit handoff button; the loopback receiver validates metadata and
 accumulates isolated per-activity snapshots in memory. An HTTP regression test
 confirms rejected extra fields cannot alter an accepted snapshot. Unknown
@@ -251,3 +251,13 @@ tests check safe defaults and mapping validation. The launcher has not been run
 enabled. It must use the same database project/prefix as the webhook. Oldest-attempt
 ordering now prevents a fixed first batch of deferred records monopolizing passes;
 full scans and durable retry scheduling still need improvement.
+
+## Shared browser metadata checkpoint
+
+The receiver CLI now persists activity metadata to `.study-data/catalog.sqlite3`
+by default (`--catalog-path` overrides it). MaterialObservationStore can read the
+same database from another process and returns observed_at plus explicit
+complete_course=false for snapshots. One shared-instance test verifies durable
+reads, unknown-response preservation and rejected-secret-field isolation. This
+does not establish catalog freshness, complete traversal or genuine upload dates;
+selection prompting must preserve these limits instead of substituting save time.

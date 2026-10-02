@@ -119,18 +119,19 @@ class _ObservationHandler(BaseHTTPRequestHandler):
 class LocalObservationServer(ThreadingHTTPServer):
     """A loopback-only HTTP server for explicit popup handoffs."""
 
-    def __init__(self, port: int = 8765, pdf_directory: Path | None = None) -> None:
+    def __init__(self, port: int = 8765, pdf_directory: Path | None = None, catalog_path: Path | None = None) -> None:
         super().__init__(("127.0.0.1", port), _ObservationHandler)
         self.observation_store = ObservationStore()
-        self.material_store = MaterialObservationStore()
+        self.material_store = MaterialObservationStore(catalog_path)
         self.pdf_store = PdfStore(pdf_directory or Path(".study-data/pdfs"))
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the local Chronos observation receiver")
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--catalog-path", type=Path, default=Path(".study-data/catalog.sqlite3"))
     args = parser.parse_args()
-    server = LocalObservationServer(args.port)
+    server = LocalObservationServer(args.port, catalog_path=args.catalog_path)
     print(f"Chronos local observation receiver listening on 127.0.0.1:{args.port}")
     try:
         server.serve_forever()

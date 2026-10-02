@@ -2,13 +2,18 @@
 import re
 from threading import Lock
 from copy import deepcopy
+from pathlib import Path
+import json
+import sqlite3
+from datetime import datetime, timezone
 
 
 class MaterialObservationStore:
-    """In-memory snapshots by activity; unknown observations never erase data."""
-    def __init__(self):
+    """Activity snapshots with optional durable storage, never a complete catalog."""
+    def __init__(self, path: Path | None = None):
         self._lock = Lock()
         self._activities = {}
+        self.path = Path(path) if path is not None else None
 
     def put(self, payload: dict) -> None:
         observation = validate_material_observation(payload)
@@ -17,10 +22,25 @@ class MaterialObservationStore:
         identities = {(row['course_id'], row['activity_id']) for row in observation['materials']}
         if len(identities) != 1:
             raise ValueError('one activity per observation is required')
+        if self.path is not None:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            course, activity = next(iter(identities))
+            with sqlite3.connect(self.path) as connection:
+                connection.execute("CREATE TABLE IF NOT EXISTS activity_snapshots (course_id TEXT, activity_id TEXT, observed_at TEXT, rows_json TEXT, PRIMARY KEY(course_id, activity_id))")
+                connection.execute("INSERT INTO activity_snapshots VALUES (?, ?, ?, ?) ON CONFLICT(course_id, activity_id) DO UPDATE SET observed_at=excluded.observed_at, rows_json=excluded.rows_json",
+                    (course, activity, datetime.now(timezone.utc).isoformat(), json.dumps(observation['materials'])))
+            return
         with self._lock:
             self._activities[next(iter(identities))] = observation['materials']
 
     def course_materials(self, course_id: str) -> list[dict]:
+        if self.path is not None:
+            snapshots = self.course_snapshots(course_id)
+            by_source = {}
+            for snapshot in snapshots:
+                for row in snapshot['materials']:
+                    by_source[row['source_id']] = row
+            return list(by_source.values())
         with self._lock:
             by_source = {}
             for (course, _activity), rows in self._activities.items():
@@ -28,6 +48,18 @@ class MaterialObservationStore:
                     for row in rows:
                         by_source[row['source_id']] = row
             return deepcopy(list(by_source.values()))
+
+    def course_snapshots(self, course_id: str) -> list[dict]:
+        """Observation time is not upload time or proof of completeness."""
+        if self.path is None or not self.path.exists():
+            return []
+        with sqlite3.connect(self.path) as connection:
+            rows = connection.execute("SELECT activity_id, observed_at, rows_json FROM activity_snapshots WHERE course_id=? ORDER BY observed_at, activity_id", (course_id,)).fetchall()
+        result = []
+        for activity, observed_at, encoded in rows:
+            observation = validate_material_observation({'status': 'observed', 'materials': json.loads(encoded)})
+            result.append({'activity_id': activity, 'observed_at': observed_at, 'materials': observation['materials'], 'complete_course': False})
+        return result
 
 
 def validate_material_observation(payload: dict) -> dict:
