@@ -19,7 +19,7 @@ multi-selection and a generation fingerprint that includes content, progress and
 model/prompt version. Repeated selection callbacks use set membership, not toggles.
 The fingerprint is not a database lock and does not alone prevent concurrent jobs.
 
-220 Python tests pass. The extension extracts visible activity PDF metadata and
+222 Python tests pass. The extension extracts visible activity PDF metadata and
 has an explicit handoff button; the loopback receiver validates metadata and
 accumulates isolated per-activity snapshots in memory. An HTTP regression test
 confirms rejected extra fields cannot alter an accepted snapshot. Unknown
@@ -154,3 +154,15 @@ Callbacks from any other message are rejected. A saved successful receipt can
 restore interrupted binding without resending. One SQLite-backed test covers this
 recovery plus incorrect-message rejection. The service still needs real catalog
 ingestion and confirmed-selection generation dispatch; no live prompt was sent.
+
+## Summary coordination checkpoint
+
+`generate_selected_summary` connects confirmed selection, exact source-set/hash
+checks, generation claims, structured citation validation, canonical persistence
+and chunk delivery. It checks 1,500–2,500 BMP CJK characters in rendered Markdown
+(including headings/citations); this counting convention needs product review.
+Two SQLite-backed tests use fake generator/Telegram and synthetic parser inputs
+to verify persistence before send, no regeneration on retry and no delivery of
+too-short drafts. Real PDF parsing, Gemini implementation, dispatch from confirmed
+callbacks and live integration remain pending. Invalid output becomes uncertain
+and is not regenerated automatically; manual recovery is not implemented yet.
