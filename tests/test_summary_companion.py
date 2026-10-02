@@ -25,3 +25,14 @@ async def test_pass_uses_saved_session_and_skips_finished_work(repo, monkeypatch
     assert generate.call_args.kwargs["course"] == session.course_name
     assert (await summary_companion.run_summary_pass(repo, None, None, None, enabled=True, **options))["processed"] == 0
     assert generate.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_terminal_failure_notice_is_sent_once(repo):
+    now = datetime.now(timezone.utc)
+    bot = AsyncMock()
+    bot.send_message.return_value = {"ok": True, "result": {"message_id": 4}}
+    for _ in range(2):
+        await summary_companion.notify_summary_problem(repo, bot, "pick", 123, "uncertain", now)
+    assert bot.send_message.await_count == 1
+    assert "結果不明" in bot.send_message.call_args.args[1]

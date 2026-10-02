@@ -39,6 +39,12 @@ async def generate_selected_summary(db, generator, telegram, *, selection, pdfs,
     jobs = SummaryJobs(db)
     claim = jobs.claim(key, now)
     if claim is None:
+        state = db.get_summary_job(key)
+        if state and state["status"] in {"retry", "failed", "uncertain"}:
+            return state["status"]
+        # A completed job without its canonical note is inconsistent, not pending.
+        if state and state["status"] == "completed":
+            return "uncertain"
         return "generation_pending"
     try:
         raw = await generator.generate(progress=selection.reported_progress, pdfs=pdfs,

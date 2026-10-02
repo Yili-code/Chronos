@@ -36,6 +36,7 @@ def test_explicit_rejection_is_bounded(repo):
         assert state["attempt_count"] == attempt + 1
         assert jobs.claim(KEY, current) is None
     assert state["status"] == "failed"
+    assert repo.get_summary_job(KEY)["status"] == "failed"
     assert jobs.claim(KEY, NOW + timedelta(days=1)) is None
 
 

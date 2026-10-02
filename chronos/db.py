@@ -86,6 +86,11 @@ class Database:
                                (key, json.dumps(state)))
             return state
 
+    def get_summary_job(self, key: str) -> dict | None:
+        with self.connect() as connection:
+            row = connection.execute("SELECT state_json FROM summary_jobs WHERE fingerprint=?", (key,)).fetchone()
+        return json.loads(row[0]) if row else None
+
     def mutate_material_selection(self, key: str, transition: Callable) -> dict:
         with self.transaction() as connection:
             row = connection.execute("SELECT state_json FROM material_selections WHERE selection_key=?", (key,)).fetchone()

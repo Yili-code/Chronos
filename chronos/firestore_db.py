@@ -58,6 +58,10 @@ class FirestoreDatabase:
             return state
         return self._run_transaction(mutate)
 
+    def get_summary_job(self, key: str) -> dict | None:
+        snapshot = self.summary_jobs.document(key).get()
+        return snapshot.to_dict() if snapshot.exists else None
+
     def mutate_material_selection(self, key: str, transition: Callable) -> dict:
         def mutate(transaction):
             reference = self.material_selections.document(key)
