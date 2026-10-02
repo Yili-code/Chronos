@@ -1,5 +1,41 @@
 # Phase 2 — active implementation
 
+## Acceptance audit — 2026-10-03
+
+**Not accepted.** Component implementation and local integration do not prove the
+requested live workflow. The chronological checkpoints below are historical;
+this requirement-level audit takes precedence when interpreting completion.
+
+| Requirement | Current evidence | Remaining gate |
+| --- | --- | --- |
+| Course PDF list, newest upload first | Activity DOM extractor emits uploaded_at=null; snapshots explicitly incomplete | Observe and implement complete course traversal and genuine upload metadata; do not substitute observation/save time |
+| Browser-session PDF retrieval | Bounded content-script download, popup handoff, local blob/index tests | Reload installed extension, configure its exact ID, verify real popup transfer; automatic retrieval of Telegram-selected files is not implemented |
+| Explicit multi-selection and Done | Real webhook route with SQLite tests, revision/message binding | Live Telegram interaction against the intended deployed/local receiver and shared database |
+| Combined Gemini summary | Real adapter code; mocked HTTP plus generated blank PDFs in the vertical slice | Verify free-tier eligibility, model/schema compatibility and real multi-PDF output; review scope, meaning, citations and inference quality |
+| 1500–2500 Chinese characters | Local count checks BMP CJK characters in rendered Markdown | Agree on counting convention and verify actual generated output; current invalid-output behavior stops as uncertain rather than automatic regeneration |
+| Firestore canonical notes | Isolated live note roundtrip, first-result preservation and claim completion passed | Verify actual worker/webhook use the same intended project/prefix and deployed credentials; live complete workflow remains absent |
+| Read/filter/export notes | Local command routes; real synthetic Markdown sendDocument accepted | Live /notes and /note; deployed /export route; user viewing is not established by API acceptance |
+| Automatic chunk delivery and failures | Per-chunk claims and deduplicated failure notices tested with mocks | Real multi-message delivery and failure recovery workflow; late-success/recovery cases need operational validation |
+| Retry deduplication | SQLite races, local vertical slice, sequential live Firestore claims | Live concurrent execution and operational uncertain-outcome recovery; no exactly-once provider claim |
+| Secret safety/read-only scope | No credential export, origin allowlist, isolated parser environment | Live extension compatibility, local trust model, retention limits and Windows parser memory bound remain limitations |
+
+Next evidence sequence:
+
+1. User supplies the public Chronos extension ID and confirms reload; use the
+   existing TronClass tab and explicitly test one PDF receiver handoff.
+2. Inspect the actual course listing/upload metadata. Implement only observed
+   interfaces; unknown upload timestamps or incomplete traversal remain failures
+   of the original catalog requirement, not accepted feature reductions.
+3. Confirm Gemini free-tier/project billing constraints before a live request.
+   Start with synthetic material, then user-selected course PDFs for semantic QA.
+4. Run live selection, generation, Firestore readback, chunk delivery and export
+   as one workflow using the intended shared database, then re-audit this table.
+
+User inputs outstanding: installed extension ID/reload confirmation and Gemini
+free-tier/billing confirmation. Do not ask for cookie values or API keys in chat.
+The worker is not running merely because a launcher exists. No enabled companion
+process or newly deployed Phase 2 webhook has been verified.
+
 ## PRD acceptance scope
 
 - Obtain course-specific PDF metadata through the approved browser-session route;
