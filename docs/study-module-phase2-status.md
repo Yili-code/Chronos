@@ -19,7 +19,7 @@ multi-selection and a generation fingerprint that includes content, progress and
 model/prompt version. Repeated selection callbacks use set membership, not toggles.
 The fingerprint is not a database lock and does not alone prevent concurrent jobs.
 
-187 Python tests pass. The extension extracts visible activity PDF metadata and
+193 Python tests pass. The extension extracts visible activity PDF metadata and
 has an explicit handoff button; the loopback receiver validates metadata and
 accumulates isolated per-activity snapshots in memory. An HTTP regression test
 confirms rejected extra fields cannot alter an accepted snapshot. Unknown
@@ -69,3 +69,16 @@ feature complete using manual uploads or synthetic catalogs as a substitute.
 
 Next: design and implement the authenticated browser-to-local material boundary,
 durable selection persistence, then wire Telegram callbacks and summary jobs.
+
+## Canonical note storage checkpoint
+
+`NoteRecord` holds course/date/progress, selected source metadata and hashes,
+Markdown, model/prompt version, completed status, creation time and fingerprint.
+Failed generation attempts must remain job records rather than completed notes.
+Firestore methods now save first-result-wins in a transaction, retrieve by full
+fingerprint and list/filter notes. Markdown export returns UTF-8 bytes without
+depending on Cloud Run local files. Six tests cover records, export and a fake
+Firestore retry; no live notes write has been performed. This does not prevent
+duplicate model calls, verify semantic grounding, or integrate Telegram commands.
+List queries currently sort after retrieval and need bounded server-side queries
+and indexes before a large archive. SQLite parity also remains pending.

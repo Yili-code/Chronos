@@ -10,6 +10,7 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 
 from .course_tracking import ProgressSession, accept_reply, mark_missed_at_day_end
 from .course_tracking_store import session_from_firestore, session_to_firestore
+from .note_record import NoteRecord
 
 
 class FirestoreDatabase:
@@ -25,6 +26,7 @@ class FirestoreDatabase:
         self.meta = self.client.collection(f"{collection_prefix}_meta")
         self.course_sessions = self.client.collection(f"{collection_prefix}_course_sessions")
         self.study_deliveries = self.client.collection(f"{collection_prefix}_study_deliveries")
+        self.study_notes = self.client.collection(f"{collection_prefix}_study_notes")
         self._transaction: ContextVar[firestore.Transaction | None] = ContextVar(
             "firestore_transaction", default=None
         )
@@ -32,6 +34,35 @@ class FirestoreDatabase:
     def initialize(self) -> None:
         # Firestore collections are created on their first write.
         return None
+
+    def save_study_note(self, note: NoteRecord) -> NoteRecord:
+        """First completed result wins; retries never overwrite canonical content."""
+        data = NoteRecord.model_validate(note.model_dump()).model_dump(mode="json")
+        def save(transaction):
+            reference = self.study_notes.document(note.content_fingerprint)
+            snapshot = reference.get(transaction=transaction)
+            if snapshot.exists:
+                return NoteRecord.model_validate(snapshot.to_dict())
+            transaction.create(reference, data)
+            return NoteRecord.model_validate(data)
+        return self._run_transaction(save)
+
+    def get_study_note(self, fingerprint: str) -> NoteRecord | None:
+        if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
+            return None
+        snapshot = self.study_notes.document(fingerprint).get()
+        return NoteRecord.model_validate(snapshot.to_dict()) if snapshot.exists else None
+
+    def list_study_notes(self, course: str | None = None, limit: int = 20) -> list[NoteRecord]:
+        if not 1 <= limit <= 100:
+            raise ValueError("invalid note limit")
+        query = self.study_notes
+        if course is not None:
+            query = query.where(filter=FieldFilter("course", "==", course))
+        # Filtering first avoids exposing unrelated course results. Server-side
+        # ordering/limits and indexes are needed before a large notes archive.
+        notes = [NoteRecord.model_validate(s.to_dict()) for s in query.stream()]
+        return sorted(notes, key=lambda n: (n.created_at, n.content_fingerprint), reverse=True)[:limit]
 
     def mutate_study_delivery(self, key: str, transition: Callable) -> dict:
         """Transaction callbacks must be pure: Firestore can replay them."""
