@@ -1,4 +1,5 @@
 import pytest
+from dataclasses import replace
 from chronos.selection_store import SelectionStore, decode
 from chronos.study_materials import MaterialSelection, PdfMaterial
 from test_note_repository import repo
@@ -32,3 +33,20 @@ def test_selection_rejects_wrong_chat_or_unknown_source(repo):
         store.apply("key", 999, 0, source_id="a", selected=True)
     with pytest.raises(ValueError):
         store.apply("key", 123, 0, source_id="other", selected=True)
+
+
+def test_freeze_keeps_first_content_identity(repo):
+    store = SelectionStore(repo)
+    chosen = selection().choose("a", selected=True).confirm()
+    store.create("key", 123, chosen)
+    verified = replace(chosen, catalog=(replace(chosen.catalog[0], sha256="a" * 64), chosen.catalog[1]))
+    first = store.freeze_content("key", 123, verified)
+    assert store.freeze_content("key", 123, verified) == first
+    assert decode(repo.get_material_selection("key")["selection"]) == verified
+    changed = replace(verified, catalog=(replace(verified.catalog[0], sha256="b" * 64), verified.catalog[1]))
+    with pytest.raises(ValueError):
+        store.freeze_content("key", 123, changed)
+    with pytest.raises(ValueError):
+        store.freeze_content("key", 123, replace(verified, reported_progress="different"))
+    with pytest.raises(ValueError):
+        store.freeze_content("key", 999, verified)

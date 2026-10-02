@@ -3,6 +3,7 @@ import asyncio
 from dataclasses import replace
 from .pdf_validation import isolated_pdf_page_count
 from .summary_pipeline import PdfInput, generate_selected_summary
+from .selection_store import SelectionStore, decode
 
 
 def load_selected_pdfs(selection, pdf_store):
@@ -28,11 +29,21 @@ def load_selected_pdfs(selection, pdf_store):
 
 
 async def generate_local_summary(db, generator, telegram, pdf_store, *, selection,
-                                 course, class_date, chat_id, model, prompt_version, now):
+                                 course, class_date, chat_id, model, prompt_version, now,
+                                 selection_key=None):
     if not selection.confirmed:
         return "selection_required"
     try:
+        if selection_key is None:
+            return "selection_binding_required"
+        state = db.get_material_selection(selection_key)
+        if state is None or state["chat_id"] != chat_id:
+            return "selection_required"
+        # Resolve the authoritative saved selection, not a caller's stale copy.
+        selection = decode(state["selection"])
         verified, pdfs = await asyncio.to_thread(load_selected_pdfs, selection, pdf_store)
+        frozen = SelectionStore(db).freeze_content(selection_key, chat_id, verified)
+        verified = decode(frozen["selection"])
     except (ValueError, OSError):
         return "deferred_attachment"
     return await generate_selected_summary(db, generator, telegram, selection=verified,

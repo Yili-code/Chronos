@@ -19,7 +19,7 @@ multi-selection and a generation fingerprint that includes content, progress and
 model/prompt version. Repeated selection callbacks use set membership, not toggles.
 The fingerprint is not a database lock and does not alone prevent concurrent jobs.
 
-236 Python tests pass. The extension extracts visible activity PDF metadata and
+238 Python tests pass. The extension extracts visible activity PDF metadata and
 has an explicit handoff button; the loopback receiver validates metadata and
 accumulates isolated per-activity snapshots in memory. An HTTP regression test
 confirms rejected extra fields cannot alter an accepted snapshot. Unknown
@@ -222,3 +222,9 @@ PDFs and cover selected-only loading, changed content and missing-file refusal.
 First-resolved hashes are not yet written back to durable selection state, so the
 caller still needs a freeze step before cross-process generation retries. This is
 not cloud synchronization or automatic callback-to-generation dispatch.
+
+The local generation entry now requires a durable selection key, reloads the
+authoritative saved selection, and transactionally freezes first-resolved hashes
+before generation. Two adapter tests reject different hashes, changed progress
+and another chat while allowing identical retries. This closes the missing hash
+freeze step above, but does not implement dispatch or real-data verification.

@@ -1,5 +1,5 @@
 """Durable explicit selections with optimistic revision checks."""
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime
 import re
 from .study_materials import MaterialSelection, PdfMaterial
@@ -49,6 +49,30 @@ class SelectionStore:
             if previous.get("message_id") not in {None, message_id}:
                 raise ValueError("selection already bound")
             return {**previous, "message_id": message_id}
+        return self.db.mutate_material_selection(key, transition)
+
+    def freeze_content(self, key, chat_id, verified):
+        """Bind content identities once without changing the confirmed choices."""
+        self.validate_key(key)
+        def transition(previous):
+            if previous is None or previous["chat_id"] != chat_id:
+                raise ValueError("selection not available")
+            current = decode(previous["selection"])
+            if not current.confirmed or not verified.confirmed:
+                raise ValueError("confirmed selection required")
+            original_shape = replace(current, catalog=tuple(replace(item, sha256=None) for item in current.catalog))
+            verified_shape = replace(verified, catalog=tuple(replace(item, sha256=None) for item in verified.catalog))
+            if original_shape != verified_shape:
+                raise ValueError("selection context changed")
+            items = []
+            for old, new in zip(current.catalog, verified.catalog):
+                if old.source_id in current.selected_ids:
+                    if new.sha256 is None or (old.sha256 is not None and old.sha256 != new.sha256):
+                        raise ValueError("selected content identity changed")
+                    items.append(new)
+                else:
+                    items.append(old)
+            return {**previous, "selection": encode(replace(current, catalog=tuple(items)))}
         return self.db.mutate_material_selection(key, transition)
 
     def apply(self, key, chat_id, revision, *, source_id=None, selected=None, confirm=False):
