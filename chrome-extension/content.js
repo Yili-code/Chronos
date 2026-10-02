@@ -5,6 +5,10 @@
 document.documentElement?.setAttribute("data-chronos-read-only-bridge", "active");
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === "chronos.list_visible_materials") {
+    sendResponse(globalThis.ChronosMaterials.extractMaterials(document, location.href));
+    return false;
+  }
   if (message?.type !== "chronos.observe_read_only") {
     return false;
   }
