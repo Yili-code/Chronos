@@ -42,7 +42,10 @@ HELP_TEXT = (
     "/done 1 — Complete task 1\n"
     "/reschedule 1 tomorrow at 10:00 — Change task 1's due time\n"
     "/edit 1 move it to Friday and rename it — Edit task 1\n"
-    "/clear — Delete all tasks after confirmation"
+    "/clear — Delete all tasks after confirmation\n"
+    "/notes [course] — List saved study notes\n"
+    "/note id [page] — Read a saved note\n"
+    "/export id — Download canonical Markdown"
 )
 
 CLEAR_CONFIRM_TEXT = "Delete all tasks? This cannot be undone."
@@ -226,6 +229,15 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
     if settings.telegram_chat_id and chat_id != settings.telegram_chat_id:
         raise HTTPException(status_code=403, detail="Unauthorized chat")
     update_id = update.update_id
+    export_match = re.fullmatch(r"/export\s+([0-9a-f]{64})", (source_message.text or "").strip())
+    if update.callback_query is None and source_message.reply_to_message is None and export_match:
+        from .note_delivery import export_note
+        status = await export_note(db, telegram, chat_id=chat_id, update_id=update_id,
+                                   fingerprint=export_match.group(1), now=datetime.now(settings.tz))
+        if status != "not_found":
+            if status in {"retry", "sending"}:
+                raise HTTPException(status_code=503, detail="Document delivery pending")
+            return {"ok": True, "document_status": status}
     receipt = db.get_update(update_id)
     if update.callback_query:
         if receipt is None:
@@ -279,6 +291,8 @@ async def prepare_message(text: str) -> Callable[[], str]:
     """Resolve external input first; the returned action performs no async work."""
     normalized = text.strip()
     command = normalized[1:].strip() if normalized.startswith("/") else None
+    if command == "export" or (command is not None and command.startswith("export ")):
+        return lambda: "找不到可匯出的筆記，或編號格式不正確。用法：/export 完整編號；請先用 /notes 取得編號。"
     if command is not None and (command == "notes" or command.startswith("notes ") or command == "note" or command.startswith("note ")):
         from .note_commands import note_command
         return lambda: note_command(db, command) or "用法：/notes [課程名稱] 或 /note 完整編號。"

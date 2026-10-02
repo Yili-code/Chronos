@@ -57,6 +57,26 @@ class TelegramClient:
     async def answer_callback_query(self, callback_query_id: str) -> dict:
         return await self.request("answerCallbackQuery", {"callback_query_id": callback_query_id})
 
+    async def send_document(self, chat_id: int, filename: str, content: bytes) -> dict:
+        if not self.enabled:
+            return {"ok": False, "error_code": 401}
+        try:
+            async with httpx.AsyncClient(timeout=40) as client:
+                response = await client.post(
+                    f"https://api.telegram.org/bot{self.token}/sendDocument",
+                    data={"chat_id": str(chat_id)},
+                    files={"document": (filename, content, "text/markdown; charset=utf-8")},
+                )
+        except httpx.HTTPError as error:
+            raise TelegramError(f"Telegram document transport failed: {type(error).__name__}") from None
+        try:
+            result = response.json()
+        except ValueError:
+            raise TelegramError("Telegram document outcome is unknown") from None
+        if not isinstance(result, dict):
+            raise TelegramError("Telegram document outcome is unknown")
+        return result
+
     async def set_webhook(self, url: str, secret: str = "") -> dict:
         payload = {"url": url, "allowed_updates": ["message", "callback_query"]}
         if secret:
