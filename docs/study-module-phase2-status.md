@@ -295,3 +295,16 @@ files were removed automatically; the test attachment remains in Telegram.
 No lecture content, credentials, cookies or private note contents were sent.
 This confirms Telegram API acceptance, not human viewing or production webhook
 deployment. Do not blindly rerun the verifier after an unknown delivery outcome.
+
+## Live Phase 2 Firestore evidence — 2026-10-03
+
+Ran `python -m scripts.verify_phase2_firestore` with existing local gcloud
+credentials captured only in memory. A fresh `study_phase2_verify_<UUID>` prefix
+isolated three synthetic documents from production records. Observed results:
+note_roundtrip=true, first_result_preserved=true, selection_roundtrip=true,
+job_completed=true and cleanup_complete=true. A second database client read back
+the note and selection; the test also checked exclusive sequential claims and
+completion after canonical persistence. Exactly the three test documents were
+deleted and absence verified. No real course data or secrets were stored in them.
+This proves real adapter read/write behavior, not concurrent load safety, deployed
+service-account permissions, complete catalogs or full live summary generation.
