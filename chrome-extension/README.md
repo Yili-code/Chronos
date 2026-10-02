@@ -26,6 +26,10 @@ The page-facing probe exists only to make a local smoke test possible. It is
 not an authentication channel and does not grant access to cookies, storage,
 or request headers.
 
+On a supported TronClass or CAS tab, open the extension action to view the
+same redacted observation locally. The popup performs no network request and
+does not submit or modify page data.
+
 The pure observation helpers and message handler can be checked locally with:
 
 ```text

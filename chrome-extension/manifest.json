@@ -4,6 +4,10 @@
   "version": "0.1.0",
   "description": "Expose redacted, read-only TronClass page observations to Chronos.",
   "permissions": ["activeTab"],
+  "action": {
+    "default_title": "Chronos read-only observation",
+    "default_popup": "popup.html"
+  },
   "host_permissions": [
     "https://tronclass.ntou.edu.tw/*",
     "https://tccas.ntou.edu.tw/*"
