@@ -232,9 +232,8 @@ implement the full Study Module.
 
 ## Local browser bridge
 
-Cloud Run cannot directly access YiLi's local Chrome profile. A future local
-bridge (extension or companion process) must therefore expose only a redacted
-observation payload:
+Cloud Run cannot directly access YiLi's local Chrome profile. The current local
+bridge prototype therefore exposes only a redacted observation payload:
 
 ```json
 {
@@ -247,7 +246,8 @@ The bridge boundary strips query strings and fragments before data enters
 Chronos. Payloads containing cookies, headers, browser storage, passwords,
 tokens, CSRF values, or authorization fields are rejected. This is a local
 transport contract, not an instruction to expose the browser to the public
-internet.
+internet. The prototype receiver binds to loopback only, rejects secret-bearing
+fields, and keeps the latest observation in memory.
 
 `BridgeTabTransport` is the in-process seam between that payload and
 `ChromeBrowserConnector`. It requests one opaque tab id, validates the payload,
@@ -256,9 +256,12 @@ secret-bearing payload fails closed before session classification.
 
 ## Extension-first implementation stage
 
-The first extension skeleton lives under `chrome-extension/`. It is Manifest
-V3, restricted to the NTOU CAS and TronClass origins, and responds only to an
-explicit `chronos.observe_read_only` message. It has no automatic network
-destination yet. This keeps the first installed artifact useful for validating
-the observation contract without prematurely creating a local listener or
-transmitting page data.
+The first extension implementation lives under `chrome-extension/`. It is
+Manifest V3, restricted to the NTOU CAS and TronClass origins plus the local
+loopback receiver, and responds only after an explicit popup action. The
+receiver is implemented in `chronos/local_observation_server.py`; it does not
+create a public listener or transmit data automatically.
+
+PDF evidence measurement is implemented separately in
+`chronos/pdf_persistence.py`. It can classify local samples, but it does not
+replace the still-missing live repeated-download evidence.
