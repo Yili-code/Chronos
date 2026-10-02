@@ -246,8 +246,10 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             if source_message.reply_to_message is not None:
                 if source_message.message_id is None:
                     raise HTTPException(status_code=422, detail="Reply message id is required")
+                received_date = datetime.now(settings.tz).date()
                 action = lambda: db.record_course_reply(
-                    source_message.reply_to_message.message_id, source_message.message_id, text
+                    source_message.reply_to_message.message_id, source_message.message_id, text,
+                    local_date=received_date,
                 )
             else:
                 action = await prepare_message(text)

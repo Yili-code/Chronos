@@ -155,6 +155,19 @@ def test_firestore_scheduler_expires_unanswered_sessions(monkeypatch):
     assert bot.send_message.await_count == 1
 
 
+def test_firestore_late_reply_expires_before_cleanup(monkeypatch):
+    from datetime import date
+    from chronos.course_tracking import COURSE_SCHEDULE, new_session
+    db = database(monkeypatch)
+    session = new_session(COURSE_SCHEDULE[0], date(2026, 10, 5), 101)
+    db.create_course_session(session)
+    receipt = db.process_update(202, lambda: db.record_course_reply(
+        101, 102, "Chapter 4", local_date=date(2026, 10, 6)))
+    assert "期限已結束" in receipt["reply"]
+    assert db.get_course_session(session.session_id).status.value == "missed"
+    assert db.get_update(202) == receipt
+
+
 def test_course_reply_shares_receipt_transaction(monkeypatch):
     from datetime import date
     from chronos.course_tracking import COURSE_SCHEDULE, new_session

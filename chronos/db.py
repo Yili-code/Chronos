@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Iterator
 
-from .course_tracking import ProgressSession, accept_reply
+from .course_tracking import ProgressSession, accept_reply, mark_missed_at_day_end
 from .course_tracking_store import session_from_firestore, session_to_firestore
 
 
@@ -186,7 +186,7 @@ class Database:
             )
         return self.get_course_session(session.session_id) or session
 
-    def record_course_reply(self, prompt_id: int, message_id: int, text: str) -> str:
+    def record_course_reply(self, prompt_id: int, message_id: int, text: str, *, local_date=None) -> str:
         """Called inside process_update, sharing the webhook receipt transaction."""
         with self.connect() as connection:
             row = connection.execute(
@@ -195,6 +195,11 @@ class Database:
             if row is None:
                 return "這則訊息不是課後進度問題，請回覆原始課後訊息。"
             session = session_from_firestore(dict(row))
+            if local_date is not None:
+                expired = mark_missed_at_day_end(session, local_date=local_date)
+                if expired != session:
+                    self.save_course_session(expired)
+                    return "這堂課的回覆期限已結束，未變更進度。"
             answered = accept_reply(session, reply_to_message_id=prompt_id,
                                     reply_message_id=message_id, text=text)
             if answered is None:
