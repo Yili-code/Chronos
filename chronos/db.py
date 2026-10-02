@@ -1,5 +1,6 @@
 import sqlite3
 import json
+import re
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime
@@ -8,6 +9,7 @@ from typing import Callable, Iterator
 
 from .course_tracking import ProgressSession, accept_reply, mark_missed_at_day_end
 from .course_tracking_store import session_from_firestore, session_to_firestore
+from .note_record import NoteRecord
 
 
 SCHEMA = """
@@ -41,6 +43,14 @@ CREATE TABLE IF NOT EXISTS study_deliveries (
     delivery_key TEXT PRIMARY KEY,
     state_json TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS study_notes (
+    fingerprint TEXT PRIMARY KEY,
+    course TEXT NOT NULL,
+    created_epoch REAL NOT NULL,
+    record_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_study_notes_recent ON study_notes(created_epoch DESC, fingerprint DESC);
+CREATE INDEX IF NOT EXISTS idx_study_notes_course ON study_notes(course, created_epoch DESC, fingerprint DESC);
 """
 
 
@@ -53,6 +63,39 @@ class Database:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as connection:
             connection.executescript(SCHEMA)
+
+    def save_study_note(self, note: NoteRecord) -> NoteRecord:
+        validated = NoteRecord.model_validate(note.model_dump())
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT INTO study_notes VALUES (?, ?, ?, ?) ON CONFLICT(fingerprint) DO NOTHING",
+                (validated.content_fingerprint, validated.course, validated.created_at.timestamp(),
+                 validated.model_dump_json()),
+            )
+            row = connection.execute("SELECT record_json FROM study_notes WHERE fingerprint=?",
+                                     (validated.content_fingerprint,)).fetchone()
+        return NoteRecord.model_validate_json(row[0])
+
+    def get_study_note(self, fingerprint: str) -> NoteRecord | None:
+        if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
+            return None
+        with self.connect() as connection:
+            row = connection.execute("SELECT record_json FROM study_notes WHERE fingerprint=?", (fingerprint,)).fetchone()
+        return NoteRecord.model_validate_json(row[0]) if row else None
+
+    def list_study_notes(self, course: str | None = None, limit: int = 20) -> list[NoteRecord]:
+        if not 1 <= limit <= 100:
+            raise ValueError("invalid note limit")
+        query = "SELECT record_json FROM study_notes"
+        values = []
+        if course is not None:
+            query += " WHERE course=?"
+            values.append(course)
+        query += " ORDER BY created_epoch DESC, fingerprint DESC LIMIT ?"
+        values.append(limit)
+        with self.connect() as connection:
+            rows = connection.execute(query, values).fetchall()
+        return [NoteRecord.model_validate_json(row[0]) for row in rows]
 
     def mutate_study_delivery(self, key: str, transition: Callable) -> dict:
         """Atomically apply a pure delivery-state transition; never send here."""
