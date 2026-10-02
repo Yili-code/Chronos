@@ -19,7 +19,7 @@ multi-selection and a generation fingerprint that includes content, progress and
 model/prompt version. Repeated selection callbacks use set membership, not toggles.
 The fingerprint is not a database lock and does not alone prevent concurrent jobs.
 
-206 Python tests pass. The extension extracts visible activity PDF metadata and
+211 Python tests pass. The extension extracts visible activity PDF metadata and
 has an explicit handoff button; the loopback receiver validates metadata and
 accumulates isolated per-activity snapshots in memory. An HTTP regression test
 confirms rejected extra fields cannot alter an accepted snapshot. Unknown
@@ -116,5 +116,8 @@ claim prevents blind resends after success or uncertain transport. Explicit 4xx
 rejections use the existing bounded retry ledger. Three service tests cover
 success, timeout and rejection using a real SQLite ledger and mocked Telegram.
 This supersedes the earlier pending export implementation note; live Telegram
-document delivery and webhook-route integration tests remain pending. Automatic
+document delivery remains pending. Five webhook integration cases now verify
+owner/secret rejection before note reads, missing-note feedback, duplicate update
+handling and uncertain-send suppression, with the real SQLite repository and a
+mocked Telegram sender. Automatic
 summary chunk delivery is still unimplemented.
