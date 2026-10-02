@@ -28,7 +28,7 @@ def selection_view(key, state, page=0):
     rows.append([{"text": "完成選擇", "callback_data": prefix + "done"}])
     if any(len(button["callback_data"].encode()) > 64 for row in rows for button in row):
         raise ValueError("callback exceeds Telegram limit")
-    return f"請選擇 PDF（{page + 1}/{pages} 頁，已選 {len(selection.selected_ids)} 份）；按完成選擇才確認。", {"inline_keyboard": rows}
+    return f"僅列出已觀察到的活動附件，非完整課程清單；上傳時間未知，未按最新上傳排序。\n請選擇 PDF（{page + 1}/{pages} 頁，已選 {len(selection.selected_ids)} 份）；按完成選擇才確認。", {"inline_keyboard": rows}
 
 
 def apply_callback(db, chat_id, data, *, message_id):

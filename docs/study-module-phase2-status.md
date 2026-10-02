@@ -19,7 +19,7 @@ multi-selection and a generation fingerprint that includes content, progress and
 model/prompt version. Repeated selection callbacks use set membership, not toggles.
 The fingerprint is not a database lock and does not alone prevent concurrent jobs.
 
-247 Python tests pass. The extension extracts visible activity PDF metadata and
+249 Python tests pass. The extension extracts visible activity PDF metadata and
 has an explicit handoff button; the loopback receiver validates metadata and
 accumulates isolated per-activity snapshots in memory. An HTTP regression test
 confirms rejected extra fields cannot alter an accepted snapshot. Unknown
@@ -261,3 +261,12 @@ complete_course=false for snapshots. One shared-instance test verifies durable
 reads, unknown-response preservation and rejected-secret-field isolation. This
 does not establish catalog freshness, complete traversal or genuine upload dates;
 selection prompting must preserve these limits instead of substituting save time.
+
+The enabled companion now invokes observed-catalog prompting before generation.
+Answered sessions with mapped course IDs and snapshots no older than 24 hours
+receive a stable, deduplicated selection prompt. Nothing is preselected. The text
+explicitly states incomplete course coverage and unknown upload-time ordering.
+Two shared-adapter tests cover absent data, prompt creation and duplicate
+suppression with mocked Telegram. This is an incremental integration path, not
+acceptance of the PRD's complete, newest-upload-first catalog requirement. A later
+fresh snapshot does not automatically refresh an already delivered selection.

@@ -254,6 +254,11 @@ class FirestoreDatabase:
         query = self.course_sessions.where(filter=FieldFilter("status", "in", ["pending", "reminded_once", "reminded_twice"]))
         return [session_from_firestore(snapshot.to_dict()) for snapshot in query.stream()]
 
+    def list_answered_course_sessions(self) -> list[ProgressSession]:
+        query = self.course_sessions.where(filter=FieldFilter("status", "==", "answered"))
+        return sorted([session_from_firestore(snapshot.to_dict()) for snapshot in query.stream()],
+                      key=lambda session: (session.class_date, session.session_id), reverse=True)
+
     def mutate_course_session(self, session_id: str, transition: Callable) -> ProgressSession:
         def mutate(transaction):
             reference = self.course_sessions.document(session_id)

@@ -288,6 +288,11 @@ class Database:
             rows = connection.execute("SELECT * FROM course_sessions WHERE status NOT IN ('answered','missed')").fetchall()
         return [session_from_firestore(dict(row)) for row in rows]
 
+    def list_answered_course_sessions(self) -> list[ProgressSession]:
+        with self.connect() as connection:
+            rows = connection.execute("SELECT * FROM course_sessions WHERE status='answered' ORDER BY class_date DESC, session_id").fetchall()
+        return [session_from_firestore(dict(row)) for row in rows]
+
     def mutate_course_session(self, session_id: str, transition: Callable) -> ProgressSession:
         with self.transaction():
             current = self.get_course_session(session_id)

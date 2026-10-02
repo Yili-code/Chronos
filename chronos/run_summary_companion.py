@@ -29,6 +29,7 @@ def parser():
     result.add_argument("--free-tier-confirmed", action="store_true")
     result.add_argument("--course-map", type=course_mapping)
     result.add_argument("--pdf-directory", type=Path, default=Path(".study-data/pdfs"))
+    result.add_argument("--catalog-path", type=Path, default=Path(".study-data/catalog.sqlite3"))
     result.add_argument("--watch", action="store_true", help="Repeat until interrupted; default is one pass")
     return result
 
@@ -46,6 +47,8 @@ async def run(args):
     from .pdf_store import PdfStore
     from .telegram import TelegramClient
     from .summary_companion import run_summary_pass
+    from .catalog_prompt import prompt_observed_catalogs
+    from .material_bridge import MaterialObservationStore
     if not settings.telegram_chat_id or not settings.telegram_bot_token or not settings.gemini_api_key:
         print("summary_companion=configuration_required")
         return 2
@@ -55,6 +58,8 @@ async def run(args):
     bot = TelegramClient(settings.telegram_bot_token)
     store = PdfStore(args.pdf_directory)
     while True:
+        await prompt_observed_catalogs(db, bot, MaterialObservationStore(args.catalog_path),
+            owner_chat_id=settings.telegram_chat_id, course_mapping=args.course_map, now=datetime.now(settings.tz))
         result = await run_summary_pass(db, generator, bot, store,
             owner_chat_id=settings.telegram_chat_id, course_mapping=args.course_map,
             model=settings.gemini_model, prompt_version=PROMPT_VERSION,
