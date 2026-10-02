@@ -10,6 +10,9 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
 from enum import Enum
+from zoneinfo import ZoneInfo
+
+TAIPEI = ZoneInfo("Asia/Taipei")
 
 
 class ProgressStatus(str, Enum):
@@ -98,6 +101,10 @@ def due_reminder(session: ProgressSession, *, now: datetime, prompt_sent_at: dat
     if session.status in {ProgressStatus.ANSWERED, ProgressStatus.MISSED}:
         return None
     elapsed = now - prompt_sent_at
+    if now.utcoffset() is None or prompt_sent_at.utcoffset() is None:
+        raise ValueError("reminder timestamps must be timezone-aware")
+    if now.astimezone(TAIPEI).date() != session.class_date:
+        return None
     if session.reminder_count < 1 and elapsed >= timedelta(hours=1):
         return 1
     if session.reminder_count < 2 and elapsed >= timedelta(hours=2):
@@ -106,6 +113,8 @@ def due_reminder(session: ProgressSession, *, now: datetime, prompt_sent_at: dat
 
 
 def record_reminder(session: ProgressSession, reminder_number: int) -> ProgressSession:
+    if session.status in {ProgressStatus.ANSWERED, ProgressStatus.MISSED}:
+        raise ValueError("terminal sessions cannot be reminded")
     if reminder_number not in {1, 2} or reminder_number != session.reminder_count + 1:
         raise ValueError("reminders must be recorded in order and stop at two")
     status = ProgressStatus.REMINDED_ONCE if reminder_number == 1 else ProgressStatus.REMINDED_TWICE
@@ -113,6 +122,7 @@ def record_reminder(session: ProgressSession, reminder_number: int) -> ProgressS
 
 
 def mark_missed_at_day_end(session: ProgressSession, *, local_date: date) -> ProgressSession:
-    if session.class_date != local_date or session.status in {ProgressStatus.ANSWERED, ProgressStatus.MISSED}:
+    # The scheduler may restart several days later: expire every older session.
+    if session.class_date >= local_date or session.status in {ProgressStatus.ANSWERED, ProgressStatus.MISSED}:
         return session
     return replace(session, status=ProgressStatus.MISSED)

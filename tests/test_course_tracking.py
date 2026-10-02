@@ -46,6 +46,22 @@ def test_reminders_are_limited_to_two_and_stop_after_answer():
 
 def test_unanswered_session_becomes_missed_at_day_end_without_cross_day_reminder():
     session = new_session(COURSE_SCHEDULE[0], date(2026, 10, 5), prompt_message_id=101)
-    missed = mark_missed_at_day_end(session, local_date=date(2026, 10, 5))
+    missed = mark_missed_at_day_end(session, local_date=date(2026, 10, 6))
     assert missed.status is ProgressStatus.MISSED
-    assert mark_missed_at_day_end(session, local_date=date(2026, 10, 6)).status is ProgressStatus.PENDING
+    assert mark_missed_at_day_end(session, local_date=date(2026, 10, 5)).status is ProgressStatus.PENDING
+    assert mark_missed_at_day_end(session, local_date=date(2026, 10, 9)).status is ProgressStatus.MISSED
+
+
+def test_reminders_stop_at_taipei_midnight_even_without_cleanup():
+    session = new_session(COURSE_SCHEDULE[0], date(2026, 10, 5), 101)
+    sent = datetime(2026, 10, 5, 4, 10, tzinfo=timezone.utc)
+    midnight = datetime(2026, 10, 5, 16, 0, tzinfo=timezone.utc)
+    assert due_reminder(session, now=midnight, prompt_sent_at=sent) is None
+
+
+def test_cannot_reopen_answered_session_by_recording_reminder():
+    import pytest
+    session = new_session(COURSE_SCHEDULE[0], date(2026, 10, 5), 101)
+    answered = accept_reply(session, reply_to_message_id=101, reply_message_id=102, text="Chapter 4")
+    with pytest.raises(ValueError, match="terminal"):
+        record_reminder(answered, 1)
