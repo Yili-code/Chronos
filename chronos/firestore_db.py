@@ -47,6 +47,10 @@ class FirestoreDatabase:
         snapshot = self.study_deliveries.document(key).get()
         return snapshot.to_dict() if snapshot.exists else None
 
+    def list_failed_study_deliveries(self) -> list[str]:
+        query = self.study_deliveries.where(filter=FieldFilter("status", "in", ["uncertain", "failed"]))
+        return [snapshot.id for snapshot in query.stream() if not snapshot.id.startswith("notice:")]
+
     @staticmethod
     def _task_data(task_id: int, data: dict) -> dict:
         return {"id": task_id, **data}

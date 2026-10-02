@@ -72,6 +72,12 @@ class Database:
             row = connection.execute("SELECT state_json FROM study_deliveries WHERE delivery_key=?", (key,)).fetchone()
         return json.loads(row[0]) if row else None
 
+    def list_failed_study_deliveries(self) -> list[str]:
+        with self.connect() as connection:
+            rows = connection.execute("SELECT delivery_key, state_json FROM study_deliveries").fetchall()
+        return [row[0] for row in rows if not row[0].startswith("notice:")
+                and json.loads(row[1])["status"] in {"uncertain", "failed"}]
+
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
         active = self._transaction.get()

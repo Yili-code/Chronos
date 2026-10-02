@@ -18,7 +18,7 @@ from .settings import settings
 from .tasks import TaskService, format_task, format_tasks
 from .telegram import TelegramClient
 from .web import PAGE
-from .study_scheduler import tick_study
+from .study_scheduler import tick_study, notify_study_failures
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("chronos")
@@ -100,7 +100,10 @@ async def run_study_tick() -> dict:
         return {"enabled": False}
     if not settings.telegram_chat_id or not telegram.enabled:
         raise HTTPException(status_code=503, detail="Study delivery is not configured")
-    return await tick_study(db, telegram, settings.telegram_chat_id, datetime.now(settings.tz))
+    now = datetime.now(settings.tz)
+    result = await tick_study(db, telegram, settings.telegram_chat_id, now)
+    notices = await notify_study_failures(db, telegram, settings.telegram_chat_id, now)
+    return {**result, **notices}
 
 
 @app.post("/internal/study")

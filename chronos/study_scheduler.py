@@ -92,3 +92,27 @@ async def tick_study(db, telegram, chat_id: int, now: datetime) -> dict:
             db.mutate_course_session(session.session_id, advance)
             reminders += 1
     return {"sessions_reconciled": created, "reminders_reconciled": reminders}
+
+
+async def notify_study_failures(db, telegram, chat_id: int, now: datetime) -> dict:
+    """Bound notifications by source key; never recursively report notice failures."""
+    ledger = StudyDeliveryLedger(db)
+    sent = 0
+    unresolved = 0
+    for source_key in db.list_failed_study_deliveries():
+        key = "notice:" + source_key
+        claim = ledger.claim(key, now)
+        if claim:
+            try:
+                result = await telegram.send_message(chat_id,
+                    "一則課後通知無法確認送達，或已達重試上限。"
+                    "Chronos 已停止自動重送該則訊息；請檢查今天的課後問題。")
+            except TelegramError:
+                ledger.finish(key, claim, now)
+            else:
+                message_id, rejected = delivery_outcome(result)
+                state = ledger.finish(key, claim, now, message_id=message_id, definitely_rejected=rejected)
+                sent += state["status"] == "sent"
+        state = db.get_study_delivery(key)
+        unresolved += state["status"] != "sent"
+    return {"failure_notices_sent": sent, "failure_notices_unresolved": unresolved}
