@@ -1,6 +1,6 @@
 # Chronos Study Module — Phase 0 Feasibility Report
 
-Date: 2026-10-01
+Date: 2026-10-02
 
 This report records the Phase 0 feasibility spike only. It does not implement
 the Study Module or perform any TronClass write operation.
@@ -11,7 +11,7 @@ the Study Module or perform any TronClass write operation.
 | --- | --- | --- |
 | CAS account/password login | Partial / adapter route rejected | The credential probe completed two attempts; CAS issued a TGT and service ticket on both attempts. TronClass rejected both ticket-to-session exchanges and redirected back to CAS login. Browser-mediated manual login still works. |
 | Courses, announcements, assignments, deadlines, attachments | Confirmed read-only | The authenticated UI exposed course navigation, announcement HTML and links, assignment status/type, deadline ranges, and attachment names/sizes/download links. |
-| PDF download | Single-sample confirmed; repeatability deferred | The authenticated endpoint produced a local PDF file. The file was 522,673 bytes, began with `%PDF-`, parsed as PDF 1.7 with 13 pages, and rendered successfully. A second download attempt timed out in the browser connector and did not produce a second local file; repeat-download stability remains a Phase 1 gate. |
+| PDF download | Verified for the tested attachment | The authenticated activity produced five local PDF files: four downloads in one Chrome profile and one in a second Chrome profile. All were 466,300 bytes, PDF 1.7, 14 pages, valid `%PDF-`/EOF samples, and had the same SHA-256. Broader attachment coverage remains future evidence. |
 | Session reuse | Confirmed for the observed session | The authenticated session survived navigation from the `tcmedia` PDF tab back to TronClass, a full page reload, and reloads at t=30s and t=60s. The observed session lifetime is therefore at least 60 seconds; actual expiry and refresh lifetimes were not measured. |
 | Cookie / CSRF lifecycle | Not inspected | Cookie values, headers, tokens, and browser storage were intentionally not read or logged. Their exact lifetime and renewal rules remain unknown. |
 | Official academic calendar parsing | Confirmed for the sampled source | The calendar probe parsed 103 dated events from the official NTOU academic-calendar page and found normal instruction, no-class/holiday, exam-period, and confirmation-needed cases. |
@@ -35,6 +35,9 @@ the Study Module or perform any TronClass write operation.
 9. Lifecycle checks did not inspect cookie values, CSRF tokens, local storage,
    or headers. The session remained authenticated after the observed reloads,
    including t=30s and t=60s. No logout or forced-expiry action was performed.
+10. A live CAS login page was observed without entering credentials. A safe
+    redacted snapshot classified as `cas_redirect` through the connector
+    classifier, establishing the user-facing `reauth_required` mapping.
 
 No assignment submission, data edit, message, attendance action, or other
 TronClass write operation was performed.
@@ -85,10 +88,10 @@ The detailed interface and state contract is in
 - Exact session expiration and renewal timing; current evidence establishes
   only a 60-second lower bound.
 - Whether PDF downloads require an additional token, referer, or browser-only
-  behavior that a server-side client cannot reproduce.
-- Whether repeated PDF downloads remain stable across a fresh browser session;
-  until that is demonstrated, attachment persistence remains deferred for
-  Phase 1. Browser viewing is the safe fallback.
+  behavior that a server-side client cannot reproduce for other attachments.
+- Whether repeated PDF downloads remain stable for other file sizes, courses,
+  or after a longer idle period. The tested attachment passed the current
+  repeatability gate; unsupported attachments remain browser-only until tested.
 - Stable read endpoints and pagination semantics across courses and semesters.
 - Whether announcement HTML and external links should be stored verbatim,
   sanitized, or reduced to plain text.
@@ -109,15 +112,17 @@ The detailed interface and state contract is in
 - The live browser observation was performed read-only on 2026-10-01. It is
   evidence of the current account/session and site behavior, not a guarantee
   that future sessions or server-side requests will behave identically.
+- `docs/study-module-pdf-repeatability-evidence.md` records the redacted live
+  PDF sample matrix and integrity results from the connected Chrome profiles.
 
 ## Conclusion
 
-Phase 0 is **not fully complete**. The core read-only TronClass surface and
-short-term browser session reuse are feasible, and the official calendar path is feasible. The
-tested credential-based REST route is currently **not reliable for TronClass
-session establishment**: CAS ticket issuance passed twice, but both
-end-to-end exchanges returned to CAS login. PDF persistence passed for one
-sample but repeatability is deferred. Remaining blockers are a repeat-download
-test and measured expiration/renewal behavior. A browser-session adapter is the
-recommended design direction, with `reauth_required` on CAS redirects; Phase 1
-should not start until attachment repeatability and lifecycle gates are closed.
+Phase 0 feasibility is **complete for the tested scope, with explicit limits**.
+The core read-only TronClass surface, official calendar path, browser-session
+reuse, CAS redirect classification, and the tested PDF attachment are feasible.
+The credential-based REST route remains **not reliable** for TronClass session
+establishment: CAS ticket issuance passed twice, but both end-to-end exchanges
+returned to CAS login. Exact cookie, CSRF, expiry, and renewal rules remain
+unknown because secrets were intentionally not inspected. A browser-session
+adapter is the recommended design direction; other attachments require the
+same repeatability evidence before durable persistence is enabled.
