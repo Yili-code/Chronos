@@ -19,7 +19,7 @@ multi-selection and a generation fingerprint that includes content, progress and
 model/prompt version. Repeated selection callbacks use set membership, not toggles.
 The fingerprint is not a database lock and does not alone prevent concurrent jobs.
 
-240 Python tests pass. The extension extracts visible activity PDF metadata and
+246 Python tests pass. The extension extracts visible activity PDF metadata and
 has an explicit handoff button; the loopback receiver validates metadata and
 accumulates isolated per-activity snapshots in memory. An HTTP regression test
 confirms rejected extra fields cannot alter an accepted snapshot. Unknown
@@ -239,3 +239,15 @@ dispatch context and completion skipping with mocked generation. This is a worke
 function, not an activated daemon or deployment. Full collection scans, fairness
 for repeatedly deferred selections, recovery policy and real-data wiring remain
 unfinished; no live model requests or Telegram messages were sent by this worker.
+
+The worker now has a launcher: `.venv\\Scripts\\python.exe -m
+chronos.run_summary_companion`. Running it without arguments was verified to
+return `summary_companion=disabled` without initializing providers. Enablement
+requires `--enable`, `--free-tier-confirmed` and `--course-map` containing a JSON
+object of known schedule keys to verified numeric TronClass IDs. `--watch` repeats
+every 30 seconds; without it there is one pass. `--pdf-directory` selects the local
+blob store. Never treat the eligibility flag as a billing guarantee. Six launcher
+tests check safe defaults and mapping validation. The launcher has not been run
+enabled. It must use the same database project/prefix as the webhook. Oldest-attempt
+ordering now prevents a fixed first batch of deferred records monopolizing passes;
+full scans and durable retry scheduling still need improvement.

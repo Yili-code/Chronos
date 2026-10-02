@@ -11,7 +11,8 @@ async def run_summary_pass(db, generator, telegram, pdf_store, *, owner_chat_id,
     if not owner_chat_id or not 1 <= limit <= 20:
         raise ValueError("owner and bounded batch required")
     outcomes = {}
-    for key, state in db.list_material_selections():
+    pending = sorted(db.list_material_selections(), key=lambda item: (item[1].get("processed_at", ""), item[0]))
+    for key, state in pending:
         if len(outcomes) >= limit:
             break
         if state["chat_id"] != owner_chat_id or not state["selection"]["confirmed"]:
