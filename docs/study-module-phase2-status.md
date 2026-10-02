@@ -38,6 +38,29 @@ process or newly deployed Phase 2 webhook has been verified.
 
 ## PRD acceptance scope
 
+### Live catalog inspection — 2026-10-03
+
+The existing authenticated Chrome tab was inspected through visible DOM only.
+Navigation from the activity's course link to `content`, then the visible
+`教材` link to `courseware`, succeeded. One navigation tool call timed out;
+the next DOM snapshot confirmed success, so the action was not repeated.
+
+The OS courseware page displayed five reference-file activities across two
+chapter groups. This establishes a course-level discovery surface, not five
+PDFs: activity attachment counts and file identities still need inspection.
+The rendered sorting control contained chapter and title choices plus ascending
+and descending order. No upload-date field or upload-date sorting choice was
+observed. Absence here does not prove the server has no upload metadata.
+
+Reproduction: open the authenticated course, choose 教材, inspect activity rows
+and sorting controls. Do not click download or complete any activity to reproduce
+these observations. No pagination completeness, extension handoff, authentication
+renewal, or attachment-byte integrity was established by this inspection.
+
+Next implementation evidence needed: rendered row structure and stable activity
+identifiers, per-activity attachment enumeration, and an authoritative source of
+upload dates. Do not infer timestamps from chapter order or local observation time.
+
 - Obtain course-specific PDF metadata through the approved browser-session route;
   newest uploads first. Preserve explicit reauthentication/deferred outcomes.
 - Telegram multi-select with an explicit confirmation action, never infer consent.
