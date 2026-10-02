@@ -19,7 +19,7 @@ multi-selection and a generation fingerprint that includes content, progress and
 model/prompt version. Repeated selection callbacks use set membership, not toggles.
 The fingerprint is not a database lock and does not alone prevent concurrent jobs.
 
-249 Python tests pass. The extension extracts visible activity PDF metadata and
+250 Python tests pass. The extension extracts visible activity PDF metadata and
 has an explicit handoff button; the loopback receiver validates metadata and
 accumulates isolated per-activity snapshots in memory. An HTTP regression test
 confirms rejected extra fields cannot alter an accepted snapshot. Unknown
@@ -270,3 +270,15 @@ Two shared-adapter tests cover absent data, prompt creation and duplicate
 suppression with mocked Telegram. This is an incremental integration path, not
 acceptance of the PRD's complete, newest-upload-first catalog requirement. A later
 fresh snapshot does not automatically refresh an already delivered selection.
+
+## Local vertical-slice evidence
+
+`tests/test_phase2_integration.py` exercises persisted browser-format metadata and
+PDF bytes, catalog prompting, authenticated selection callbacks, companion
+dispatch, isolated PDF parsing, Gemini request serialization/response validation,
+canonical SQLite storage, summary delivery and authenticated Markdown export.
+It verifies one provider call across worker retries and one attachment send across
+duplicate export updates. The full suite passes 250 tests. The PDF is generated
+blank content and the Gemini/Telegram networks are mocked: this proves internal
+integration, not real browser transfer, semantic quality, Firestore production
+behavior, free-tier eligibility or live Telegram delivery.
