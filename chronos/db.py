@@ -99,6 +99,11 @@ class Database:
             row = connection.execute("SELECT state_json FROM material_selections WHERE selection_key=?", (key,)).fetchone()
         return json.loads(row[0]) if row else None
 
+    def list_material_selections(self) -> list[tuple[str, dict]]:
+        with self.connect() as connection:
+            rows = connection.execute("SELECT selection_key, state_json FROM material_selections ORDER BY selection_key").fetchall()
+        return [(row[0], json.loads(row[1])) for row in rows]
+
     def get_study_note(self, fingerprint: str) -> NoteRecord | None:
         if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
             return None

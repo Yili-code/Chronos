@@ -71,6 +71,9 @@ class FirestoreDatabase:
         snapshot = self.material_selections.document(key).get()
         return snapshot.to_dict() if snapshot.exists else None
 
+    def list_material_selections(self) -> list[tuple[str, dict]]:
+        return sorted([(snapshot.id, snapshot.to_dict()) for snapshot in self.material_selections.stream()])
+
     def get_study_note(self, fingerprint: str) -> NoteRecord | None:
         if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
             return None

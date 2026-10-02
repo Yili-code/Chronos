@@ -19,7 +19,7 @@ multi-selection and a generation fingerprint that includes content, progress and
 model/prompt version. Repeated selection callbacks use set membership, not toggles.
 The fingerprint is not a database lock and does not alone prevent concurrent jobs.
 
-238 Python tests pass. The extension extracts visible activity PDF metadata and
+240 Python tests pass. The extension extracts visible activity PDF metadata and
 has an explicit handoff button; the loopback receiver validates metadata and
 accumulates isolated per-activity snapshots in memory. An HTTP regression test
 confirms rejected extra fields cannot alter an accepted snapshot. Unknown
@@ -228,3 +228,14 @@ authoritative saved selection, and transactionally freezes first-resolved hashes
 before generation. Two adapter tests reject different hashes, changed progress
 and another chat while allowing identical retries. This closes the missing hash
 freeze step above, but does not implement dispatch or real-data verification.
+
+## Companion dispatch checkpoint
+
+`run_summary_pass` connects saved confirmed selections to local generation using
+the authoritative answered course session and an explicit course-ID mapping.
+It checks owner, progress and course context, records outcomes and skips completed
+or terminal work. Default execution is disabled. Two shared-adapter tests verify
+dispatch context and completion skipping with mocked generation. This is a worker
+function, not an activated daemon or deployment. Full collection scans, fairness
+for repeatedly deferred selections, recovery policy and real-data wiring remain
+unfinished; no live model requests or Telegram messages were sent by this worker.
