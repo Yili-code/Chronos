@@ -1,5 +1,21 @@
 # Phase 1 verification checkpoint
 
+## Latest audit (supersedes the historical checklist below)
+
+148 tests pass in the project venv. New coverage includes all seven end-plus-five
+minute timetable slots, authenticated scheduler access, and a fake Firestore
+prompt/reminder/reply/expiry lifecycle. These are local checks, not live production
+verification. Initial prompts, reminders and expiry are now wired in tick_study.
+The Phase 0 interview Markdown file was delivered as a Telegram document attachment
+and Telegram confirmed receipt.
+
+Remaining work: user-facing handling of failed/uncertain deliveries; late replies
+before cleanup; malformed API response handling; retirement of the preliminary
+send-before-save course_tracking_service; live Firestore/Telegram verification;
+external scheduler activation instructions. Phase 1 remains active and undeployed.
+
+## Historical checkpoint
+
 Updated: 2026-10-02
 
 Phase 1 is incomplete. The current modules implement the seven-course timetable,

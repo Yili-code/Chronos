@@ -1,11 +1,28 @@
 import asyncio
-from datetime import datetime
+from datetime import datetime, date, timedelta
+import pytest
 from unittest.mock import AsyncMock
 
 from chronos.course_tracking import TAIPEI
 from chronos.db import Database
 from chronos.study_scheduler import tick_study
 from chronos.telegram import TelegramError
+from chronos.course_tracking import COURSE_SCHEDULE
+
+
+@pytest.mark.parametrize("slot", COURSE_SCHEDULE, ids=lambda slot: slot.key)
+def test_every_course_prompts_five_minutes_after_class(tmp_path, slot):
+    db = Database(tmp_path / "study.db")
+    db.initialize()
+    day = date(2026, 10, 5) + timedelta(days=slot.weekday)
+    due = datetime.combine(day, slot.prompt_time, tzinfo=TAIPEI)
+    assert due == datetime.combine(day, slot.end, tzinfo=TAIPEI) + timedelta(minutes=5)
+    bot = AsyncMock()
+    bot.send_message.return_value = {"ok": True, "result": {"message_id": 801}}
+    asyncio.run(tick_study(db, bot, 123, due - timedelta(minutes=1)))
+    assert db.get_course_session(f"{slot.key}:{day}") is None
+    asyncio.run(tick_study(db, bot, 123, due))
+    assert db.get_course_session(f"{slot.key}:{day}").prompt_message_id == 801
 
 
 def test_prompt_boundary_and_restart_reconciliation(tmp_path):

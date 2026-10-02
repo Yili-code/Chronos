@@ -69,6 +69,16 @@ def test_unknown_reply_never_creates_task(system):
     assert service.list_open() == []
 
 
+def test_study_scheduler_endpoint_requires_secret_and_is_disabled_by_default(system):
+    client, service, bot, config = system
+    assert client.post('/internal/study').status_code == 403
+    assert client.post('/internal/study', headers={'X-Chronos-Scheduler-Secret': 'wrong'}).status_code == 403
+    response = client.post('/internal/study', headers={'X-Chronos-Scheduler-Secret': 'test-scheduler'})
+    assert response.status_code == 200
+    assert response.json() == {'enabled': False}
+    bot.send_message.assert_not_awaited()
+
+
 def test_web_auth_and_task_lifecycle(system):
     client, service, bot, config = system
     assert client.get('/health').json() == {'status': 'ok'}

@@ -53,7 +53,11 @@ class FakeQuery:
         return [
             FakeSnapshot(FakeDocument(self.collection.client, self.collection.name, document_id), data)
             for (name, document_id), data in self.collection.client.data.items()
-            if name == self.collection.name and data.get(self.field_filter.field_path) == self.field_filter.value
+            if name == self.collection.name and (
+                data.get(self.field_filter.field_path) in self.field_filter.value
+                if self.field_filter.op_string == "in"
+                else data.get(self.field_filter.field_path) == self.field_filter.value
+            )
         ]
 
 
@@ -119,6 +123,36 @@ def database(monkeypatch):
     monkeypatch.setattr(firestore_db.firestore, "Client", FakeClient)
     monkeypatch.setattr(firestore_db.firestore, "transactional", lambda operation: operation)
     return FirestoreDatabase("test-project", "(default)", "test")
+
+
+def test_firestore_scheduler_reply_and_stop_reminders(monkeypatch):
+    import asyncio
+    from unittest.mock import AsyncMock
+    from chronos.study_scheduler import tick_study
+    db = database(monkeypatch)
+    bot = AsyncMock()
+    bot.send_message.return_value = {"ok": True, "result": {"message_id": 701}}
+    for hour in (12, 13):
+        asyncio.run(tick_study(db, bot, 123, datetime(2026, 10, 5, hour, 10, tzinfo=TZ)))
+    assert db.get_course_session("security:2026-10-05").reminder_count == 1
+    assert bot.send_message.await_count == 2
+    db.process_update(9000, lambda: db.record_course_reply(701, 702, "Chapter 5"))
+    asyncio.run(tick_study(db, bot, 123, datetime(2026, 10, 5, 14, 10, tzinfo=TZ)))
+    assert db.get_course_session("security:2026-10-05").status.value == "answered"
+    assert bot.send_message.await_count == 2
+
+
+def test_firestore_scheduler_expires_unanswered_sessions(monkeypatch):
+    import asyncio
+    from unittest.mock import AsyncMock
+    from chronos.study_scheduler import tick_study
+    db = database(monkeypatch)
+    bot = AsyncMock()
+    bot.send_message.return_value = {"ok": True, "result": {"message_id": 701}}
+    asyncio.run(tick_study(db, bot, 123, datetime(2026, 10, 5, 12, 10, tzinfo=TZ)))
+    asyncio.run(tick_study(db, bot, 123, datetime(2026, 10, 6, 0, 0, tzinfo=TZ)))
+    assert db.get_course_session("security:2026-10-05").status.value == "missed"
+    assert bot.send_message.await_count == 1
 
 
 def test_course_reply_shares_receipt_transaction(monkeypatch):
