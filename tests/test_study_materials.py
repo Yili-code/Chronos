@@ -42,3 +42,11 @@ def test_generation_identity_ignores_click_order_but_tracks_content():
     assert key(first) == key(second)
     changed = MaterialSelection('session', 'os', 'Chapter 1', (material(checksum='b'), material('b')), frozenset({'a','b'}), True)
     assert key(first) != key(changed)
+
+
+def test_metadata_can_be_selected_before_download_but_not_summarized():
+    pdf = PdfMaterial('a', 'os', 'lecture.pdf', datetime(2026, 10, 1, tzinfo=timezone.utc))
+    selection = MaterialSelection('session', 'os', 'Chapter 1', (pdf,)).choose('a', selected=True).confirm()
+    assert pdf.availability.value == 'listed'
+    with pytest.raises(ValueError, match='verified'):
+        selection.generation_key(model='test', prompt_version='v1')

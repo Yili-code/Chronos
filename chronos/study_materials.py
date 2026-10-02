@@ -4,6 +4,13 @@ from datetime import datetime
 import hashlib
 import json
 import re
+from enum import Enum
+
+
+class MaterialAvailability(str, Enum):
+    LISTED = 'listed'
+    VERIFIED = 'verified'
+    DEFERRED = 'deferred_attachment'
 
 
 @dataclass(frozen=True)
@@ -12,7 +19,11 @@ class PdfMaterial:
     course_id: str
     filename: str
     uploaded_at: datetime
-    sha256: str
+    sha256: str | None = None
+
+    @property
+    def availability(self) -> MaterialAvailability:
+        return MaterialAvailability.VERIFIED if self.sha256 else MaterialAvailability.LISTED
 
     def __post_init__(self):
         if not self.source_id or not self.course_id:
@@ -21,8 +32,8 @@ class PdfMaterial:
             raise ValueError('only PDF materials are supported')
         if self.uploaded_at.utcoffset() is None:
             raise ValueError('upload time must be timezone-aware')
-        if not re.fullmatch(r'[0-9a-f]{64}', self.sha256):
-            raise ValueError('verified PDF content hash is required')
+        if self.sha256 is not None and not re.fullmatch(r'[0-9a-f]{64}', self.sha256):
+            raise ValueError('invalid PDF content hash')
 
 
 def course_catalog(course_id: str, materials: tuple[PdfMaterial, ...]) -> tuple[PdfMaterial, ...]:
@@ -72,6 +83,8 @@ class MaterialSelection:
             raise ValueError('explicit confirmation is required before generation')
         if not model or not prompt_version:
             raise ValueError('generation configuration is required')
+        if any(item.sha256 is None for item in self.catalog if item.source_id in self.selected_ids):
+            raise ValueError('selected PDF content must be verified before generation')
         payload = {
             'session': self.session_id, 'course': self.course_id,
             'progress': self.reported_progress.strip(),
