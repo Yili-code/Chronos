@@ -10,6 +10,20 @@ from chronos.telegram import TelegramError
 from chronos.course_tracking import COURSE_SCHEDULE
 
 
+@pytest.mark.parametrize("response", [None, [], "invalid", {"ok": True, "result": [1]},
+    {"ok": True, "result": {"message_id": True}}, {"ok": False, "error_code": []},
+    {"ok": False, "error_code": 500}])
+def test_malformed_delivery_response_is_uncertain_without_resend(tmp_path, response):
+    db = Database(tmp_path / "study.db")
+    db.initialize()
+    bot = AsyncMock()
+    bot.send_message.return_value = response
+    for minute in (10, 15):
+        asyncio.run(tick_study(db, bot, 123, datetime(2026, 10, 5, 12, minute, tzinfo=TAIPEI)))
+    assert bot.send_message.await_count == 1
+    assert db.get_study_delivery("security:2026-10-05:prompt")["status"] == "uncertain"
+
+
 @pytest.mark.parametrize("slot", COURSE_SCHEDULE, ids=lambda slot: slot.key)
 def test_every_course_prompts_five_minutes_after_class(tmp_path, slot):
     db = Database(tmp_path / "study.db")

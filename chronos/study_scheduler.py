@@ -8,6 +8,20 @@ from .study_delivery import StudyDeliveryLedger
 from .telegram import TelegramError
 
 
+def delivery_outcome(result: object) -> tuple[int | None, bool]:
+    """Treat malformed or server-error responses as uncertain, never retryable."""
+    if not isinstance(result, dict):
+        return None, False
+    body = result.get("result")
+    if result.get("ok") is True and isinstance(body, dict):
+        message_id = body.get("message_id")
+        if type(message_id) is int and message_id > 0:
+            return message_id, False
+    code = result.get("error_code")
+    rejected = result.get("ok") is False and type(code) is int and code in {400, 401, 403}
+    return None, rejected
+
+
 async def tick_study(db, telegram, chat_id: int, now: datetime) -> dict:
     if now.utcoffset() is None:
         raise ValueError("scheduler clock must be timezone-aware")
@@ -29,10 +43,9 @@ async def tick_study(db, telegram, chat_id: int, now: datetime) -> dict:
             except TelegramError:
                 ledger.finish(key, claim, now)
                 continue
-            message_id = (result.get("result") or {}).get("message_id") if result.get("ok") is True else None
+            message_id, rejected = delivery_outcome(result)
             # Only a definitive client rejection is safe to retry. Server errors
             # and malformed responses may have followed a successful send.
-            rejected = result.get("ok") is False and result.get("error_code") in {400, 401, 403}
             ledger.finish(key, claim, now, message_id=message_id, definitely_rejected=rejected)
         delivery = db.get_study_delivery(key)
         if delivery and delivery["status"] == "sent":
@@ -68,8 +81,7 @@ async def tick_study(db, telegram, chat_id: int, now: datetime) -> dict:
             except TelegramError:
                 ledger.finish(key, claim, now)
                 continue
-            message_id = (result.get("result") or {}).get("message_id") if result.get("ok") is True else None
-            rejected = result.get("ok") is False and result.get("error_code") in {400, 401, 403}
+            message_id, rejected = delivery_outcome(result)
             ledger.finish(key, claim, now, message_id=message_id, definitely_rejected=rejected)
         delivery = db.get_study_delivery(key)
         if delivery and delivery["status"] == "sent":

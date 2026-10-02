@@ -25,6 +25,8 @@ class TelegramClient:
             result = response.json()
         except ValueError:
             return {"ok": False, "error_code": response.status_code, "description": "Telegram API returned non-JSON content"}
+        if not isinstance(result, dict):
+            return {"ok": False, "description": "Telegram API returned an invalid response shape"}
         if not response.is_success:
             return {
                 "ok": False,
