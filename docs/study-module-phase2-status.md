@@ -19,7 +19,7 @@ multi-selection and a generation fingerprint that includes content, progress and
 model/prompt version. Repeated selection callbacks use set membership, not toggles.
 The fingerprint is not a database lock and does not alone prevent concurrent jobs.
 
-222 Python tests pass. The extension extracts visible activity PDF metadata and
+227 Python tests pass. The extension extracts visible activity PDF metadata and
 has an explicit handoff button; the loopback receiver validates metadata and
 accumulates isolated per-activity snapshots in memory. An HTTP regression test
 confirms rejected extra fields cannot alter an accepted snapshot. Unknown
@@ -166,3 +166,18 @@ to verify persistence before send, no regeneration on retry and no delivery of
 too-short drafts. Real PDF parsing, Gemini implementation, dispatch from confirmed
 callbacks and live integration remain pending. Invalid output becomes uncertain
 and is not regenerated automatically; manual recovery is not implemented yet.
+
+## Gemini adapter checkpoint
+
+`GeminiSummary` builds one generateContent request containing selected inline PDF
+bytes and a structured SummaryDraft schema. It uses only the configured model,
+approved Google endpoint and study-v1 prompt, rejects incomplete responses, and
+leaves retries to the durable job ledger. Aggregate raw PDF input is capped at
+12 MiB. Five mocked HTTP tests cover request structure, output validation,
+failure classification and default no-network gating. Free-tier eligibility must
+be confirmed explicitly before use; the flag is an operator assertion, not a
+billing guarantee. No live Gemini request or PDF upload has occurred.
+
+API references checked: https://ai.google.dev/api/generate-content and
+https://ai.google.dev/gemini-api/docs/structured-output . Live schema compatibility
+and actual model availability still require verification.
