@@ -19,7 +19,7 @@ multi-selection and a generation fingerprint that includes content, progress and
 model/prompt version. Repeated selection callbacks use set membership, not toggles.
 The fingerprint is not a database lock and does not alone prevent concurrent jobs.
 
-214 Python tests pass. The extension extracts visible activity PDF metadata and
+218 Python tests pass. The extension extracts visible activity PDF metadata and
 has an explicit handoff button; the loopback receiver validates metadata and
 accumulates isolated per-activity snapshots in memory. An HTTP regression test
 confirms rejected extra fields cannot alter an accepted snapshot. Unknown
@@ -132,3 +132,12 @@ verify full 6,500-character preservation, middle-chunk resume and uncertain-stop
 behavior with mocked Telegram. This supersedes the missing chunk-service note
 above, but generation completion and scheduler integration remain pending; no live
 automatic summary delivery has been verified.
+
+## Durable selection checkpoint
+
+SelectionStore serializes course catalogs, explicit selected IDs and confirmation
+to dedicated SQLite/Firestore records. Chat ownership and optimistic revisions
+prevent stale callbacks from changing newer choices; empty confirmation is
+rejected and confirmed selections are immutable. Four shared adapter tests cover
+round-trip persistence, stale events, confirmation and ownership/source rejection.
+Telegram inline button routing and catalog ingestion are not yet connected.

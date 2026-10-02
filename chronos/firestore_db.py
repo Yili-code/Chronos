@@ -28,6 +28,7 @@ class FirestoreDatabase:
         self.study_deliveries = self.client.collection(f"{collection_prefix}_study_deliveries")
         self.study_notes = self.client.collection(f"{collection_prefix}_study_notes")
         self.summary_jobs = self.client.collection(f"{collection_prefix}_summary_jobs")
+        self.material_selections = self.client.collection(f"{collection_prefix}_material_selections")
         self._transaction: ContextVar[firestore.Transaction | None] = ContextVar(
             "firestore_transaction", default=None
         )
@@ -51,6 +52,15 @@ class FirestoreDatabase:
     def mutate_summary_job(self, key: str, transition: Callable) -> dict:
         def mutate(transaction):
             reference = self.summary_jobs.document(key)
+            snapshot = reference.get(transaction=transaction)
+            state = transition(snapshot.to_dict() if snapshot.exists else None)
+            transaction.set(reference, state)
+            return state
+        return self._run_transaction(mutate)
+
+    def mutate_material_selection(self, key: str, transition: Callable) -> dict:
+        def mutate(transaction):
+            reference = self.material_selections.document(key)
             snapshot = reference.get(transaction=transaction)
             state = transition(snapshot.to_dict() if snapshot.exists else None)
             transaction.set(reference, state)
