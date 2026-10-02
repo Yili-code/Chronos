@@ -19,7 +19,7 @@ multi-selection and a generation fingerprint that includes content, progress and
 model/prompt version. Repeated selection callbacks use set membership, not toggles.
 The fingerprint is not a database lock and does not alone prevent concurrent jobs.
 
-201 Python tests pass. The extension extracts visible activity PDF metadata and
+203 Python tests pass. The extension extracts visible activity PDF metadata and
 has an explicit handoff button; the loopback receiver validates metadata and
 accumulates isolated per-activity snapshots in memory. An HTTP regression test
 confirms rejected extra fields cannot alter an accepted snapshot. Unknown
@@ -97,3 +97,13 @@ cover SQLite/fake-Firestore transitions and an eight-writer SQLite claim race.
 This ledger is not yet wired to Gemini or the scheduler, and cannot itself prove
 that external model execution is exactly once. The caller must classify errors
 conservatively and persist the note before reporting completion.
+
+## Read commands checkpoint
+
+`/notes [course]` and `/note <full fingerprint> [page]` are routed through the
+existing message handler. Listings return at most ten notes; reading preserves
+all Markdown using bounded plain-text pages with an explicit next-page command.
+Unicode tests cover astral characters without splitting code points. Tests use
+the real SQLite repository and command handler, not a live Telegram webhook.
+This browsing interface does not satisfy automatic summary chunk delivery;
+automatic delivery and `/export` document delivery remain pending.

@@ -279,6 +279,9 @@ async def prepare_message(text: str) -> Callable[[], str]:
     """Resolve external input first; the returned action performs no async work."""
     normalized = text.strip()
     command = normalized[1:].strip() if normalized.startswith("/") else None
+    if command is not None and (command == "notes" or command.startswith("notes ") or command == "note" or command.startswith("note ")):
+        from .note_commands import note_command
+        return lambda: note_command(db, command) or "用法：/notes [課程名稱] 或 /note 完整編號。"
     if command in {"start", "help"}:
         return lambda: HELP_TEXT
     if command == "tasks":
