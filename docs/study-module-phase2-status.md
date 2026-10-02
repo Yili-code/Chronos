@@ -61,6 +61,20 @@ Next implementation evidence needed: rendered row structure and stable activity
 identifiers, per-activity attachment enumeration, and an authoritative source of
 upload dates. Do not infer timestamps from chapter order or local observation time.
 
+Follow-up DOM inspection found `expandable-content-new="attachments-<activity_id>"`
+on each of the five file-list controls. Expanding the Lecture 1 control exposed
+one PDF attachment with a reference download link, filename and displayed size;
+no upload date appeared. The DOM therefore supplies activity and reference IDs
+without reading application-internal state or exporting authenticated URLs.
+
+An attempted batch expansion of the remaining observed controls unexpectedly
+opened a PDF preview overlay. Further interaction stopped. No explicit submission
+or download action was requested, but viewing may affect server-side learning
+progress; this run must not be described as proven side-effect-free. The five
+activities were not fully enumerated. Before automating traversal, inspect and
+verify each individual expansion result, and explicitly account for preview and
+progress-tracking behavior. Stable DOM IDs alone do not prove safe interaction.
+
 - Obtain course-specific PDF metadata through the approved browser-session route;
   newest uploads first. Preserve explicit reauthentication/deferred outcomes.
 - Telegram multi-select with an explicit confirmation action, never infer consent.
