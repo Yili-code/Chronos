@@ -40,7 +40,7 @@ class StudyDeliveryLedger:
                 return previous
             if type(message_id) is int and message_id > 0:
                 return {**previous, "status": "sent", "message_id": message_id,
-                        "last_error": None, "next_retry_at": None}
+                        "last_error": None, "next_retry_at": None, "sent_at": now.isoformat()}
             if definitely_rejected:
                 retry = previous["attempt_count"] < 3
                 return {**previous, "status": "retry" if retry else "failed",

@@ -34,13 +34,16 @@ class TelegramClient:
         return result
 
     async def send_message(
-        self, chat_id: int, text: str, parse_mode: str | None = None, reply_markup: dict | None = None
+        self, chat_id: int, text: str, parse_mode: str | None = None, reply_markup: dict | None = None,
+        reply_to_message_id: int | None = None,
     ) -> dict:
         payload = {"chat_id": chat_id, "text": text}
         if parse_mode:
             payload["parse_mode"] = parse_mode
         if reply_markup:
             payload["reply_markup"] = reply_markup
+        if reply_to_message_id is not None:
+            payload["reply_parameters"] = {"message_id": reply_to_message_id}
         return await self.request("sendMessage", payload)
 
     async def answer_callback_query(self, callback_query_id: str) -> dict:

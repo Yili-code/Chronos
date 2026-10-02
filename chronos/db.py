@@ -201,6 +201,18 @@ class Database:
             row = connection.execute("SELECT * FROM course_sessions WHERE session_id = ?", (session_id,)).fetchone()
         return session_from_firestore(dict(row)) if row else None
 
+    def list_pending_course_sessions(self) -> list[ProgressSession]:
+        with self.connect() as connection:
+            rows = connection.execute("SELECT * FROM course_sessions WHERE status NOT IN ('answered','missed')").fetchall()
+        return [session_from_firestore(dict(row)) for row in rows]
+
+    def mutate_course_session(self, session_id: str, transition: Callable) -> ProgressSession:
+        with self.transaction():
+            current = self.get_course_session(session_id)
+            if current is None:
+                raise KeyError(session_id)
+            return self.save_course_session(transition(current))
+
     def save_course_session(self, session: ProgressSession) -> ProgressSession:
         data = session_to_firestore(session)
         with self.connect() as connection:

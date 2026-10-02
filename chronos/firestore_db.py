@@ -182,6 +182,21 @@ class FirestoreDatabase:
         snapshot = self.course_sessions.document(session_id).get()
         return session_from_firestore(snapshot.to_dict()) if snapshot.exists else None
 
+    def list_pending_course_sessions(self) -> list[ProgressSession]:
+        query = self.course_sessions.where(filter=FieldFilter("status", "in", ["pending", "reminded_once", "reminded_twice"]))
+        return [session_from_firestore(snapshot.to_dict()) for snapshot in query.stream()]
+
+    def mutate_course_session(self, session_id: str, transition: Callable) -> ProgressSession:
+        def mutate(transaction):
+            reference = self.course_sessions.document(session_id)
+            snapshot = reference.get(transaction=transaction)
+            if not snapshot.exists:
+                raise KeyError(session_id)
+            updated = transition(session_from_firestore(snapshot.to_dict()))
+            transaction.update(reference, session_to_firestore(updated))
+            return updated
+        return self._run_transaction(mutate)
+
     def save_course_session(self, session: ProgressSession) -> ProgressSession:
         def save(transaction):
             reference = self.course_sessions.document(session.session_id)

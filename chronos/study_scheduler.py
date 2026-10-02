@@ -1,8 +1,9 @@
 """Minute-driven course prompts with durable send claims and restart recovery."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from .course_tracking import TAIPEI, course_for_weekday, new_session, prompt_text
+from .course_tracking import (TAIPEI, ProgressStatus, course_for_weekday, new_session,
+                             prompt_text, mark_missed_at_day_end, record_reminder)
 from .study_delivery import StudyDeliveryLedger
 from .telegram import TelegramError
 
@@ -38,4 +39,44 @@ async def tick_study(db, telegram, chat_id: int, now: datetime) -> dict:
             # A crash after recording the receipt is repaired without re-sending.
             db.create_course_session(new_session(slot, now.date(), delivery["message_id"]))
             created += 1
-    return {"sessions_reconciled": created}
+    reminders = 0
+    for session in db.list_pending_course_sessions():
+        session = db.mutate_course_session(session.session_id,
+            lambda current: mark_missed_at_day_end(current, local_date=now.date()))
+        if session.status in {ProgressStatus.ANSWERED, ProgressStatus.MISSED} or session.reminder_count >= 2:
+            continue
+        number = session.reminder_count + 1
+        previous_key = session.session_id + (":prompt" if number == 1 else ":reminder:1")
+        previous = db.get_study_delivery(previous_key)
+        if not previous or previous["status"] != "sent":
+            continue
+        sent_at = datetime.fromisoformat(previous.get("sent_at", previous["claimed_at"]))
+        if now < sent_at + timedelta(hours=1):
+            continue
+        key = f"{session.session_id}:reminder:{number}"
+        claim = ledger.claim(key, now)
+        if claim:
+            # Recheck after acquiring the send claim. An in-flight API call cannot
+            # be recalled, but its completion must never overwrite an answer.
+            current = db.get_course_session(session.session_id)
+            if current.status in {ProgressStatus.ANSWERED, ProgressStatus.MISSED}:
+                continue
+            try:
+                result = await telegram.send_message(chat_id,
+                    f"還沒收到{session.course_name}的課堂進度。請回覆原始課後訊息。",
+                    reply_to_message_id=session.prompt_message_id)
+            except TelegramError:
+                ledger.finish(key, claim, now)
+                continue
+            message_id = (result.get("result") or {}).get("message_id") if result.get("ok") is True else None
+            rejected = result.get("ok") is False and result.get("error_code") in {400, 401, 403}
+            ledger.finish(key, claim, now, message_id=message_id, definitely_rejected=rejected)
+        delivery = db.get_study_delivery(key)
+        if delivery and delivery["status"] == "sent":
+            def advance(current):
+                if current.status in {ProgressStatus.ANSWERED, ProgressStatus.MISSED} or current.reminder_count >= number:
+                    return current
+                return record_reminder(current, number)
+            db.mutate_course_session(session.session_id, advance)
+            reminders += 1
+    return {"sessions_reconciled": created, "reminders_reconciled": reminders}
