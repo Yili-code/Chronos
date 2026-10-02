@@ -27,6 +27,7 @@ class FirestoreDatabase:
         self.course_sessions = self.client.collection(f"{collection_prefix}_course_sessions")
         self.study_deliveries = self.client.collection(f"{collection_prefix}_study_deliveries")
         self.study_notes = self.client.collection(f"{collection_prefix}_study_notes")
+        self.summary_jobs = self.client.collection(f"{collection_prefix}_summary_jobs")
         self._transaction: ContextVar[firestore.Transaction | None] = ContextVar(
             "firestore_transaction", default=None
         )
@@ -46,6 +47,15 @@ class FirestoreDatabase:
             transaction.create(reference, data)
             return NoteRecord.model_validate(data)
         return self._run_transaction(save)
+
+    def mutate_summary_job(self, key: str, transition: Callable) -> dict:
+        def mutate(transaction):
+            reference = self.summary_jobs.document(key)
+            snapshot = reference.get(transaction=transaction)
+            state = transition(snapshot.to_dict() if snapshot.exists else None)
+            transaction.set(reference, state)
+            return state
+        return self._run_transaction(mutate)
 
     def get_study_note(self, fingerprint: str) -> NoteRecord | None:
         if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):

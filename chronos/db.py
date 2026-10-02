@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS study_notes (
     created_epoch REAL NOT NULL,
     record_json TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS summary_jobs (fingerprint TEXT PRIMARY KEY, state_json TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_study_notes_recent ON study_notes(created_epoch DESC, fingerprint DESC);
 CREATE INDEX IF NOT EXISTS idx_study_notes_course ON study_notes(course, created_epoch DESC, fingerprint DESC);
 """
@@ -75,6 +76,14 @@ class Database:
             row = connection.execute("SELECT record_json FROM study_notes WHERE fingerprint=?",
                                      (validated.content_fingerprint,)).fetchone()
         return NoteRecord.model_validate_json(row[0])
+
+    def mutate_summary_job(self, key: str, transition: Callable) -> dict:
+        with self.transaction() as connection:
+            row = connection.execute("SELECT state_json FROM summary_jobs WHERE fingerprint=?", (key,)).fetchone()
+            state = transition(json.loads(row[0]) if row else None)
+            connection.execute("INSERT INTO summary_jobs VALUES (?, ?) ON CONFLICT(fingerprint) DO UPDATE SET state_json=excluded.state_json",
+                               (key, json.dumps(state)))
+            return state
 
     def get_study_note(self, fingerprint: str) -> NoteRecord | None:
         if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):

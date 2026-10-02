@@ -19,7 +19,7 @@ multi-selection and a generation fingerprint that includes content, progress and
 model/prompt version. Repeated selection callbacks use set membership, not toggles.
 The fingerprint is not a database lock and does not alone prevent concurrent jobs.
 
-196 Python tests pass. The extension extracts visible activity PDF metadata and
+201 Python tests pass. The extension extracts visible activity PDF metadata and
 has an explicit handoff button; the loopback receiver validates metadata and
 accumulates isolated per-activity snapshots in memory. An HTTP regression test
 confirms rejected extra fields cannot alter an accepted snapshot. Unknown
@@ -86,3 +86,14 @@ indexed, bounded queries and conflict-safe insertion. A shared repository test
 runs against SQLite and fake Firestore; a separate eight-writer SQLite test
 verifies retries preserve one canonical record. This is not live Firestore
 concurrency evidence or generation-job deduplication.
+
+## Generation claim checkpoint
+
+`SummaryJobs` now uses dedicated SQLite/Firestore job records. One claim may run
+per fingerprint; an interrupted ten-minute claim becomes uncertain rather than
+automatically restarting. Explicit rejection permits up to three total attempts,
+five minutes apart. Completion requires an existing canonical note. Five tests
+cover SQLite/fake-Firestore transitions and an eight-writer SQLite claim race.
+This ledger is not yet wired to Gemini or the scheduler, and cannot itself prove
+that external model execution is exactly once. The caller must classify errors
+conservatively and persist the note before reporting completion.
