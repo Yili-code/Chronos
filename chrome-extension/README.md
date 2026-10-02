@@ -21,3 +21,9 @@ It does not:
 
 The local bridge transport is intentionally a later step. Until that boundary
 is implemented and reviewed, this extension has no external destination.
+
+The pure observation helpers and message handler can be checked locally with:
+
+```text
+node --test chrome-extension/test/observation.test.js
+```
