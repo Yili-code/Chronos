@@ -39,3 +39,14 @@ The UI describes viewing/downloading reference documents as an activity completi
 criterion. Future browser retrieval must account for the platform's possible
 automatic view/progress tracking; a read operation cannot promise zero server-side
 analytics effects. No completion control, submission or edit action was invoked.
+# Live extension integration checkpoint
+
+The connected Chrome tab still displays the operating-systems lecture activity
+and its PDF attachment. This is visible-page evidence only, not a renewed-session
+or new PDF-transfer test. The browser tool blocks `chrome://extensions/` by policy;
+no alternate route was attempted. Reloading the installed Chronos extension and
+refreshing the activity page requires a user action before testing the new popup.
+Until then, the source-code popup tests do not prove the installed extension runs
+the new download/persistence flow. No cookies, tickets or credential values were
+read or exported in this check.
+
