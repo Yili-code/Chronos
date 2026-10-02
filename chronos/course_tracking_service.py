@@ -1,4 +1,8 @@
-"""Application service for Phase 1 progress prompts and reminders."""
+"""Historical fake-driven prototype; not used by the application.
+
+Production scheduling lives in study_scheduler.tick_study. This prototype has
+no durable send claims and must not be connected to a real messenger.
+"""
 
 from __future__ import annotations
 
@@ -27,7 +31,7 @@ class CourseTrackingService:
         self.messenger = messenger
 
     def open_session(self, slot: CourseSlot, class_date: date) -> ProgressSession:
-        """Create and deliver one prompt; retries do not send a duplicate."""
+        """Prototype only: sequential completed calls reuse the stored session."""
         candidate = new_session(slot, class_date, prompt_message_id=0)
         existing = self.store.get(candidate.session_id)
         if existing is not None:
