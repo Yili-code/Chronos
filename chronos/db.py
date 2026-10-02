@@ -67,6 +67,11 @@ class Database:
             )
             return state
 
+    def get_study_delivery(self, key: str) -> dict | None:
+        with self.connect() as connection:
+            row = connection.execute("SELECT state_json FROM study_deliveries WHERE delivery_key=?", (key,)).fetchone()
+        return json.loads(row[0]) if row else None
+
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
         active = self._transaction.get()

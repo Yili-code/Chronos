@@ -16,7 +16,7 @@ Run with the project's interpreter:
 .\.venv\Scripts\python.exe -m pytest -q --basetemp .pytest-phase1-current
 ```
 
-Result: 126 passed, 3 dependency deprecation warnings. This includes fake-backed
+Latest result: 135 passed, 3 dependency deprecation warnings. This includes fake-backed
 Firestore tests, not a live Firestore integration test. Earlier missing-dependency
 results came from a different interpreter and do not describe the project venv.
 
@@ -25,6 +25,13 @@ expires sessions from earlier dates, including after multiple days of downtime.
 Answered/missed sessions cannot return to a reminder state.
 
 ## Required before completion
+
+Initial prompts are now wired through `study_scheduler.tick_study`, using durable
+claims and receipt reconciliation. `CHRONOS_ENABLE_STUDY_TRACKING` defaults to
+false. When enabled, the internal scheduler ticks once per minute; external
+schedulers can call `/internal/study` with the existing scheduler secret.
+Reminder dispatch and overdue-session cleanup still need runtime integration.
+No live deployment or production scheduler change has occurred.
 
 The delivery ledger now supports atomic claims in SQLite and Firestore. Competing
 senders cannot claim the same key; interrupted sends become uncertain after two

@@ -3,6 +3,7 @@ import hmac
 import json
 import logging
 import re
+from datetime import datetime
 from contextlib import asynccontextmanager
 from collections.abc import Callable
 
@@ -17,6 +18,7 @@ from .settings import settings
 from .tasks import TaskService, format_task, format_tasks
 from .telegram import TelegramClient
 from .web import PAGE
+from .study_scheduler import tick_study
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("chronos")
@@ -74,6 +76,8 @@ async def lifespan(_: FastAPI):
     db.initialize()
     if settings.enable_internal_scheduler:
         scheduler.add_job(send_daily_tasks, "cron", hour=8, minute=0, id="daily_tasks", replace_existing=True)
+        if settings.enable_study_tracking:
+            scheduler.add_job(run_study_tick, "cron", second=0, id="study_tracking", replace_existing=True)
         scheduler.start()
     if settings.public_base_url and telegram.enabled:
         url = f"{settings.public_base_url.rstrip('/')}/telegram/webhook"
@@ -89,6 +93,23 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Chronos", lifespan=lifespan)
+
+
+async def run_study_tick() -> dict:
+    if not settings.enable_study_tracking:
+        return {"enabled": False}
+    if not settings.telegram_chat_id or not telegram.enabled:
+        raise HTTPException(status_code=503, detail="Study delivery is not configured")
+    return await tick_study(db, telegram, settings.telegram_chat_id, datetime.now(settings.tz))
+
+
+@app.post("/internal/study")
+async def trigger_study(x_chronos_scheduler_secret: str | None = Header(default=None)) -> dict:
+    if not settings.scheduler_secret:
+        raise HTTPException(status_code=503, detail="Scheduler endpoint is not configured")
+    if not hmac.compare_digest(x_chronos_scheduler_secret or "", settings.scheduler_secret):
+        raise HTTPException(status_code=403, detail="Invalid scheduler credential")
+    return await run_study_tick()
 
 
 def require_web_auth(authorization: str | None = Header(default=None)) -> None:

@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     public_base_url: str = ""
     scheduler_secret: str = ""
     enable_internal_scheduler: bool = True
+    enable_study_tracking: bool = False
     database_path: Path = Path("chronos.db")
     database_backend: Literal["sqlite", "firestore"] = "sqlite"
     firestore_project_id: str = ""

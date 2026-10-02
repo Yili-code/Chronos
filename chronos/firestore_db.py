@@ -43,6 +43,10 @@ class FirestoreDatabase:
 
         return self._run_transaction(mutate)
 
+    def get_study_delivery(self, key: str) -> dict | None:
+        snapshot = self.study_deliveries.document(key).get()
+        return snapshot.to_dict() if snapshot.exists else None
+
     @staticmethod
     def _task_data(task_id: int, data: dict) -> dict:
         return {"id": task_id, **data}
