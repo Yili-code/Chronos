@@ -282,3 +282,16 @@ duplicate export updates. The full suite passes 250 tests. The PDF is generated
 blank content and the Gemini/Telegram networks are mocked: this proves internal
 integration, not real browser transfer, semantic quality, Firestore production
 behavior, free-tier eligibility or live Telegram delivery.
+
+## Live Markdown export evidence — 2026-10-03
+
+Ran `python -m scripts.verify_study_export` using the configured Chronos owner
+chat. It created a temporary SQLite canonical note containing only clearly
+labelled synthetic UTF-8 text, then invoked the real export service and Telegram
+client. Result: canonical_export_confirmed=true, duplicate_suppressed=true,
+delivery_status=sent. The repeat invocation replaced network sending with a
+failure guard and completed without invoking it. Temporary synthetic database
+files were removed automatically; the test attachment remains in Telegram.
+No lecture content, credentials, cookies or private note contents were sent.
+This confirms Telegram API acceptance, not human viewing or production webhook
+deployment. Do not blindly rerun the verifier after an unknown delivery outcome.
