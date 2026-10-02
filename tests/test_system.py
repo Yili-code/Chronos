@@ -38,6 +38,37 @@ def system(tmp_path, monkeypatch):
         yield client, service, bot, config
 
 
+def test_course_reply_is_correlated_and_receipt_deduplicated(system):
+    from datetime import date
+    from chronos.course_tracking import COURSE_SCHEDULE, new_session
+    client, service, bot, config = system
+    session = new_session(COURSE_SCHEDULE[0], date(2026, 10, 5), 501)
+    main.db.create_course_session(session)
+    payload = {'update_id': 900, 'message': {'message_id': 502,
+               'chat': {'id': 123}, 'text': 'Chapter 4',
+               'reply_to_message': {'message_id': 501}}}
+    headers = {'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}
+    for _ in range(2):
+        assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 200
+    assert main.db.get_course_session(session.session_id).reported_progress == 'Chapter 4'
+    assert main.db.get_update(900)['delivered']
+    assert bot.send_message.await_count == 1
+    main.ai.parse.assert_not_awaited()
+    assert service.list_open() == []
+
+
+def test_unknown_reply_never_creates_task(system):
+    client, service, bot, config = system
+    response = client.post('/telegram/webhook',
+        headers={'X-Telegram-Bot-Api-Secret-Token': 'test-hook'},
+        json={'update_id': 901, 'message': {'message_id': 503,
+              'chat': {'id': 123}, 'text': 'Chapter 4',
+              'reply_to_message': {'message_id': 999}}})
+    assert response.status_code == 200
+    main.ai.parse.assert_not_awaited()
+    assert service.list_open() == []
+
+
 def test_web_auth_and_task_lifecycle(system):
     client, service, bot, config = system
     assert client.get('/health').json() == {'status': 'ok'}

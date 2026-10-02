@@ -4,7 +4,9 @@ Updated: 2026-10-02
 
 Phase 1 is incomplete. The current modules implement the seven-course timetable,
 progress state rules, persistence methods, and a preliminary delivery service.
-The service is not yet wired into the production webhook or scheduler.
+The owner-only webhook now accepts course replies and persists progress together
+with its update receipt. Prompt/reminder scheduling is not yet wired; these
+changes have not been deployed.
 
 ## Verified in this checkout
 
@@ -30,7 +32,8 @@ Answered/missed sessions cannot return to a reminder state.
 - Define uncertain Telegram delivery handling: a missing response cannot establish
   that a message was not delivered. Do not promise exactly-once delivery.
 - Protect progress updates against concurrent reminder writes and stale saves.
-- Wire reply metadata into the owner-only webhook with atomic update receipts.
+- Verify the new webhook correlation path in live delivery; local SQLite and
+  fake Firestore receipt tests cover the implementation.
 - Wire timezone-aware scheduling, restart recovery, bounded retries and durable
   attempt/error/next-retry state into the application.
 - Verify runtime wiring and failure scenarios using the configured backends;

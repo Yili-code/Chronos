@@ -8,7 +8,7 @@ from typing import Callable
 from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
-from .course_tracking import ProgressSession
+from .course_tracking import ProgressSession, accept_reply
 from .course_tracking_store import session_from_firestore, session_to_firestore
 
 
@@ -142,6 +142,25 @@ class FirestoreDatabase:
             return session
 
         return self._run_transaction(create)
+
+    def record_course_reply(self, prompt_id: int, message_id: int, text: str) -> str:
+        """Read state and write progress inside the webhook receipt transaction."""
+        def record(transaction):
+            query = self.course_sessions.where(filter=FieldFilter("prompt_message_id", "==", prompt_id))
+            snapshots = list(query.stream(transaction=transaction))
+            if len(snapshots) != 1:
+                return "這則訊息不是課後進度問題，請回覆原始課後訊息。"
+            snapshot = snapshots[0]
+            session = session_from_firestore(snapshot.to_dict())
+            answered = accept_reply(session, reply_to_message_id=prompt_id,
+                                    reply_message_id=message_id, text=text)
+            if answered is None:
+                return "這堂課已記錄或已結束，未變更進度。"
+            transaction.update(snapshot.reference, session_to_firestore(answered))
+            return f"已記錄{session.course_name}（{session.class_date}）的進度。"
+
+        active = self._transaction.get()
+        return record(active) if active is not None else self._run_transaction(record)
 
     def get_course_session(self, session_id: str) -> ProgressSession | None:
         snapshot = self.course_sessions.document(session_id).get()

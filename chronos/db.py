@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Iterator
 
-from .course_tracking import ProgressSession
+from .course_tracking import ProgressSession, accept_reply
 from .course_tracking_store import session_from_firestore, session_to_firestore
 
 
@@ -156,6 +156,22 @@ class Database:
                 )),
             )
         return self.get_course_session(session.session_id) or session
+
+    def record_course_reply(self, prompt_id: int, message_id: int, text: str) -> str:
+        """Called inside process_update, sharing the webhook receipt transaction."""
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM course_sessions WHERE prompt_message_id = ?", (prompt_id,)
+            ).fetchone()
+            if row is None:
+                return "這則訊息不是課後進度問題，請回覆原始課後訊息。"
+            session = session_from_firestore(dict(row))
+            answered = accept_reply(session, reply_to_message_id=prompt_id,
+                                    reply_message_id=message_id, text=text)
+            if answered is None:
+                return "這堂課已記錄或已結束，未變更進度。"
+            self.save_course_session(answered)
+            return f"已記錄{session.course_name}（{session.class_date}）的進度。"
 
     def get_course_session(self, session_id: str) -> ProgressSession | None:
         with self.connect() as connection:

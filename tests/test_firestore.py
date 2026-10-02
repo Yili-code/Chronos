@@ -42,8 +42,9 @@ class FakeDocument:
 
 
 class FakeQuery:
-    def __init__(self, collection):
+    def __init__(self, collection, field_filter):
         self.collection = collection
+        self.field_filter = field_filter
 
     def stream(self, transaction=None):
         if transaction is not None and transaction.has_writes:
@@ -52,7 +53,7 @@ class FakeQuery:
         return [
             FakeSnapshot(FakeDocument(self.collection.client, self.collection.name, document_id), data)
             for (name, document_id), data in self.collection.client.data.items()
-            if name == self.collection.name and data.get("status") == "open"
+            if name == self.collection.name and data.get(self.field_filter.field_path) == self.field_filter.value
         ]
 
 
@@ -65,7 +66,7 @@ class FakeCollection:
         return FakeDocument(self.client, self.name, document_id)
 
     def where(self, filter):
-        return FakeQuery(self)
+        return FakeQuery(self, filter)
 
     def stream(self, transaction=None):
         if transaction is not None and transaction.has_writes:
@@ -118,6 +119,22 @@ def database(monkeypatch):
     monkeypatch.setattr(firestore_db.firestore, "Client", FakeClient)
     monkeypatch.setattr(firestore_db.firestore, "transactional", lambda operation: operation)
     return FirestoreDatabase("test-project", "(default)", "test")
+
+
+def test_course_reply_shares_receipt_transaction(monkeypatch):
+    from datetime import date
+    from chronos.course_tracking import COURSE_SCHEDULE, new_session
+    db = database(monkeypatch)
+    session = new_session(COURSE_SCHEDULE[0], date(2026, 10, 5), 601)
+    db.create_course_session(session)
+    action = lambda: db.record_course_reply(601, 602, "Chapter 4")
+    receipt = db.process_update(1234, action)
+    transaction = db.client.last_query_transaction
+    assert transaction is not None
+    assert transaction.has_writes
+    assert db.process_update(1234, lambda: "should never run") == receipt
+    assert db.get_course_session(session.session_id).reported_progress == "Chapter 4"
+    assert db.get_update(1234) == receipt
 
 
 def test_firestore_task_lifecycle_and_order(monkeypatch):

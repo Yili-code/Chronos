@@ -108,10 +108,17 @@ class TelegramChat(BaseModel):
     id: int = Field(ge=-(2**63), le=2**63 - 1)
 
 
+class TelegramReplyReference(BaseModel):
+    model_config = ConfigDict(strict=True)
+    message_id: int = Field(gt=0)
+
+
 class TelegramMessage(BaseModel):
     model_config = ConfigDict(strict=True)
     chat: TelegramChat
     text: str | None = None
+    message_id: int | None = Field(default=None, gt=0)
+    reply_to_message: TelegramReplyReference | None = None
 
 
 class TelegramCallbackQuery(BaseModel):
@@ -212,7 +219,14 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             return {"ok": True}
         if receipt is None:
             # Network work happens before acquiring the persistence transaction.
-            action = await prepare_message(text)
+            if source_message.reply_to_message is not None:
+                if source_message.message_id is None:
+                    raise HTTPException(status_code=422, detail="Reply message id is required")
+                action = lambda: db.record_course_reply(
+                    source_message.reply_to_message.message_id, source_message.message_id, text
+                )
+            else:
+                action = await prepare_message(text)
             receipt = db.process_update(update_id, action)
     if not receipt["delivered"]:
         parse_mode = "HTML" if receipt["reply"] == HELP_TEXT else None
