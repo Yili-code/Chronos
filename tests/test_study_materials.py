@@ -50,3 +50,10 @@ def test_metadata_can_be_selected_before_download_but_not_summarized():
     assert pdf.availability.value == 'listed'
     with pytest.raises(ValueError, match='verified'):
         selection.generation_key(model='test', prompt_version='v1')
+
+
+def test_unknown_upload_dates_remain_unknown_and_sort_last():
+    unknown = PdfMaterial('unknown', 'os', 'lecture.pdf', None)
+    result = course_catalog('os', (unknown, material()))
+    assert result[-1] == unknown
+    assert result[-1].uploaded_at is None

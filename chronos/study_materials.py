@@ -18,7 +18,7 @@ class PdfMaterial:
     source_id: str
     course_id: str
     filename: str
-    uploaded_at: datetime
+    uploaded_at: datetime | None
     sha256: str | None = None
 
     @property
@@ -30,7 +30,7 @@ class PdfMaterial:
             raise ValueError('material identity is required')
         if not self.filename.lower().endswith('.pdf'):
             raise ValueError('only PDF materials are supported')
-        if self.uploaded_at.utcoffset() is None:
+        if self.uploaded_at is not None and self.uploaded_at.utcoffset() is None:
             raise ValueError('upload time must be timezone-aware')
         if self.sha256 is not None and not re.fullmatch(r'[0-9a-f]{64}', self.sha256):
             raise ValueError('invalid PDF content hash')
@@ -40,7 +40,13 @@ def course_catalog(course_id: str, materials: tuple[PdfMaterial, ...]) -> tuple[
     selected = tuple(item for item in materials if item.course_id == course_id)
     if len({item.source_id for item in selected}) != len(selected):
         raise ValueError('duplicate material identity')
-    return tuple(sorted(selected, key=lambda item: (-item.uploaded_at.timestamp(), item.source_id)))
+    # Unknown dates are explicitly last; this is not a complete newest-first
+    # guarantee unless every source supplies a genuine upload timestamp.
+    return tuple(sorted(selected, key=lambda item: (
+        item.uploaded_at is None,
+        -item.uploaded_at.timestamp() if item.uploaded_at else 0,
+        item.source_id,
+    )))
 
 
 @dataclass(frozen=True)
