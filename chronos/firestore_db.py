@@ -67,6 +67,10 @@ class FirestoreDatabase:
             return state
         return self._run_transaction(mutate)
 
+    def get_material_selection(self, key: str) -> dict | None:
+        snapshot = self.material_selections.document(key).get()
+        return snapshot.to_dict() if snapshot.exists else None
+
     def get_study_note(self, fingerprint: str) -> NoteRecord | None:
         if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
             return None

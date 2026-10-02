@@ -229,6 +229,24 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
     if settings.telegram_chat_id and chat_id != settings.telegram_chat_id:
         raise HTTPException(status_code=403, detail="Unauthorized chat")
     update_id = update.update_id
+    if update.callback_query and (update.callback_query.data or "").startswith("pdf:"):
+        from .selection_buttons import apply_callback
+        try:
+            text, markup = apply_callback(db, chat_id, update.callback_query.data)
+        except ValueError:
+            await telegram.request("answerCallbackQuery", {"callback_query_id": update.callback_query.id,
+                                   "text": "選擇無效、尚未選檔，或此清單已失效。"})
+            return {"ok": True}
+        if source_message.message_id is None:
+            raise HTTPException(status_code=422, detail="Selection message id required")
+        result = await telegram.request("editMessageText", {"chat_id": chat_id, "message_id": source_message.message_id,
+                                         "text": text, "reply_markup": markup})
+        # Duplicate callbacks may result in an unchanged-message rejection;
+        # state transitions remain revision-idempotent regardless of rendering.
+        if not result.get("ok") and "message is not modified" not in str(result.get("description", "")).lower():
+            raise HTTPException(status_code=502, detail="Selection display update failed")
+        await telegram.answer_callback_query(update.callback_query.id)
+        return {"ok": True}
     export_match = re.fullmatch(r"/export\s+([0-9a-f]{64})", (source_message.text or "").strip())
     if update.callback_query is None and source_message.reply_to_message is None and export_match:
         from .note_delivery import export_note

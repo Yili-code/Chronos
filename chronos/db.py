@@ -94,6 +94,11 @@ class Database:
                                (key, json.dumps(state)))
             return state
 
+    def get_material_selection(self, key: str) -> dict | None:
+        with self.connect() as connection:
+            row = connection.execute("SELECT state_json FROM material_selections WHERE selection_key=?", (key,)).fetchone()
+        return json.loads(row[0]) if row else None
+
     def get_study_note(self, fingerprint: str) -> NoteRecord | None:
         if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
             return None

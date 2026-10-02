@@ -19,7 +19,7 @@ multi-selection and a generation fingerprint that includes content, progress and
 model/prompt version. Repeated selection callbacks use set membership, not toggles.
 The fingerprint is not a database lock and does not alone prevent concurrent jobs.
 
-218 Python tests pass. The extension extracts visible activity PDF metadata and
+219 Python tests pass. The extension extracts visible activity PDF metadata and
 has an explicit handoff button; the loopback receiver validates metadata and
 accumulates isolated per-activity snapshots in memory. An HTTP regression test
 confirms rejected extra fields cannot alter an accepted snapshot. Unknown
@@ -141,3 +141,10 @@ prevent stale callbacks from changing newer choices; empty confirmation is
 rejected and confirmed selections are immutable. Four shared adapter tests cover
 round-trip persistence, stale events, confirmation and ownership/source rejection.
 Telegram inline button routing and catalog ingestion are not yet connected.
+
+Inline keyboard rendering and callback routing are now implemented, with eight
+files per page, explicit select/unselect membership and a Done action. One HTTP
+test covers two-file selection, a duplicated event and confirmation against
+SQLite with mocked Telegram edits. Initial catalog-message delivery, callback
+message binding, generation dispatch and live interaction remain pending; this
+supersedes only the missing callback-routing item above.
