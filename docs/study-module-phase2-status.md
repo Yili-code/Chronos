@@ -40,7 +40,7 @@ The extension now includes a bounded PDF GET handler for sources present in the
 current visible activity catalog. Browser-managed credentials stay in Chrome;
 redirects are rejected, transfers time out after 30 seconds, and streams above
 12 MiB are cancelled. HTML responses fail the PDF envelope check. This check is
-not a PDF parser. Twelve JavaScript tests pass with mocked download responses;
+not a PDF parser. Fourteen JavaScript tests pass with mocked download responses;
 no live download or local byte handoff is established by these tests. The handler
 is extension-runtime-only and is not exposed through the page-facing probe.
 
@@ -50,7 +50,14 @@ and PDF envelope, computes SHA-256 itself, and atomically saves a hash-named fil
 under gitignored `.study-data/pdfs/`. Six storage tests and one HTTP integration
 test cover repeat persistence and rejected input. These use synthetic envelopes,
 not parseable lecture PDFs; parser validation, retention limits, strict extension
-identity authentication, popup byte handoff and live browser evidence remain open.
+identity authentication and live browser evidence remain open.
+
+After metadata acceptance, the popup offers per-file explicit download buttons.
+It sends bytes to the local PDF endpoint and reports success only after a matching
+persisted receipt. Two popup tests cover acceptance/rejection and ensure metadata
+collection alone does not download files. Keep the popup open during transfer;
+closing it can interrupt delivery and requires retry. This diagnostic entry point
+is not the required Telegram multi-selection workflow or cloud synchronization.
 
 ## Integration gaps
 

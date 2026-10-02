@@ -6,7 +6,7 @@ const path = require('node:path');
 
 test('material handoff is explicit and reports local rejection', async () => {
   let click;
-  const button = {addEventListener(_event, fn){click=fn;}};
+  const button = {replaceChildren(){}, addEventListener(_event, fn){click=fn;}};
   const output = {before(){}, textContent:''};
   const requests = [];
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../popup.js'),'utf8'), {
