@@ -24,11 +24,19 @@ request headers, or form values.
 3. Choose **Load unpacked** and select `chrome-extension/`.
 4. If the extension is already present, choose **Reload** after code changes.
 5. Open `https://tronclass.ntou.edu.tw/` in the same Chrome profile.
-6. Open the Chronos extension action from the toolbar.
+6. Start the local receiver from the repository root:
+
+   ```text
+   python -m chronos.local_observation_server
+   ```
+
+7. Open the Chronos extension action from the toolbar.
 
 ## Expected result
 
-The popup shows a JSON object with `url` and `visible_text`. The URL has no
+The popup shows a JSON object with `local_status` and the observation. With the
+receiver running, `local_status` is `accepted`; otherwise it is
+`unavailable` and the observation remains local to the popup. The URL has no
 `?query` or `#fragment`. The visible text is capped by the observation helper.
 
 An unsupported tab should show a safe message telling the user to open a
@@ -40,6 +48,10 @@ The connected TronClass tab was observed with the content-script marker
 `data-chronos-read-only-bridge="active"`. The local extension suite passed 3
 tests and the adapter suite passed 18 tests.
 
-This smoke test does not establish that a CAS session can be renewed, that a
-PDF can be downloaded repeatedly, or that an observation can be delivered to a
-Chronos process. Those remain explicit Phase 0 or Phase 1 gates.
+The receiver is loopback-only and accepts only the two NTOU hosts plus the
+explicit bridge header. It stores the latest observation in memory and does
+not log request bodies.
+
+This smoke test does not establish that a CAS session can be renewed or that a
+PDF can be downloaded repeatedly. Those remain explicit Phase 0 or Phase 1
+gates.

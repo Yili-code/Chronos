@@ -1,4 +1,6 @@
-// Read-only user-facing trigger. No network calls and no form actions.
+// Explicit user-facing handoff. It only targets the loopback Chronos process.
+
+const LOCAL_ENDPOINT = "http://127.0.0.1:8765/v1/browser-observation";
 
 const output = document.getElementById("output");
 
@@ -17,6 +19,24 @@ chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
       show("Open a supported TronClass or CAS page, then try again.");
       return;
     }
-    show(response || "No observation returned.");
+    if (!response) {
+      show("No observation returned.");
+      return;
+    }
+    fetch(LOCAL_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Chronos-Bridge": "1",
+      },
+      body: JSON.stringify(response),
+    })
+      .then((result) => {
+        if (!result.ok) throw new Error("local receiver rejected observation");
+        show({ local_status: "accepted", observation: response });
+      })
+      .catch(() => {
+        show({ local_status: "unavailable", observation: response });
+      });
   });
 });

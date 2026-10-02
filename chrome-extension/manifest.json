@@ -10,7 +10,8 @@
   },
   "host_permissions": [
     "https://tronclass.ntou.edu.tw/*",
-    "https://tccas.ntou.edu.tw/*"
+    "https://tccas.ntou.edu.tw/*",
+    "http://127.0.0.1:8765/*"
   ],
   "content_scripts": [
     {
