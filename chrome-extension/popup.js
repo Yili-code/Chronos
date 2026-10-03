@@ -43,7 +43,7 @@ function offerDownloads(tabId, materials) {
 
 // Material transfer is explicit and separate from the session observation.
 const materialButton = document.createElement("button");
-materialButton.textContent = "傳送此活動的 PDF 清單";
+materialButton.textContent = "傳送目前教材頁／活動的 PDF 清單";
 output.before(materialButton);
 materialButton.addEventListener("click", () => {
   downloads.replaceChildren();
@@ -54,27 +54,46 @@ materialButton.addEventListener("click", () => {
       materialButton.disabled = false;
       return;
     }
-    chrome.tabs.sendMessage(tab.id, { type: "chronos.list_visible_materials" }, async (response) => {
+    const receive = async (response) => {
       if (chrome.runtime.lastError || !response) {
         show("請重新載入擴充功能與 TronClass 活動頁，再試一次。");
         materialButton.disabled = false;
         return;
       }
       try {
-        const result = await fetch("http://127.0.0.1:8765/v1/browser-materials", {
+        const snapshots = response.snapshots || [response];
+        if (!Array.isArray(snapshots) || snapshots.length > 100) throw new Error("invalid catalog");
+        const accepted = [];
+        let acceptedActivities = 0;
+        let unavailableActivities = 0;
+        for (const snapshot of snapshots) {
+          if (snapshot.status !== "observed" || !snapshot.materials?.length) {
+            unavailableActivities++;
+            continue;
+          }
+          const result = await fetch("http://127.0.0.1:8765/v1/browser-materials", {
           method: "POST",
           headers: { "Content-Type": "application/json", "X-Chronos-Bridge": "1" },
-          body: JSON.stringify(response),
+          body: JSON.stringify({status:snapshot.status, materials:snapshot.materials}),
         });
         if (!result.ok) throw new Error("metadata rejected");
-        offerDownloads(tab.id, response.materials);
-        show({ local_status: "accepted", material_status: response.status,
-          material_count: response.materials.length });
+          accepted.push(...snapshot.materials);
+          acceptedActivities++;
+        }
+        offerDownloads(tab.id, accepted);
+        show({ local_status: acceptedActivities ? "accepted_partial_catalog" : "unknown",
+          accepted_activities: acceptedActivities, unavailable_activities: unavailableActivities,
+          material_count: accepted.length, complete_course: false });
       } catch {
-        show("PDF 清單未交付：請確認本機 Chronos receiver 已啟動。");
+        show("PDF 清單未完整交付：先前項目可能已保存。請確認本機 Chronos receiver 後重試；尚未下載 PDF。");
       } finally {
         materialButton.disabled = false;
       }
+    };
+    chrome.tabs.sendMessage(tab.id, { type: "chronos.list_visible_materials" }, response => {
+      if (!chrome.runtime.lastError && response?.status === "unsupported_page") {
+        chrome.tabs.sendMessage(tab.id, { type: "chronos.list_course_materials" }, receive);
+      } else receive(response);
     });
   });
 });

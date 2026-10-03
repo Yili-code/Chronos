@@ -57,6 +57,15 @@ groups, rejects ambiguous/missing containers as unknown, and retains
 these multi-activity snapshots is not yet connected; the installed extension has
 not been verified with this revision.
 
+Popup integration now falls back from individual activity metadata to courseware
+snapshots and sends each observed activity through the existing validated receiver
+endpoint. Unknown snapshots are counted, partial failures stop the transfer with
+an explicit warning that earlier items may already be saved, and metadata transfer
+never starts a PDF download. Courseware download requests re-read the current DOM
+catalog before using the existing bounded download handler. Twenty JavaScript
+tests pass, including multi-activity handoff success and second-item rejection.
+These mocked checks do not establish installed-extension or live receiver success.
+
 ## PRD acceptance scope
 
 ### Live catalog inspection — 2026-10-03

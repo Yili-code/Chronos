@@ -14,7 +14,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return false;
   }
   if (message?.type === "chronos.download_visible_pdf") {
-    const catalog = globalThis.ChronosMaterials.extractMaterials(document, location.href);
+    let catalog = globalThis.ChronosMaterials.extractMaterials(document, location.href);
+    if (catalog.status === "unsupported_page") {
+      const course = globalThis.ChronosMaterials.extractCourseMaterials(document, location.href);
+      const materials = course.snapshots.flatMap(snapshot => snapshot.materials);
+      catalog = {status: materials.length ? "observed" : "unknown", materials};
+    }
     globalThis.ChronosPdfDownload.downloadVisiblePdf(message.source_id, catalog).then(sendResponse);
     return true;
   }
