@@ -3,7 +3,7 @@
   "name": "Chronos Study Read-only Bridge",
   "version": "0.1.0",
   "description": "Expose redacted, read-only TronClass page observations to Chronos.",
-  "permissions": ["activeTab"],
+  "permissions": ["activeTab", "downloads"],
   "action": {
     "default_title": "Chronos read-only observation",
     "default_popup": "popup.html"

@@ -6,6 +6,29 @@
 requested live workflow. The chronological checkpoints below are historical;
 this requirement-level audit takes precedence when interpreting completion.
 
+### Native download implementation — pending live verification
+
+The user approved the Chrome `downloads` permission after confirming that the
+native site download produces an openable PDF. The observed redirect destination
+hostname was `tcmedia.ntou.edu.tw`; no bearer path is retained here.
+The popup now uses Chrome's native download API after the content fetch reports
+a redirect, querying only its returned download ID. It checks extension ownership,
+completion, danger status, final HTTPS hostname, size and generated filename before
+requesting local import. Final-host validation is after Chrome's network transfer;
+it does not filter every redirect hop. Chrome handles authentication and redirects.
+
+The receiver's optional `--native-download-root` confines import to one directory
+and random 32-hex PDF basenames, rejects traversal and symlink escape, rechecks byte
+count and PDF envelope, and uses the existing content-addressed atomic storage.
+It never deletes the original download. The local-process trust limitation remains;
+this is not protection against a malicious process racing filesystem changes.
+
+29 JavaScript tests and 12 focused Python tests passed. Live native fallback and
+import remain unverified. Keep the popup open; closing it can interrupt monitoring,
+not Chrome's download. The current receiver uses
+`C:\Users\User\Downloads\Chronos`; a customized Chrome download directory needs
+matching configuration. No Gemini request is part of this test.
+
 | Requirement | Current evidence | Remaining gate |
 | --- | --- | --- |
 | Course PDF list, newest upload first | Activity DOM extractor emits uploaded_at=null; snapshots explicitly incomplete | Observe and implement complete course traversal and genuine upload metadata; do not substitute observation/save time |

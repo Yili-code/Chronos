@@ -32,6 +32,20 @@ function offerDownloads(tabId, materials) {
       chrome.tabs.sendMessage(tabId, { type: "chronos.download_visible_pdf", source_id: material.source_id }, async (download) => {
         try {
           if (chrome.runtime.lastError || !download) throw new Error("download unavailable");
+          if (download.reason === "redirect_blocked") {
+            show("改由 Chrome 原生下載；請保持視窗開啟，尚未確認 Chronos 保存成功。");
+            const token = crypto.randomUUID().replaceAll("-", "");
+            const native = await ChronosNative.nativeDownload(material.source_id, chrome.downloads, chrome.runtime.id, token);
+            const result = await fetch("http://127.0.0.1:8765/v1/browser-native-pdf", {
+              method:"POST", headers:{"Content-Type":"application/json","X-Chronos-Bridge":"1"},
+              body:JSON.stringify({course_id:material.course_id,source_id:material.source_id,...native}),
+            });
+            if (!result.ok) throw new Error("native persistence rejected");
+            const receipt = await result.json();
+            if (receipt.status !== "persisted" || receipt.source_id !== material.source_id) throw new Error("invalid receipt");
+            show({local_status:"persisted",filename:material.filename,byte_count:receipt.byte_count});
+            return;
+          }
           if (download.status !== "downloaded") {
             show(downloadFailure(download));
             return;

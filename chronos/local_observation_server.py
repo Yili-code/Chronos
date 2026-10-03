@@ -19,6 +19,7 @@ from pathlib import Path
 from .chrome_bridge import BrowserBridgeError, BrowserObservation, parse_observation
 from .material_bridge import MaterialObservationStore
 from .pdf_store import PdfStore, MAX_PDF_BYTES
+from .native_pdf_import import import_native_pdf
 
 
 MAX_BODY_BYTES = 256_000
@@ -83,7 +84,7 @@ class _ObservationHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_POST(self) -> None:  # noqa: N802
-        if self.path not in {"/v1/browser-observation", "/v1/browser-materials", "/v1/browser-pdf"}:
+        if self.path not in {"/v1/browser-observation", "/v1/browser-materials", "/v1/browser-pdf", "/v1/browser-native-pdf"}:
             self._send_json(404, {"error": "not_found"})
             return
         if not self._allowed_origin() or self.headers.get("X-Chronos-Bridge") != "1":
@@ -97,6 +98,13 @@ class _ObservationHandler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(content_length))
             if not isinstance(payload, dict):
                 raise BrowserBridgeError("observation must be an object")
+            if self.path == "/v1/browser-native-pdf":
+                if not isinstance(payload.get("course_id"), str):
+                    raise ValueError("invalid course")
+                receipt = import_native_pdf(payload, self.server.native_download_root,
+                    self.server.pdf_store, self.server.material_store.course_materials(payload["course_id"]))
+                self._send_json(202, receipt)
+                return
             if self.path == "/v1/browser-pdf":
                 if set(payload) != {"course_id", "download"} or not isinstance(payload["course_id"], str) or not isinstance(payload["download"], dict):
                     raise ValueError("invalid PDF handoff")
@@ -125,10 +133,11 @@ class LocalObservationServer(ThreadingHTTPServer):
     """A loopback-only HTTP server for explicit popup handoffs."""
 
     def __init__(self, port: int = 8765, pdf_directory: Path | None = None, catalog_path: Path | None = None,
-                 extension_id: str | None = None) -> None:
+                 extension_id: str | None = None, native_download_root: Path | None = None) -> None:
         if extension_id is not None and not re.fullmatch(r"[a-p]{32}", extension_id):
             raise ValueError("invalid Chrome extension ID")
         self.extension_origin = f"chrome-extension://{extension_id}" if extension_id else None
+        self.native_download_root = native_download_root
         super().__init__(("127.0.0.1", port), _ObservationHandler)
         self.observation_store = ObservationStore()
         self.material_store = MaterialObservationStore(catalog_path)
@@ -140,8 +149,10 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--catalog-path", type=Path, default=Path(".study-data/catalog.sqlite3"))
     parser.add_argument("--extension-id", required=True, help="Exact installed Chronos extension ID, not a secret")
+    parser.add_argument("--native-download-root", type=Path, help="Only the Chronos subdirectory of Chrome Downloads")
     args = parser.parse_args()
-    server = LocalObservationServer(args.port, catalog_path=args.catalog_path, extension_id=args.extension_id)
+    server = LocalObservationServer(args.port, catalog_path=args.catalog_path, extension_id=args.extension_id,
+        native_download_root=args.native_download_root)
     print(f"Chronos local observation receiver listening on 127.0.0.1:{args.port}")
     try:
         server.serve_forever()
