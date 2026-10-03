@@ -8,6 +8,14 @@ this requirement-level audit takes precedence when interpreting completion.
 
 ### Native download implementation — pending live verification
 
+Live checkpoint (2026-10-03): user popup reported `persisted` for the first OS
+lecture PDF. Independent local readback through `PdfStore.read` verified the
+stored bytes against the indexed SHA-256 and size: 466300 bytes. The isolated
+PDF parser returned 14 pages. This establishes one successful native-browser to
+local-storage transfer, not repeated-download stability, semantic correctness,
+complete-course coverage or Gemini generation. A second independent transfer of
+the same source and comparison with this stored identity remains the next gate.
+
 The user approved the Chrome `downloads` permission after confirming that the
 native site download produces an openable PDF. The observed redirect destination
 hostname was `tcmedia.ntou.edu.tw`; no bearer path is retained here.
