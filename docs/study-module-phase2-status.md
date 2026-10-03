@@ -8,6 +8,13 @@ this requirement-level audit takes precedence when interpreting completion.
 
 ### Native download implementation — pending live verification
 
+Second-material checkpoint (2026-10-03): following the user's Lec1 download,
+independent indexed readback verified Lec1 at 2874011 bytes and 81 parsed pages.
+Lec0 remained readable at 466300 bytes and 14 pages. Both passed indexed hash
+verification, had distinct content hashes, and totaled 3340311 bytes. This proves
+two separate locally persisted inputs, not semantic quality or live multi-PDF
+generation. No Gemini request was made for this verification.
+
 Repeated-transfer checkpoint (2026-10-03): after the user's repeat action, local
 inspection found three distinct randomly named native download files in the
 configured Chronos download directory. All three were 466300 bytes and matched
