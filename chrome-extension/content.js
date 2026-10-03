@@ -5,6 +5,10 @@
 document.documentElement?.setAttribute("data-chronos-read-only-bridge", "active");
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === "chronos.list_visible_activities") {
+    sendResponse(globalThis.ChronosMaterials.extractActivities(document, location.href));
+    return false;
+  }
   if (message?.type === "chronos.download_visible_pdf") {
     const catalog = globalThis.ChronosMaterials.extractMaterials(document, location.href);
     globalThis.ChronosPdfDownload.downloadVisiblePdf(message.source_id, catalog).then(sendResponse);

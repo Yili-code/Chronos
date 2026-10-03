@@ -33,6 +33,16 @@ Next evidence sequence:
 
 User inputs outstanding: installed extension ID/reload confirmation and Gemini
 free-tier/billing confirmation. Do not ask for cookie values or API keys in chat.
+Update: the user confirmed extension reload and accepted automatic viewing/download
+progress records. The public extension ID remains outstanding. Free-tier-only is
+the requested spending constraint, not evidence of project billing eligibility.
+
+The extension now exposes `chronos.list_visible_activities` for courseware pages,
+using observed `expandable-content-new` attachment IDs. It deduplicates numeric
+IDs, rejects unsupported pages, and reports unknown for empty/over-limit results.
+Every result retains `complete_course=false`. Sixteen JavaScript tests pass;
+this is a discovery interface, not an installed-extension verification, automatic
+traversal, attachment enumeration, or upload-time implementation.
 The worker is not running merely because a launcher exists. No enabled companion
 process or newly deployed Phase 2 webhook has been verified.
 

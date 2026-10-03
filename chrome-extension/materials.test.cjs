@@ -1,6 +1,27 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const {extractMaterials} = require('./materials.js');
+const {extractMaterials, extractActivities} = require('./materials.js');
+const courseware = 'https://tronclass.ntou.edu.tw/course/123/courseware';
+const activityDocument = values => ({querySelectorAll(selector) {
+  assert.equal(selector, '[expandable-content-new]');
+  return values.map(value => ({getAttribute: () => value}));
+}});
+test('course discovery returns unique numeric IDs without claiming completeness', () => {
+  assert.deepEqual(extractActivities(activityDocument(['attachments-456', 'attachments-456',
+    'attachments-789', 'attachments-1?token=secret', null]), courseware), {
+    status:'observed', activities:[{course_id:'123',activity_id:'456'},
+      {course_id:'123',activity_id:'789'}], complete_course:false});
+});
+test('course discovery rejects unsupported origins and distinguishes unloaded pages', () => {
+  for (const url of ['invalid', 'https://evil.invalid/course/123/courseware',
+    'https://tronclass.ntou.edu.tw/course/123/learning-activity#/456']) {
+    assert.equal(extractActivities({}, url).status, 'unsupported_page');
+  }
+  assert.equal(extractActivities(activityDocument([]),courseware).status, 'unknown');
+  const overflow = extractActivities(activityDocument(Array.from({length:101}, (_,i)=>`attachments-${i}`)),courseware);
+  assert.equal(overflow.status,'unknown');
+  assert.deepEqual(overflow.activities,[]);
+});
 const page = 'https://tronclass.ntou.edu.tw/course/123/learning-activity#/456';
 function documentFor(href) {
   const row = {querySelector: () => ({innerText: 'Lecture\n.pdf'}),
@@ -35,13 +56,16 @@ test('runtime handler routes metadata separately from session observation', () =
     document: {documentElement:{setAttribute(){}}}, location:{href:page},
     window:{addEventListener(){}},
     chrome:{runtime:{onMessage:{addListener(fn){ handler = fn; }}}},
-    ChronosMaterials:{extractMaterials(){return metadata;}},
+    ChronosMaterials:{extractMaterials(){return metadata;}, extractActivities(){return {status:'unknown',activities:[],complete_course:false};}},
     ChronosObservation:{observation(){return {status:'ready'};}},
   };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'content.js'),'utf8'),context);
   let response;
   handler({type:'chronos.list_visible_materials'}, {}, value => response=value);
   assert.equal(response, metadata);
+  handler({type:'chronos.list_visible_activities'}, {}, value => response=value);
+  assert.equal(response.complete_course, false);
+  assert.equal(response.status, 'unknown');
   handler({type:'chronos.observe_read_only'}, {}, value => response=value);
   assert.equal(response.status, 'ready');
 });
