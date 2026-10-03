@@ -8,12 +8,22 @@ test('visible PDF uses browser credentials and returns bytes without URL', async
   const result = await downloadVisiblePdf('123', observation, async (url, options) => {
     assert.equal(url, 'https://tronclass.ntou.edu.tw/api/uploads/reference/123/blob');
     assert.equal(options.credentials, 'same-origin');
-    assert.equal(options.redirect, 'error');
+    assert.equal(options.redirect, 'manual');
     return new Response(pdf);
   });
   assert.equal(result.status, 'downloaded');
   assert.equal(atob(result.data_base64), pdf);
   assert.equal('url' in result, false);
+});
+
+test('redirect is classified without following or inspecting its destination', async () => {
+  let calls=0;
+  const result=await downloadVisiblePdf('123',observation,async()=>{
+    calls++;
+    return {type:'opaqueredirect',get headers(){throw new Error('must not inspect');},get url(){throw new Error('must not inspect');}};
+  });
+  assert.equal(calls,1);
+  assert.deepEqual(result,{status:'deferred_attachment',reason:'redirect_blocked'});
 });
 
 test('unlisted source never starts a request', async () => {

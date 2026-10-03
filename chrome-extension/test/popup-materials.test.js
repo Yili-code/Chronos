@@ -4,6 +4,18 @@ const vm = require('node:vm');
 const fs = require('node:fs');
 const path = require('node:path');
 
+test('download failure text exposes only allowlisted explanations', () => {
+  const context={document:{getElementById:()=>({before(){}}),createElement:()=>({addEventListener(){}})},
+    chrome:{tabs:{query(_filter,callback){callback([]);}}}};
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../popup.js'),'utf8'),context);
+  assert.match(context.downloadFailure({reason:'size_limit'}),/12 MiB/);
+  assert.match(context.downloadFailure({reason:'download_unavailable'}),/尚不能判定/);
+  assert.match(context.downloadFailure({status:'reauth_required'}),/重新登入/);
+  const message=context.downloadFailure({reason:'https://secret.invalid/?token=PRIVATE',error:'PRIVATE'});
+  assert.ok(!message.includes('PRIVATE'));
+  assert.match(message,/原因未辨識/);
+});
+
 for (const rejectSecond of [false,true]) test(`course handoff is sequential and never implicitly downloads: rejection=${rejectSecond}`, async () => {
   const elements=[];
   const output={before(){},textContent:''};

@@ -6,6 +6,20 @@ const output = document.getElementById("output");
 const downloads = document.createElement("div");
 output.before(downloads);
 
+function downloadFailure(download) {
+  if (download.status === "reauth_required") return "請重新登入 TronClass，再重新取得清單。";
+  const reasons = {
+    not_in_visible_catalog: "目前頁面的清單已不包含此附件；請重新傳送清單。",
+    download_rejected: "伺服器未回傳可下載的內容。",
+    size_limit: "附件超過目前 12 MiB 的限制。",
+    invalid_pdf_envelope: "取得的內容未通過 PDF 格式檢查，可能是登入頁或其他內容。",
+    download_unavailable: "網路、瀏覽器限制或資料讀取失敗；尚不能判定具體原因。",
+    redirect_blocked: "伺服器要求重新導向；程式未跟隨目的地。需確認下載流程，不代表密碼錯誤。",
+    download_timeout: "下載超過 30 秒，已中止。",
+  };
+  return "附件尚未保存。" + (reasons[download.reason] || "原因未辨識，請重新取得清單。");
+}
+
 function offerDownloads(tabId, materials) {
   downloads.replaceChildren();
   for (const material of materials) {
@@ -19,7 +33,7 @@ function offerDownloads(tabId, materials) {
         try {
           if (chrome.runtime.lastError || !download) throw new Error("download unavailable");
           if (download.status !== "downloaded") {
-            show(download.status === "reauth_required" ? "請重新登入 TronClass，再重新取得清單。" : "附件暫時無法下載；尚未保存。");
+            show(downloadFailure(download));
             return;
           }
           const response = await fetch("http://127.0.0.1:8765/v1/browser-pdf", {

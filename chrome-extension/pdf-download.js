@@ -13,9 +13,12 @@
     try {
       const response = await fetchImpl(
         `https://tronclass.ntou.edu.tw/api/uploads/reference/${sourceId}/blob`,
-        { method: "GET", credentials: "same-origin", redirect: "error",
+        { method: "GET", credentials: "same-origin", redirect: "manual",
           cache: "no-store", signal: controller.signal },
       );
+      if (response.type === "opaqueredirect" || [301,302,303,307,308].includes(response.status)) {
+        return { status: "deferred_attachment", reason: "redirect_blocked" };
+      }
       if ([401, 403].includes(response.status)) return { status: "reauth_required" };
       if (!response.ok || !response.body) return { status: "deferred_attachment", reason: "download_rejected" };
       reader = response.body.getReader();
@@ -46,7 +49,7 @@
       return { status: "downloaded", source_id: sourceId, byte_count: size, data_base64: btoa(binary) };
     } catch {
       // Redirect, network and timeout failures are not proof of expired login.
-      return { status: "deferred_attachment", reason: "download_unavailable" };
+      return { status: "deferred_attachment", reason: controller.signal.aborted ? "download_timeout" : "download_unavailable" };
     } finally {
       clearTimeout(timer);
       if (reader) reader.releaseLock();
