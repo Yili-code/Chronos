@@ -7,6 +7,14 @@ from .study_notes import SummaryDraft
 from .summary_pipeline import GenerationRejected
 
 PROMPT_VERSION = "study-v1"
+
+class ProviderRejected(GenerationRejected):
+    """Safe diagnostics only; never retain the provider response or request."""
+    def __init__(self, status_code):
+        super().__init__("summary provider rejected request")
+        self.status_code = status_code
+        self.category = {400:"invalid_request",401:"authentication",403:"permission",
+                         404:"model_unavailable",429:"quota_or_rate_limit"}.get(status_code,"request_rejected")
 SYSTEM_PROMPT = (
     "Produce one combined study summary from the supplied PDFs and reported progress. "
     "Use Traditional Chinese explanations with natural English technical terms. Aim for "
@@ -51,7 +59,7 @@ class GeminiSummary:
         except httpx.HTTPError:
             raise RuntimeError("summary provider outcome unknown") from None
         if 400 <= response.status_code < 500:
-            raise GenerationRejected("summary provider rejected request")
+            raise ProviderRejected(response.status_code)
         if not response.is_success:
             raise RuntimeError("summary provider outcome unknown")
         try:

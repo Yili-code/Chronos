@@ -50,3 +50,12 @@ async def test_failure_is_generic_and_never_retried_in_adapter(status, error):
         await adapter(handler, free_tier_confirmed=True).generate(**args())
     assert "do-not-echo" not in str(failure.value)
     assert len(calls) == 1
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('status,category',[(400,'invalid_request'),(403,'permission'),(429,'quota_or_rate_limit')])
+async def test_rejection_preserves_only_safe_classification(status,category):
+    with pytest.raises(GenerationRejected) as failure:
+        await adapter(lambda request:httpx.Response(status,json={'error':{'message':'private-token'}}),free_tier_confirmed=True).generate(**args())
+    assert failure.value.status_code == status
+    assert failure.value.category == category
+    assert 'private-token' not in repr(vars(failure.value))
