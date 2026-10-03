@@ -8,6 +8,17 @@ this requirement-level audit takes precedence when interpreting completion.
 
 ### Native download implementation — pending live verification
 
+Repeated-transfer checkpoint (2026-10-03): after the user's repeat action, local
+inspection found three distinct randomly named native download files in the
+configured Chronos download directory. All three were 466300 bytes and matched
+the canonical indexed SHA-256. The canonical content-addressed store contained
+one blob for this identity; indexed readback succeeded and parsed as 14 pages.
+The index's latest saved_at was 2026-10-03T07:28:42.283818+00:00.
+This verifies short-interval repeated-download content consistency for this one
+PDF/session, not long-term reliability, session renewal or other attachments.
+Native download originals remain on disk intentionally; canonical deduplication
+does not mean Chrome's download directory contains no duplicates.
+
 Live checkpoint (2026-10-03): user popup reported `persisted` for the first OS
 lecture PDF. Independent local readback through `PdfStore.read` verified the
 stored bytes against the indexed SHA-256 and size: 466300 bytes. The isolated
