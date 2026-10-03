@@ -28,7 +28,11 @@
     const seen = new Set();
     for (const row of document.querySelectorAll(".attachment-row")) {
       const nameColumn = row.querySelector(".attachment-column");
-      const filename = (nameColumn?.innerText || "").replace(/\s*\n\s*(\.pdf)\s*$/i, "$1").trim();
+      const name = nameColumn?.querySelector?.(".file-name");
+      const extension = nameColumn?.querySelector?.(".file-extension");
+      const filename = name && extension
+        ? (name.textContent.trim() + extension.textContent.trim())
+        : (nameColumn?.innerText || "").replace(/\s*\n\s*(\.pdf)\s*$/i, "$1").trim();
       if (!filename.toLowerCase().endsWith(".pdf")) continue;
       for (const anchor of row.querySelectorAll("a[href]")) {
         let url;
@@ -43,6 +47,23 @@
     }
     return { status: materials.length ? "observed" : "unknown", materials };
   }
-  if (typeof module !== "undefined" && module.exports) module.exports = { extractMaterials, extractActivities };
-  else root.ChronosMaterials = { extractMaterials, extractActivities };
+  function extractCourseMaterials(document, pageUrl) {
+    const discovery = extractActivities(document, pageUrl);
+    const snapshots = [];
+    for (const activity of discovery.activities) {
+      const containers = document.querySelectorAll(`.attachments.attachments-${activity.activity_id}`);
+      // Duplicate or absent containers cannot establish an unambiguous mapping.
+      if (containers.length !== 1) {
+        snapshots.push({ ...activity, status: "unknown", materials: [] });
+        continue;
+      }
+      const observation = extractMaterials(containers[0],
+        `https://tronclass.ntou.edu.tw/course/${activity.course_id}/learning-activity#/${activity.activity_id}`);
+      snapshots.push({ ...activity, ...observation });
+    }
+    return { status: discovery.status, snapshots, complete_course: false };
+  }
+  const api = { extractMaterials, extractActivities, extractCourseMaterials };
+  if (typeof module !== "undefined" && module.exports) module.exports = api;
+  else root.ChronosMaterials = api;
 })(globalThis);

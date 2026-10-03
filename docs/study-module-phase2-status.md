@@ -46,6 +46,17 @@ traversal, attachment enumeration, or upload-time implementation.
 The worker is not running merely because a launcher exists. No enabled companion
 process or newly deployed Phase 2 webhook has been verified.
 
+Courseware DOM follow-up: all five observed OS activities contained one PDF row
+inside a matching `.attachments.attachments-<activity_id>` group, even while
+collapsed. Reading this markup needed no expansion or preview. Filename and
+extension were separate `.file-name` and `.file-extension` text nodes. This is
+current-page evidence only, not proof of pagination completeness or upload dates.
+`chronos.list_course_materials` now returns per-activity snapshots from those
+groups, rejects ambiguous/missing containers as unknown, and retains
+`complete_course=false`. Eighteen JavaScript tests pass. Popup/local handoff of
+these multi-activity snapshots is not yet connected; the installed extension has
+not been verified with this revision.
+
 ## PRD acceptance scope
 
 ### Live catalog inspection — 2026-10-03
