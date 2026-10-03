@@ -6,6 +6,22 @@ from chronos.gemini_summary import GeminiSummary, PROMPT_VERSION
 from chronos.summary_pipeline import PdfInput, GenerationRejected
 from test_study_notes import payload
 
+def test_provider_schema_preserves_shape_while_local_bounds_remain_strict():
+    from chronos.gemini_summary import provider_summary_schema
+    from chronos.study_notes import SummaryDraft
+    from pydantic import ValidationError
+    schema=provider_summary_schema()
+    assert set(schema['required'])==set(SummaryDraft.model_fields)
+    point=schema['properties']['concepts']['items']
+    assert set(point['required'])=={'text','citations'}
+    assert set(point['properties']['citations']['items']['required'])=={'source_id','page'}
+    assert '$ref' not in json.dumps(schema)
+    assert 'maxLength' not in json.dumps(schema)
+    invalid=payload()
+    invalid['scope']=[]
+    with pytest.raises(ValidationError):
+        SummaryDraft.model_validate(invalid)
+
 
 def adapter(handler, **options):
     settings = SimpleNamespace(gemini_api_key="synthetic-test-key", gemini_model="test-model",

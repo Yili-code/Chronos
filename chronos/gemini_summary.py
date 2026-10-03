@@ -8,6 +8,22 @@ from .summary_pipeline import GenerationRejected
 
 PROMPT_VERSION = "study-v1"
 
+def provider_summary_schema():
+    """Inline the output shape; detailed bounds remain enforced by Pydantic."""
+    schema = SummaryDraft.model_json_schema()
+    definitions = schema.get('$defs', {})
+    def project(node):
+        if '$ref' in node:
+            return project(definitions[node['$ref'].split('/')[-1]])
+        result = {'type': node['type']}
+        if 'properties' in node:
+            result['properties'] = {name:project(value) for name,value in node['properties'].items()}
+            result['required'] = node.get('required', [])
+        if 'items' in node:
+            result['items'] = project(node['items'])
+        return result
+    return project(schema)
+
 class ProviderRejected(GenerationRejected):
     """Safe diagnostics only; never retain the provider response or request."""
     def __init__(self, status_code):
@@ -51,7 +67,7 @@ class GeminiSummary:
         body = {"systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
                 "contents": [{"role": "user", "parts": parts}],
                 "generationConfig": {"responseMimeType": "application/json",
-                                     "responseJsonSchema": SummaryDraft.model_json_schema()}}
+                                     "responseJsonSchema": provider_summary_schema()}}
         try:
             async with httpx.AsyncClient(timeout=config.ai_timeout, transport=self.transport, follow_redirects=False) as client:
                 response = await client.post(f"{config.gemini_api_base}/models/{model}:generateContent",
