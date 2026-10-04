@@ -1,5 +1,54 @@
 # Phase 2 — active implementation
 
+## Owner retains automatic delivery; alternative-model comparison — 2026-10-04
+
+YiLi selected option 2: retain automatic segmented delivery and assess other
+free-tier models. Review-before-publication requiring human approval is NOT
+adopted. Earlier entries awaiting this product choice are superseded; content
+quality and live export acceptance remain required.
+
+Google's current official pricing page lists free standard input/output for
+Gemini 2.5 Flash, 3.7 Flash and 3.6 Flash:
+https://ai.google.dev/gemini-api/docs/pricing . This establishes published model
+eligibility, not available quota or billing status for every project. Testing
+uses the user's previously confirmed free-tier project and accepted data policy;
+no billing settings, paid service tier, API key or production model were changed.
+
+The fixed-input comparator uses Lec0 physical pages 10–12, the same v10 prompt,
+original PDF plus extracted text, and the same bounded draft/review path. It
+allows one attempt (at most two requests) per model, no automatic retries, and
+exclusive attempt files prevent blind reruns. It writes only private local
+candidates/results; never production notes or Telegram messages.
+
+Initial observations: `gemini-2.5-flash` returned HTTP 404; `gemini-3.7-flash`
+returned HTTP 503. Neither yielded a draft, so neither has a quality score.
+A separate read-only models-list request returned HTTP 200 and listed both
+models, plus 3.6 Flash, 3.8 Flash, 3 Flash Preview and 3.1 Flash Lite, with no
+remaining page. Listing therefore does not prove generation availability; the
+2.5 result must not be described as a confirmed global retirement.
+
+3.6 Flash's same-input comparison returned 503 after 54.45 seconds. A separate
+tiny text-only control returned HTTP 200 with a candidate, establishing that
+this credential/model combination can respond to at least that request. Two
+bounded document-content controls still returned 503: extracted text without
+the binary PDF (15.56 seconds), and that same text in JSON mode with the schema
+contract moved into the prompt (6.61 seconds). The latter retains the same local
+Pydantic/source checks; it is diagnostic only, not a production fallback.
+
+These samples do not establish a unique root cause: neither PDF attachment nor
+native schema enforcement alone explains every observed failure, and transient
+capacity/request-complexity effects remain possible. No alternative produced a
+complete reviewed note, so there is no comparative content-quality winner.
+All cohorts have exclusive attempt guards; no automatic repeats or billing
+changes occurred. Further same-batch probes stop here. Recheck provider readiness
+before another document-quality run, rather than silently selecting an untested
+model or adopting human approval against the owner's decision.
+
+Final local suite: **331 passed**, 507 warnings, 26.77 seconds. The comparison
+tests cover repeat-run exclusion, safe failure classification, unchanged model
+defaults, prompt-version guards and the two isolated request-format controls.
+The configured study model remains `gemini-3.1-flash-lite`; no deployment occurred.
+
 ## Page-text assisted review and publication decision — 2026-10-04
 
 The local v10 pipeline extracts each selected 1–4-page slice once in the isolated
