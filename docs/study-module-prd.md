@@ -68,12 +68,14 @@ YiLi 必須使用 Telegram 的 **Reply** 回覆該課程訊息，避免系統把
 
 1. 登入 TronClass。
 2. 找到對應課程。
-3. 列出可用 PDF，依上傳時間由新到舊排序。
+3. 第一版列出已由 browser-session 觀察到的 PDF。明確標示「已觀察教材，可能不完整；上傳時間未知」，不得宣稱完整或已依最新上傳排序。
 4. 使用 Telegram inline buttons 讓 YiLi 選擇。
 5. 允許一次選擇多個 PDF。
 6. 按下「完成選擇」後開始處理。
 
 即使系統推測出最可能的檔案，也不得直接替 YiLi 決定。
+
+2026-10-04 範圍決定（YiLi 已確認）：完整課程教材枚舉與依真實上傳時間由新到舊排序延後，不屬於第一版 Phase 2 完成門檻。不得用檔名、ID 或本機觀察時間冒充上傳時間。清單新鮮度檢查、明確多選確認、PDF 完整性、內容品質、Firestore 保存與 Markdown 匯出仍須驗收；此決定不代表 Phase 2 已完成。
 
 ### 3.4 Summary output
 
@@ -382,10 +384,14 @@ MVP 完成必須證明：
 
 ### Phase 2 — Materials and summaries
 
-- PDF listing
+- Observed PDF listing with explicit partial-coverage and unknown-upload-time labels
 - Multi-select
 - Gemini per-PDF paginated key-point extraction, durable per-segment delivery
 - Markdown export
+
+Deferred beyond the first release: complete course enumeration and verified
+newest-upload-first ordering (owner-approved on 2026-10-04). This deferral does
+not relax note grounding, explicit selection, persistence or export acceptance.
 
 ### Phase 3 — Assignments
 

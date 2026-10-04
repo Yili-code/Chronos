@@ -1,5 +1,15 @@
 # Phase 2 — active implementation
 
+## Owner-approved first-release catalog scope — 2026-10-04
+
+YiLi explicitly accepted an observed-materials first release after the coverage
+limitation was explained. Complete enumeration and genuine upload-time sorting
+are deferred, not falsely reported as implemented. PRD sections 3.3 and Phase 2
+now reflect this decision. Existing partial-catalog/unknown-date labels remain
+required. Content quality and live Markdown export acceptance are unchanged;
+Phase 2 remains incomplete. Earlier entries describing complete enumeration as
+a first-release gate are historical and superseded only on this scope point.
+
 ## Source-check integration regression — 2026-10-04
 
 The complete local suite passed **309 tests** (372 warnings, 86.85 seconds).
