@@ -1,5 +1,6 @@
-"""Restricted-input parser worker. Stdout is only an integer or 'invalid'."""
+"""Restricted parser: stdout is a count, sliced PDF, bounded text JSON, or invalid."""
 import logging
+import json
 import sys
 from io import BytesIO
 from pypdf import PdfReader, PdfWriter
@@ -26,7 +27,14 @@ def main():
         for page in reader.pages:
             if len(page.mediabox) != 4:
                 raise ValueError()
-        if len(sys.argv) == 3:
+        if sys.argv[1:] == ['--text']:
+            if count > 4:
+                raise ValueError()
+            texts = [(page.extract_text() or '') for page in reader.pages]
+            if sum(len(text) for text in texts) > 100000:
+                raise ValueError()
+            print(json.dumps(texts, ensure_ascii=True))
+        elif len(sys.argv) == 3:
             start, end = map(int, sys.argv[1:])
             if not 1 <= start <= end <= count or end - start > 3:
                 raise ValueError()

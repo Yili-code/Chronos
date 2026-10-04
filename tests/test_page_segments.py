@@ -30,7 +30,8 @@ def test_slice_is_actual_small_pdf():
 
 
 @pytest.mark.asyncio
-async def test_category_failure_never_persists_sends_or_retries(tmp_path):
+@pytest.mark.parametrize('failure', ['category', 'weekday'])
+async def test_category_failure_never_persists_sends_or_retries(tmp_path, failure):
     db = Database(tmp_path / 'quality.db')
     db.initialize()
     data = make_pdf(pages=3)
@@ -41,6 +42,9 @@ async def test_category_failure_never_persists_sends_or_retries(tmp_path):
     generator.generate.return_value = {'scope': [point], 'concepts': [point], 'relationships': [],
         'exam_inferences': [{**point, 'text': '期末考預定於 12/24 舉行。', 'rationale': '表格明載日期'}],
         'uncertainties': []}
+    if failure == 'weekday':
+        generator.generate.return_value['exam_inferences'] = []
+        generator.generate.return_value['uncertainties'] = ['12/25 為週三。']
     now = datetime.now(timezone.utc)
     args = dict(selection=selection, pdfs={'a': PdfInput(data, 3)}, course='OS', class_date=now.date(),
                 chat_id=123, model='test', prompt_version='quality-test', now=now)

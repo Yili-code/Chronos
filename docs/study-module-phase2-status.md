@@ -1,5 +1,57 @@
 # Phase 2 — active implementation
 
+## Source-check integration regression — 2026-10-04
+
+The complete local suite passed **309 tests** (372 warnings, 86.85 seconds).
+The pipeline rejection test now covers both a miscategorized exam date and an
+invented weekday absent from a real parsed synthetic PDF. Both produce no note,
+no Telegram call and no automatic second generation on replay. These changes
+remain local; deployed revision `chronos-00018-c68` is unchanged. Passing this
+suite does not establish corrected live output or complete course metadata.
+
+## Recipient correction notice — 2026-10-04
+
+Sent one clearly labelled correction notice to the configured Chronos owner chat
+for the five already delivered v4 acceptance notes. A stable delivery-ledger key
+returned `sent`, preventing blind repeat notices. It explains the false date
+overlap, fact-versus-inference classification, physical-page-14 reference and
+segment-only absence scope, and warns that the notes have not passed quality
+acceptance. Original notes/messages were preserved; no replacement generation
+or deletion occurred. This notification is not a completed semantic fix.
+
+## Offline replay of actual v6 failures — 2026-10-04
+
+Replayed the saved v6 drafts against the hash-verified local PDF, without new
+model requests or external writes. The 7–9 draft was rejected by the new
+weekday-presence check: its invented weekday was absent from the cited segment.
+The 10–12 draft was rejected by the inference-confidence check, including its
+overstated rationale. These are real negative samples, not only synthetic tests.
+
+The weekday check extracts at most four pages in the existing isolated parser
+and matches supported Chinese/English weekday names on cited pages (or the
+supplied segment for uncited uncertainty prose). Presence is not entailment:
+it does not prove a weekday is associated with a particular date, recognize
+every spelling, or correctly read scanned PDFs. The standalone quality probe
+now applies the same checks before remapping citations and saving a draft.
+These guards block the observed failures but do not produce replacement notes
+or establish broader semantic accuracy. No deployment occurred.
+
+## Prompt v6 classification experiment — 2026-10-04
+
+Two local-only requests for pages 7–9 and 10–12 succeeded once each. Explicit
+examples moved exam dates into the factual concepts section, and both outputs
+passed the narrow lexical category gate. The drafts remain under
+`.study-data/lec0-lite-quality-v6/`; no canonical replacement or delivery occurred.
+
+Semantic acceptance still failed. The 7–9 output invented a weekday assertion
+for December 25 that the supplied segment does not establish. The 10–12 output
+claimed xv6 assessment content was highly likely and would directly affect
+evaluation based only on assignments and grading weights, overstating its
+evidence. This is direct evidence that passing the known-category gate does not
+imply factual grounding. Do not promote v6 as accepted or continue unbounded
+prompt variants until one happens to look correct. A broader quality strategy
+must explicitly handle unsupported added detail and inference confidence.
+
 ## Quality-change regression checkpoint — 2026-10-04
 
 The full local suite passed **301 tests** (363 warnings, 32.90 seconds) after

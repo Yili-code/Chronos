@@ -24,3 +24,17 @@ def test_topic_prediction_with_rationale_remains_supported():
     result = render_note(draft('考試可能要求追蹤系統呼叫跨越使用者與核心邊界。'),
                          filenames={'a': 'lecture.pdf'}, page_counts={'a': 1})
     assert '系統呼叫' in result
+
+
+@pytest.mark.parametrize('text', ['極可能考 xv6 實作。', '系統呼叫必考。',
+                                 'The exam will definitely cover paging.'])
+def test_overconfident_predictions_require_review(text):
+    with pytest.raises(ValueError, match='overconfident'):
+        render_note(draft(text), filenames={'a': 'lecture.pdf'}, page_counts={'a': 1})
+
+
+def test_overconfident_rationale_is_not_a_bypass():
+    value = draft('考試可能涉及 xv6。')
+    value.exam_inferences[0].rationale = '實作經驗將直接影響評核表現。'
+    with pytest.raises(ValueError, match='overconfident'):
+        render_note(value, filenames={'a': 'lecture.pdf'}, page_counts={'a': 1})

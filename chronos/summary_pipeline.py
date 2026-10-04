@@ -76,6 +76,11 @@ async def generate_selected_summary(db, generator, telegram, *, selection, pdfs,
         draft = SummaryDraft.model_validate(raw)
         if segment is not None:
             draft.validate_sources({identity: pdf.page_count for identity, pdf in generation_pdfs.items()})
+            from .source_checks import requires_weekday_check, validate_weekday_presence
+            if requires_weekday_check(draft):
+                source_pages = {identity: await asyncio.to_thread(isolated_pdf_page_count, pdf.data, extract_text=True)
+                                for identity, pdf in generation_pdfs.items()}
+                validate_weekday_presence(draft, source_pages)
             for point in (*draft.scope, *draft.concepts, *draft.relationships, *draft.exam_inferences):
                 for citation in point.citations:
                     citation.page += start - 1

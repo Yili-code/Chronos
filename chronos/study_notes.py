@@ -44,6 +44,13 @@ class SummaryDraft(BaseModel):
         for inference in self.exam_inferences:
             if administrative.search(inference.text):
                 raise ValueError("administrative fact in exam inference requires review")
+            # Predictions remain explicitly tentative even if their rationale
+            # cites a real course objective; grading weights do not prove them.
+            overconfident = re.compile(
+                r"必考|一定會考|極可能|必然|直接影響.{0,12}(?:評核|成績|分數)|"
+                r"guaranteed|definitely|certainly|highly likely", re.I)
+            if overconfident.search(inference.text + ' ' + inference.rationale):
+                raise ValueError("overconfident exam inference requires review")
 
     def validate_sources(self, page_counts: dict[str, int]) -> None:
         """The caller must derive page counts from verified, selected PDFs."""

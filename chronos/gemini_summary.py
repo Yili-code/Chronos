@@ -6,7 +6,7 @@ import httpx
 from .study_notes import SummaryDraft
 from .summary_pipeline import GenerationRejected, GenerationUnavailable
 
-PROMPT_VERSION = "study-segment-v5"
+PROMPT_VERSION = "study-segment-v6"
 
 def provider_summary_schema():
     """Inline the output shape; detailed bounds remain enforced by Pydantic."""
@@ -53,6 +53,12 @@ SYSTEM_PROMPT = (
     "pages from original_page_start + local_page - 1, or omit page numbers. "
     "Scope absence claims to the supplied segment, never the entire unseen document. "
     "Explicit exam dates and grading rules are source facts, not exam_inferences. "
+    "exam_inferences is exclusively for predicted technical knowledge or skills to be tested, "
+    "never logistics, calendar dates, grading weights, or schedule uncertainty. "
+    "For example, 'Final Exam: 12/24; dates may change' belongs in concepts as a cited "
+    "administrative fact, with schedule uncertainty in uncertainties; exam_inferences must "
+    "be empty if that is the only exam evidence. A course objective to trace system calls "
+    "may support a cautiously worded prediction about tracing system calls. "
     "Different calendar dates do not overlap merely because they are adjacent. Compare "
     "full dates before applying time-of-day interval overlap rules. Repeated labels in "
     "a list do not establish a contradiction or uncertainty. "
