@@ -30,6 +30,29 @@ def test_slice_is_actual_small_pdf():
 
 
 @pytest.mark.asyncio
+async def test_category_failure_never_persists_sends_or_retries(tmp_path):
+    db = Database(tmp_path / 'quality.db')
+    db.initialize()
+    data = make_pdf(pages=3)
+    item = PdfMaterial('a', 'course', 'lecture.pdf', None, hashlib.sha256(data).hexdigest())
+    selection = MaterialSelection('session', 'course', 'lecture', (item,)).choose('a', selected=True).confirm()
+    point = {'text': '課程概念', 'citations': [{'source_id': 'a', 'page': 1}]}
+    generator, bot = AsyncMock(), AsyncMock()
+    generator.generate.return_value = {'scope': [point], 'concepts': [point], 'relationships': [],
+        'exam_inferences': [{**point, 'text': '期末考預定於 12/24 舉行。', 'rationale': '表格明載日期'}],
+        'uncertainties': []}
+    now = datetime.now(timezone.utc)
+    args = dict(selection=selection, pdfs={'a': PdfInput(data, 3)}, course='OS', class_date=now.date(),
+                chat_id=123, model='test', prompt_version='quality-test', now=now)
+    assert await generate_selected_segments(db, generator, bot, **args) == 'uncertain'
+    assert db.list_study_notes() == []
+    bot.send_message.assert_not_awaited()
+    assert await generate_selected_segments(db, generator, bot, **args) == 'uncertain'
+    assert generator.generate.await_count == 1
+    bot.send_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("reject_second", [False, True])
 @pytest.mark.parametrize("two_files", [False, True])
 async def test_segments_persist_send_and_resume_without_duplicates(tmp_path, reject_second, two_files):

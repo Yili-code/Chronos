@@ -65,6 +65,23 @@ def args():
 
 
 @pytest.mark.asyncio
+async def test_segment_request_exposes_original_physical_pages():
+    from chronos.summary_pipeline import GenerationUnavailable
+    captured = []
+    def handler(request):
+        captured.append(json.loads(request.content))
+        return httpx.Response(503, json={})
+    options = args()
+    options['pdfs'] = {'a': PdfInput(b'synthetic-pdf', 2, original_page_start=13)}
+    with pytest.raises(GenerationUnavailable):
+        await adapter(handler, free_tier_confirmed=True).generate(**options)
+    metadata = json.loads(captured[0]['contents'][0]['parts'][1]['text'])
+    assert metadata['original_page_start'] == 13
+    assert metadata['original_page_end'] == 14
+    assert metadata['physical_page_count'] == 2
+
+
+@pytest.mark.asyncio
 async def test_pdf_request_and_validated_response():
     requests = []
     def handler(request):

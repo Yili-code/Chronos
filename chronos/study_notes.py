@@ -3,6 +3,7 @@
 Structural validity does not establish factual correctness: citations still need
 semantic review against the verified PDFs. This module performs no model calls.
 """
+import re
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -30,6 +31,20 @@ class SummaryDraft(BaseModel):
     exam_inferences: list[ExamInference] = Field(max_length=20)
     uncertainties: list[str] = Field(max_length=20)
 
+    def validate_inference_categories(self) -> None:
+        """Conservative known-error gate, not a general factual verifier.
+
+        Administrative schedule/weight claims require review rather than being
+        silently reclassified. This may reject a mixed legitimate inference.
+        """
+        administrative = re.compile(
+            r"考試日期|考試時間|評分比重|評分比例|配分|占比|佔比|"
+            r"(?:期中考|期末考|考試).{0,30}(?:\d{1,2}\s*[/月]\s*\d{1,2}|舉行|調整|延後)|"
+            r"exam\s+(?:date|schedule)|grading\s+(?:weight|breakdown)", re.I)
+        for inference in self.exam_inferences:
+            if administrative.search(inference.text):
+                raise ValueError("administrative fact in exam inference requires review")
+
     def validate_sources(self, page_counts: dict[str, int]) -> None:
         """The caller must derive page counts from verified, selected PDFs."""
         if not page_counts or any(type(count) is not int or count < 1 for count in page_counts.values()):
@@ -48,8 +63,9 @@ def _plain(value: str) -> str:
     return value
 
 
-def render_note(draft: SummaryDraft, *, filenames: dict[str, str], page_counts: dict[str, int]) -> str:
+def render_note(draft: SummaryDraft, *, filenames: dict[str, str], page_counts: dict[str, int], segment_only: bool = False) -> str:
     draft.validate_sources(page_counts)
+    draft.validate_inference_categories()
     if set(filenames) != set(page_counts):
         raise ValueError("source metadata mismatch")
 
@@ -65,7 +81,9 @@ def render_note(draft: SummaryDraft, *, filenames: dict[str, str], page_counts: 
         sections.append(f"## {title}\n\n" + "\n".join(point_line(p) for p in points))
     exams = [point_line(p) + f"；推測依據：{_plain(p.rationale)}" for p in draft.exam_inferences]
     sections.append("## 可能考點（推測，非教師承諾）\n\n" + ("\n".join(exams) or "沒有足夠依據提出考點推測。"))
-    sections.append("## 不確定之處\n\n" + (
+    uncertainty_scope = ("以下僅針對本分段提供的頁面；未提及不代表整份講義沒有，亦不代表教師未規定。\n\n"
+                         if segment_only else "")
+    sections.append("## 不確定之處\n\n" + uncertainty_scope + (
         "\n".join(f"- {_plain(value)}" for value in draft.uncertainties)
         or "模型未列出不確定事項；這不表示內容已經人工核實。"
     ))

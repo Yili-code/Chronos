@@ -6,7 +6,7 @@ import httpx
 from .study_notes import SummaryDraft
 from .summary_pipeline import GenerationRejected, GenerationUnavailable
 
-PROMPT_VERSION = "study-segment-v4"
+PROMPT_VERSION = "study-segment-v5"
 
 def provider_summary_schema():
     """Inline the output shape; detailed bounds remain enforced by Pydantic."""
@@ -49,6 +49,13 @@ SYSTEM_PROMPT = (
     "relationships, exam_inferences with explicit rationale, and uncertainties. Every "
     "point must cite a supplied source_id and physical PDF page number (1-based). "
     "Cite pages relative to this supplied segment starting at 1; the caller maps original pages. "
+    "Only structured citation.page uses segment-local numbering. In prose use original physical "
+    "pages from original_page_start + local_page - 1, or omit page numbers. "
+    "Scope absence claims to the supplied segment, never the entire unseen document. "
+    "Explicit exam dates and grading rules are source facts, not exam_inferences. "
+    "Different calendar dates do not overlap merely because they are adjacent. Compare "
+    "full dates before applying time-of-day interval overlap rules. Repeated labels in "
+    "a list do not establish a contradiction or uncertainty. "
     "Do not infer content from unseen pages. Explain missing context in uncertainties. "
     "Return an empty exam_inferences array unless the supplied pages provide a specific "
     "basis for an exam inference. Administrative pages alone do not justify claims that "
@@ -84,7 +91,9 @@ class GeminiSummary:
             raise ValueError("single PDF segment exceeds local budget")
         parts = [{"text": json.dumps({"reported_progress": progress}, ensure_ascii=False)}]
         for source_id, pdf in sorted(pdfs.items()):
-            parts.append({"text": json.dumps({"source_id": source_id, "physical_page_count": pdf.page_count})})
+            parts.append({"text": json.dumps({"source_id": source_id, "physical_page_count": pdf.page_count,
+                "original_page_start": pdf.original_page_start,
+                "original_page_end": pdf.original_page_start + pdf.page_count - 1})})
             parts.append({"inlineData": {"mimeType": "application/pdf", "data": base64.b64encode(pdf.data).decode("ascii")}})
         body = {"systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
                 "contents": [{"role": "user", "parts": parts}],

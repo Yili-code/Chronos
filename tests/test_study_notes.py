@@ -41,3 +41,12 @@ def test_generated_links_are_rendered_as_data():
     value["uncertainties"] = ["[click](https://example.invalid)"]
     markdown = render_note(SummaryDraft.model_validate(value), filenames={"a": "os.pdf"}, page_counts={"a": 3})
     assert "\\[click\\]\\(" in markdown
+
+
+def test_segment_uncertainties_have_application_owned_scope():
+    value = payload()
+    value['uncertainties'] = ['未提供聯絡方式。']
+    result = render_note(SummaryDraft.model_validate(value), filenames={'a': 'os.pdf'},
+                         page_counts={'a': 3}, segment_only=True)
+    assert '未提及不代表整份講義沒有' in result
+    assert '未提供聯絡方式。' in result

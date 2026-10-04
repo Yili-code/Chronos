@@ -24,6 +24,7 @@ class GenerationUnavailable(RuntimeError):
 class PdfInput:
     data: bytes
     page_count: int  # Must come from the PDF parser, not model or browser metadata.
+    original_page_start: int = 1
 
 
 async def generate_selected_summary(db, generator, telegram, *, selection, pdfs,
@@ -69,7 +70,7 @@ async def generate_selected_summary(db, generator, telegram, *, selection, pdfs,
             item = chosen[0]
             sliced = await asyncio.to_thread(isolated_pdf_page_count, pdfs[item.source_id].data,
                                              page_range=(start, end))
-            generation_pdfs = {item.source_id: PdfInput(sliced, end - start + 1)}
+            generation_pdfs = {item.source_id: PdfInput(sliced, end - start + 1, original_page_start=start)}
         raw = await generator.generate(progress=selection.reported_progress, pdfs=generation_pdfs,
                                        model=model, prompt_version=prompt_version)
         draft = SummaryDraft.model_validate(raw)
@@ -79,7 +80,8 @@ async def generate_selected_summary(db, generator, telegram, *, selection, pdfs,
                 for citation in point.citations:
                     citation.page += start - 1
         markdown = render_note(draft, filenames={item.source_id: item.filename for item in chosen},
-                               page_counts={identity: pdf.page_count for identity, pdf in pdfs.items()})
+                               page_counts={identity: pdf.page_count for identity, pdf in pdfs.items()},
+                               segment_only=segment is not None)
         count = len(re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff]", markdown))
         if segment is None and not 1500 <= count <= 2500:
             raise ValueError("summary Chinese character count outside target")
