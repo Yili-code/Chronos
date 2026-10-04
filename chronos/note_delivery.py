@@ -14,9 +14,10 @@ async def deliver_summary(db, telegram, *, chat_id, fingerprint, now):
     if note is None:
         return "not_found"
     pages = text_pages(note.markdown)
+    version = "segment-v1" if note.page_start is not None else "v1"
     ledger = StudyDeliveryLedger(db)
     for index, page in enumerate(pages):
-        key = f"summary:v1:{chat_id}:{fingerprint}:{index}"
+        key = f"summary:{version}:{chat_id}:{fingerprint}:{index}"
         claim = ledger.claim(key, now)
         if claim is None:
             status = db.get_study_delivery(key)["status"]
@@ -24,7 +25,13 @@ async def deliver_summary(db, telegram, *, chat_id, fingerprint, now):
                 continue
             return status
         try:
-            result = await telegram.send_message(chat_id, f"課程摘要 {index + 1}/{len(pages)}\n\n{page}")
+            if note.page_start is not None:
+                filename = note.sources[0].filename.replace("\n", " ").replace("\r", " ")
+                heading = (f"{filename} · p. {note.page_start}–{note.page_end}\n"
+                           f"重點 {note.segment_index}/{note.segment_total} · 訊息 {index + 1}/{len(pages)}")
+            else:
+                heading = f"課程摘要 {index + 1}/{len(pages)}"
+            result = await telegram.send_message(chat_id, f"{heading}\n\n{page}")
         except TelegramError:
             result = {}
         if not isinstance(result, dict):

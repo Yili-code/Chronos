@@ -1,6 +1,385 @@
 # Phase 2 — active implementation
 
+## Default-credential persistence verification — 2026-10-04
+
+Executed `python -m scripts.verify_phase2_firestore --default-credentials`.
+All eight checks returned true using the worker's default-credentials path:
+note roundtrip, first-result preservation, selection roundtrip, completed job,
+segment metadata, retry deadline, immutable execution binding, and cleanup.
+The verifier retained the exact-project guard and random isolated collection
+prefix. Its three synthetic documents were deleted and their absence verified;
+no production record was removed. This closes the worker authentication and
+tested persistence-permission gap. Actual owner interaction, complete catalog
+metadata and deployed end-to-end workflow remain unverified.
+
+## Worker default-credential read recovered — 2026-10-04
+
+After the operator reauthenticated, the worker's unmodified default-credentials
+path successfully read the material-selection collection in `yili-chronos-prod`,
+database `(default)`, prefix `chronos`, with a 15-second request timeout.
+The bounded query returned no selection. Safe output was
+`default_credentials_read: true`, `selection_present: false`, `writes: false`.
+This supersedes the earlier missing-credentials and permission-denied read
+blockers, but does not prove write permission, an owner-confirmed selection,
+production deployment, or end-to-end delivery. No worker was started and no
+message, model request or database write was performed by this check.
+
+## Worker authentication blocker — 2026-10-04
+
+A single read-only check instantiated the real Firestore repository with the
+worker's default-credentials path and attempted a bounded selection read.
+It returned `DefaultCredentialsError`, before any write or Telegram/provider
+operation. The explicit gcloud-token verifiers therefore do not establish
+worker authentication readiness. No token was printed or persisted by this check.
+
+The operator must configure local Application Default Credentials through
+`gcloud auth application-default login` (interactive Google consent), or supply
+another explicitly approved runtime identity. Do not silently copy a short-lived
+CLI access token into configuration, export service-account keys, or launch a
+worker with an unverified identity. After interactive authentication, repeat the
+bounded read against the intended project/database/prefix before activation.
+This is a user identity/consent boundary, not a Gemini or PDF failure.
+
+## Explicit shared worker route — 2026-10-04
+
+The launcher accepts `--firestore-project`, `--firestore-database` and
+`--firestore-prefix` together as a process-local override. Partial routes are
+rejected, and the original settings object and `.env` are unchanged. Eleven
+launcher tests passed. A safe configuration-only check for the observed route is:
+
+```powershell
+.venv/Scripts/python.exe -m chronos.run_summary_companion --check --firestore-project yili-chronos-prod --firestore-database '(default)' --firestore-prefix chronos --course-map '{"operating-systems":"192072"}' --free-tier-confirmed
+```
+
+This is not an activation command. It performs no network call, verifies no
+Application Default Credentials, and starts no background process. The prior
+live Firestore verifiers used an explicitly obtained in-memory gcloud token;
+their success must not be confused with the launcher's default-credentials
+readiness. Actual owner progress/selection and production deployment remain
+separate acceptance gates.
+
+## Shared runtime routing audit — 2026-10-04
+
+Read-only Cloud Run inspection confirmed `chronos` in `asia-east1` routes to
+Firestore project `yili-chronos-prod`, database `(default)`, prefix `chronos`.
+No explicit `CHRONOS_ENABLE_STUDY_TRACKING` environment entry was returned;
+the current repository default is false. This does not independently establish
+the source version in the deployed container.
+
+A read-only Firestore collection-name listing found only `chronos_meta` and
+`chronos_telegram_updates` in that namespace. It found no populated Study
+session, selection or canonical-note collections at that instant. Combined with
+the local SQLite preflight, this establishes that the current local worker is
+not configured to consume the deployed webhook's Firestore state. No real
+answered session or confirmed PDF selection was demonstrated in that shared
+namespace, so an automatic generation pass cannot serve as live acceptance.
+
+Activation requires deliberate shared routing and a real owner progress/selection
+interaction (or a clearly isolated synthetic workflow, reported as such).
+Do not invent class progress, copy local test selections into production, or
+enable recurring notifications merely to make an acceptance check pass.
+This audit changed no service, environment file, scheduler or database record.
+
+## Worker preflight — 2026-10-04
+
+`python -m chronos.run_summary_companion --check` now reports allow-listed
+configuration booleans without initializing databases, calling providers or
+messaging Telegram. `--check` takes precedence even when `--enable` is supplied.
+Seven launcher tests passed, including missing-database noncreation and secret
+omission. Exit zero means the inspection executed, not that deployment is ready;
+`remote_readiness` remains `not_checked`.
+
+The real local check found SQLite selected but its configured file absent,
+no explicit Firestore project, and both Telegram/provider credentials present.
+The Lite Study default, local PDF directory and catalog file were present.
+No course map or free-tier flag was supplied for this diagnostic invocation;
+that does not revoke the user's earlier free-tier approval. No configuration
+was changed and no worker was started. Shared production Firestore routing must
+be deliberately configured and verified before claiming the live integration.
+
+## Follow-up detail and Firestore checks — 2026-10-04
+
+Lecture 0's live detail page exposed an activity time of “未設定”, the PDF name,
+size and reference-download control, but no upload timestamp. Activity scheduling
+is not file upload time. This sample therefore does not close the latest-first
+catalog gate; other materials were not extrapolated from it.
+
+The isolated Firestore verifier now also binds model, prompt and pagination
+versions, reopens the repository, accepts the same binding and rejects a changed
+model while preserving the original stored binding. The real service run returned
+all eight evidence flags true, including `execution_binding_roundtrip` and
+`cleanup_complete`. Only the three synthetic documents in the fresh verification
+namespace were removed. No real notes, selections or lecture contents were
+uploaded or deleted. This establishes the binding's real-backend behavior,
+not production worker activation or Telegram-to-Firestore end-to-end completion.
+
+## Live browser catalog boundary — 2026-10-04
+
+The connected Chrome tab for course 192072 became readable again through the
+supported browser connection. The material page showed five activity attachment
+controls (1017741, 1017744, 1018659, 1022967, 1028844), matching the previously
+observed catalog. Read-only DOM inspection found no next/previous/load-more
+labels and no `time` elements. Absence of those controls alone is not proof of
+complete enumeration or of the absence of unpublished/inaccessible materials.
+
+Inspection of the page's actual sort-control markup exposed only chapter and
+title predicates, with ascending/descending direction. No upload-date sort was
+present. Accordingly, `uploaded_at` must remain unknown; neither activity IDs,
+filename order nor local observation time may substitute for upload time.
+The latest-first requirement is still unverified, not silently satisfied by
+chapter order. This inspection used no cookie, token, application-state or
+network interception, and did not download or modify any course material.
+
+## Verification audit — 2026-10-04
+
+The current full local Python suite passed: **288 passed, 336 warnings in
+21.29 seconds**, using `pytest -q -p no:cacheprovider --basetemp
+.pytest-segments-check --disable-warnings -o faulthandler_timeout=45`.
+The focused workflow checkpoint and two integration scenarios also passed
+(3 tests). A prior restricted-environment test process stalled and was stopped;
+only the completed runs are counted. These tests do not establish production
+deployment or live browser catalog completeness.
+
+Phase 1 interview-document attachment delivery was recovered from the actual
+historical tool result at 2026-10-02 15:16:27 UTC: the authorized Phase 1 sender
+returned `document_delivery=confirmed`. Its sender checks Telegram success and
+a returned document object, rather than treating a text link as file delivery.
+The document was committed in `561cfc6`; this audit does not claim a new send or
+that the recipient read it. No duplicate attachment was sent during this audit.
+
+## Live Lite sequential workflow — 2026-10-04
+
+Executed `scripts/verify_lec0_segments.py --execute-authorized-lite-first-six`
+with `gemini-3.1-flash-lite` and prompt `study-segment-v4`. Both Lec0 ranges
+(1–3, then 4–6) returned `sent`; two canonical notes were saved in the isolated
+SQLite test database. Telegram messages were explicitly labelled test material.
+Replaying both ranges with provider and Telegram methods replaced by forbidden
+network-operation guards returned `sent` twice without invoking either method.
+The safe receipt reports `duplicate_suppressed: true`, `saved_notes: 2`, and
+`production_database_written: false`, under the ignored directory
+`.study-data/lec0-lite-first-six-workflow-v4/result.json`.
+
+This verifies live generation, local persistence, sequential Telegram delivery
+and completed-job replay suppression. It does not verify Firestore-backed
+production delivery, complete course enumeration, or semantic correctness of
+these newly generated outputs. Earlier local quality reviews apply to their
+specific drafts, not automatically to this run.
+
+## Immutable execution configuration
+
+Confirmed selections now atomically bind model, prompt and pagination versions
+before generation. Resuming with a different configuration returns context_mismatch
+instead of creating a fresh fingerprint and silently repeating generation/delivery.
+Historical selections that already attempted processing without a binding require
+review; their budgets are not reset by a software upgrade. This protection is in
+the regular local companion path as well as the isolated verification checkpoint.
+
+## Live Firestore segment/retry regression — 2026-10-04
+
+The guarded `scripts.verify_phase2_firestore` verifier ran against the existing
+Chronos project, using only three synthetic documents in a fresh random prefix.
+All checks passed: note_roundtrip, first_result_preserved, selection_roundtrip,
+job_completed, segment_metadata_roundtrip, retry_roundtrip and cleanup_complete.
+A new database client read the original page range, segment ordinal/total and
+pagination version. The persisted retry deadline blocked an early claim and
+allowed a second attempt at the deadline. Synthetic clock advancement tests state
+logic, not elapsed production scheduling. Only the three created documents were
+deleted and absence verified. No actual PDF/note text was uploaded or messaged.
+This confirms the real Firestore adapter, not production worker deployment.
+
+## Study model selection — 2026-10-04
+
+Flash Lite prompt-v4 pages 4–6 succeeded on one request. Comparison with previously
+inspected rendered source pages supports the OS domains, xv6 approach, system-call
+boundary, concurrency, address translation and storage statements. The possible
+exam point is labelled inference with a source rationale; no exam format is claimed.
+Together with the v4 first-segment correction, these two samples support selecting
+Flash Lite for further Study integration, not a long-term reliability claim.
+
+The local Study launcher now uses `CHRONOS_STUDY_GEMINI_MODEL` (default
+`gemini-3.1-flash-lite`), independent of the general `CHRONOS_GEMINI_MODEL` setting.
+Other Chronos AI features are unchanged. No running worker was started or restarted,
+and neither v4 draft was sent to Telegram. Real Firestore-backed ordered delivery
+of these reviewed segments and complete course catalogs remain outstanding.
+
+## Flash Lite targeted quality correction — 2026-10-04
+
+Prompt v4 adds a general interval-overlap rule and distinguishes genuine source
+contradictions from speculative doubts. A single Flash Lite request for pages 1–3
+succeeded and was saved only locally in `.study-data/lec0-lite-quality-v4/`.
+The output preserved 09:20–12:05 and 12:00–13:00, correctly called them overlapping,
+made no exam prediction and did not question the semester label. This passes the
+targeted regression case, not a broad semantic-accuracy benchmark. The previous
+v3 drafts remain untouched. Sixteen focused adapter/integration tests passed.
+No default model was changed and no Telegram message was sent.
+
+## Flash Lite first-six-page review — 2026-10-04
+
+`gemini-3.1-flash-lite` with prompt v3 generated both page ranges (1–3 and 4–6)
+on their first respective attempts. Draft JSON/Markdown and safe receipts remain
+under `.study-data/lec0-local-v3-31-lite/`; neither draft was sent to Telegram.
+This is two successes, not a reliability benchmark or production acceptance.
+
+Visual source comparison used rendered PDF pages 4–6 (source-04.png through
+source-06.png in the same ignored directory). Findings:
+
+| Claim | Source evidence | Review |
+| --- | --- | --- |
+| Four OS domains | Page 4 lists foundations, concurrency, memory, storage/I/O | Supported |
+| Question, decomposition, xv6 implementation | Page 5 explicitly gives all three stages | Supported |
+| System-call boundary, concurrency, address translation and file blocks | Page 6 learning objectives | Supported |
+| Synthesis traces a request to hardware | Page 6 also specifies the return path | Supported but compressed |
+| Possible concurrency/memory exam topics | Page 6 states learning objectives, not an exam plan | Only acceptable as explicitly labelled inference, never a promise |
+| No precise domain teaching order | Page 4's A–D list gives organization, not a dated schedule | No schedule inferred |
+
+Pages 1–3 still fail a targeted quality check: the draft calls a five-minute
+overlap between class and office hours a continuous handoff, instead of identifying
+the overlap. Therefore do not promote the first draft or claim the whole six-page
+output passes semantic review. No new generation, production setting changes or
+Telegram sends were performed during review. Original drafts are preserved.
+
+## Gemini 3.7 comparison — 2026-10-04
+
+Explicitly authorized first-segment trial with `gemini-3.7-flash` and prompt v3
+returned valid structured content on one attempt. It correctly avoided an exam
+prediction and identified the five-minute schedule overlap. It also introduced
+an unsupported suspicion about the consistent Fall 2026 / 1151 semester labels;
+semantic acceptance is therefore not complete.
+
+After authorization to make subsequent engineering decisions without repeated
+questions, one independent trial of pages 4–6 with the same model returned 503.
+No additional retry was issued. Both trials stayed local, with separate exclusive
+attempt checkpoints; no Telegram delivery or default-model change occurred.
+One success followed by one 503 is insufficient evidence to promote 3.7 as a
+reliability fix. Preserve the existing default until stronger evidence exists.
+
+## Authorized local-only v3 test — 2026-10-04
+
+User explicitly authorized a new first-six-page test, local storage only, with
+three attempts per segment. `scripts/verify_lec0_local_v3.py` completed all six
+bounded attempts; every response was HTTP 503. No generated drafts were saved,
+no Telegram requests were made, and no old notes/jobs were replaced. Safe attempt
+results remain in `.study-data/lec0-local-v3/results.json` (ignored). Both segment
+budgets are exhausted; do not restart under a different directory to evade them.
+Prompt v3 semantic quality remains unverified because no content was returned.
+
+## First-segment semantic review — 2026-10-04
+
+Read back the persisted test note and compared it with source text and rendered
+physical pages 2–3. Core administrative values and page references matched. The
+source contains a five-minute overlap between class end and office-hour start;
+the note preserved the values but did not flag the inconsistency. Its suggestion
+that the administrative material would not appear in exams is not established by
+the slides, even though labelled inference. This output is therefore not a full
+semantic acceptance pass. Source images also avoided relying on garbled Chinese
+text extraction. Poppler reported missing fallback fonts, but inspected pages
+were readable for this comparison; no PDF layout-quality claim is made.
+
+Prompt `study-segment-v3` now explicitly prohibits unsupported negative exam
+predictions and asks for source contradictions to be flagged. Relationship lists
+may be empty to avoid forcing invented connections. These are preventive changes,
+not proof the model will comply. The already delivered test note is preserved as
+historical evidence, not silently replaced. No additional generation or delivery
+was performed for this review.
+
+## Authorized Lec0 first-six-page workflow — 2026-10-04
+
+Ran `scripts/verify_lec0_segments.py` with explicit user approval for a workflow
+test, not official class notes. Canonical records and job/delivery receipts are
+isolated in `.study-data/lec0-first-six-workflow-v1/notes.sqlite3`; production
+storage and TronClass were not modified. Telegram messages have a test banner.
+
+- Pages 1–3: two explicit 503 failures, then generation/persistence and Telegram
+  API-confirmed delivery on attempt three. Later passes skipped this completed
+  segment instead of generating or sending it again.
+- Pages 4–6: three explicit 503 failures; durable job reached `failed` and stopped.
+  No successful second-segment note or delivery is claimed.
+- Early polling did not increment the attempt count. Each segment had its own
+  bounded retry ledger. Six total provider attempts, including one success.
+- Two-segment end-to-end acceptance and semantic review remain incomplete.
+  The verifier's final full-success duplicate guard was not reached; completed
+  first-segment reuse was observed during second-segment recovery attempts.
+
+This is real partial-delivery and retry-exhaustion evidence, not Phase 2 completion.
+
+## Controlled comparison and 503 recovery — 2026-10-04
+
+One authorized request per case returned HTTP 200: text (6.54s), text with
+current schema (4.62s), and the first three physical PDF pages with schema
+(7.36s). Both schema cases passed local structure/citation-range validation.
+No generated content was retained, no canonical note was created, and no
+Telegram message was sent. This supports transient service failure rather than
+an invariably invalid request, but does not establish semantic accuracy or
+long-term availability. Safe results are in the ignored local directory
+`.study-data/gemini-controlled-comparison-v1/results.json`.
+
+Explicit HTTP 503 now uses the existing durable generation-job ledger: at most
+three total attempts, with 60–75s then 120–135s backoff. The watch worker retries
+on a later pass, not by sleeping or retrying inside the HTTP adapter. Timeouts,
+transport failures, other ambiguous errors and invalid outputs remain uncertain.
+Previously uncertain jobs are not automatically unlocked. Telegram delivery
+deduplication is unchanged. This is offline-tested recovery, not deployed or
+live retry evidence.
+
+The vertical-slice regression now also uses a six-page PDF and an initial mocked
+503. It proves authenticated selection confirmation, no provider call before the
+persisted retry deadline, two independent three-page requests after recovery,
+two canonical notes, original-page citation remapping, duplicate-pass suppression,
+and Markdown export. `tests/test_phase2_integration.py`: two scenarios passed.
+All external generation and Telegram delivery remain mocked in this test.
+
+## Scope replacement — 2026-10-04
+
+This section supersedes historical combined-summary requirements below.
+The PRD now requires independent per-PDF key-point extraction, normally three
+physical pages at a time, followed by automatic ordered delivery. No combined
+summary development continues. The production companion now calls the segment
+orchestrator; the legacy pipeline entry remains for compatibility tests only.
+
+- `physical-three-v1`: deterministic complete coverage, final short segment allowed.
+  Explicit boundary hints support two/four pages; automatic semantic boundary
+  detection is not implemented or claimed. Current companion uses fixed triples.
+- Each model request receives one actual sliced PDF of at most four pages.
+  Parser subprocess has a time limit and does not inherit provider secrets.
+  Model citations are checked against the slice and mapped to original pages.
+- Every segment stores original source hash, page range, ordinal/total and policy
+  version. Fingerprints include range and policy; canonical Markdown is saved
+  before delivery. Existing job/receipt ledgers handle resume and deduplication.
+- Processing stops on rejection or uncertain outcome before starting later segments.
+  Explicit rejection follows bounded retries; ambiguous outcomes need review.
+- No minimum character quota. File order is stable source-ID order; each file's
+  segments are ascending pages. Telegram may further split long segment messages.
+
+Verification: 32 focused offline tests passed, including exhaustive partition
+coverage for 1–1000 pages, actual slice parsing, repeat-run deduplication and
+second-segment rejection/resume. These are not live provider or Telegram receipts.
+Outstanding: live small-segment generation, citation semantic review, real ordered
+Telegram delivery, and production Firestore/worker integration. Earlier Gemini
+503 observations remain historical. A one-shot real request using only the first
+three pages returned `outcome_uncertain`; no note was created or sent. Evidence:
+ignored local `.study-data/live-segment-probe-v2/result.json`. The exclusive attempt
+checkpoint prevents automatic repetition. This run cannot distinguish timeout,
+server error or invalid output; subsequent diagnostics now preserve only an
+allowlisted category and HTTP status, without provider bodies or credentials.
+Multi-file isolation and resume tests also pass. Sisyphus update delivery timed
+out on the previous turn and remains unknown; it has not been blindly resent.
+
 ## Acceptance audit — 2026-10-03
+
+### Current follow-up evidence (2026-10-04)
+
+Read-only network checks returned HTTP 404 from the Gemini API root and 302 from
+the Telegram API root: both hosts were reachable, not proof of generation or
+delivery. Authenticated configured-model metadata returned HTTP 200 and advertised
+`generateContent`. Thus missing model / wholly unavailable host is not supported
+by current evidence; the previous generation outcome remains unknown.
+
+Each Telegram message for a segment now repeats filename, original physical-page
+range, segment ordinal and message ordinal, including overflow messages. `/notes`
+also distinguishes segments. Segment delivery has its own versioned receipt keys;
+legacy note delivery keys are unchanged. Seventeen focused tests passed including
+multi-message labels, UTF-16 message bounds, repeat suppression and multi-PDF
+separation. No real lecture message was sent during these checks.
 
 **Not accepted.** Component implementation and local integration do not prove the
 requested live workflow. The chronological checkpoints below are historical;

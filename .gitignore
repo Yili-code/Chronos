@@ -3,6 +3,7 @@ __pycache__/
 .pytest_cache/
 .pytest-tmp/
 .pytest-phase1-current/
+.pytest-segments-check/
 .pytest_tmp*/
 .venv/
 .env

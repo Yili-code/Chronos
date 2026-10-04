@@ -34,9 +34,20 @@ class NoteRecord(BaseModel):
     generation_status: Literal["completed"] = "completed"
     created_at: datetime
     last_error: None = None
+    page_start: int | None = Field(default=None, ge=1)
+    page_end: int | None = Field(default=None, ge=1)
+    segment_index: int | None = Field(default=None, ge=1)
+    segment_total: int | None = Field(default=None, ge=1)
+    pagination_version: str | None = None
 
     @model_validator(mode="after")
     def validate_record(self):
+        segment = (self.page_start, self.page_end, self.segment_index, self.segment_total, self.pagination_version)
+        if any(value is not None for value in segment):
+            if any(value is None for value in segment) or len(self.sources) != 1:
+                raise ValueError("incomplete segment metadata")
+            if not self.page_start <= self.page_end <= self.sources[0].page_count or self.page_end - self.page_start > 3 or self.segment_index > self.segment_total:
+                raise ValueError("invalid segment metadata")
         if self.created_at.utcoffset() is None:
             raise ValueError("creation time requires timezone")
         if len({s.source_id for s in self.sources}) != len(self.sources):

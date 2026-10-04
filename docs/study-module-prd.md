@@ -77,7 +77,7 @@ YiLi 必須使用 Telegram 的 **Reply** 回覆該課程訊息，避免系統把
 
 ### 3.4 Summary output
 
-多個 PDF 合併成一份 combined summary，內容包括：
+每份 PDF 獨立進行逐段重點提取，不再開發或產生跨 PDF 合併摘要。內容包括：
 
 1. 今日課程範圍
 2. 核心概念
@@ -91,7 +91,11 @@ Output rules:
 
 - 中文解釋，保留自然英文 technical terms
 - Telegram 分段傳送
-- 每份摘要約 1,500–2,500 中文字
+- 預設每段 3 個實體頁碼（不是投影片印刷頁碼）；明確概念邊界可調成 2 或 4 頁，尾段允許 1–2 頁。不得漏頁、重疊或跨檔案。
+- 不設定 1,500–2,500 字的最低篇幅；依證據提取重點，不為湊字數擴寫。
+- 每段標示檔名、原始實體頁碼、段次／總段數；確認選檔後依序自動生成、保存、傳送，不逐段詢問。
+- 每段先保存 canonical Markdown，再傳 Telegram；已完成的段落不得重生或重送。未知傳送結果暫停，不冒險重送。
+- 分頁規則版本與頁碼範圍納入內容識別；目前自動流程使用確定性的 3 頁分段，未接入語意邊界偵測。
 - 「可能考」必須標記為 inference
 - 沒有講義證據時不得捏造教授偏好
 - Gemini 無法完成時，通知失敗並稍後有限次重試
@@ -380,7 +384,7 @@ MVP 完成必須證明：
 
 - PDF listing
 - Multi-select
-- Gemini combined summary
+- Gemini per-PDF paginated key-point extraction, durable per-segment delivery
 - Markdown export
 
 ### Phase 3 — Assignments

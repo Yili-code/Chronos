@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     gemini_api_base: str = "https://generativelanguage.googleapis.com/v1beta"
     gemini_api_key: str = ""
     gemini_model: str = "gemini-3.8-flash"
+    study_gemini_model: str = "gemini-3.1-flash-lite"
     ai_timeout: float = Field(default=30, gt=0)
     web_username: str = "chronos"
     web_password: str = ""

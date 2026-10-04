@@ -2,8 +2,9 @@
 import asyncio
 from dataclasses import replace
 from .pdf_validation import isolated_pdf_page_count
-from .summary_pipeline import PdfInput, generate_selected_summary
+from .summary_pipeline import PdfInput, generate_selected_segments
 from .selection_store import SelectionStore, decode
+from .page_segments import POLICY_VERSION
 
 
 def load_selected_pdfs(selection, pdf_store):
@@ -46,6 +47,11 @@ async def generate_local_summary(db, generator, telegram, pdf_store, *, selectio
         verified = decode(frozen["selection"])
     except (ValueError, OSError):
         return "deferred_attachment"
-    return await generate_selected_summary(db, generator, telegram, selection=verified,
+    try:
+        SelectionStore(db).bind_execution(selection_key, chat_id, model=model,
+            prompt_version=prompt_version, pagination_version=POLICY_VERSION)
+    except ValueError:
+        return "context_mismatch"
+    return await generate_selected_segments(db, generator, telegram, selection=verified,
         pdfs=pdfs, course=course, class_date=class_date, chat_id=chat_id,
         model=model, prompt_version=prompt_version, now=now)

@@ -26,6 +26,9 @@ def note_command(db, command: str) -> str | None:
         lines = ["最近課程筆記（最多 10 份）："]
         for note in notes:
             label = note.course.replace("\n", " ").replace("\r", " ")[:60]
+            if note.page_start is not None:
+                filename = note.sources[0].filename.replace("\n", " ").replace("\r", " ")[:80]
+                label += f" · {filename} · p. {note.page_start}–{note.page_end} · {note.segment_index}/{note.segment_total}"
             lines.append(f"{label} · {note.class_date}\n/note {note.content_fingerprint}")
         return "\n\n".join(lines)
     reading = re.fullmatch(r"note\s+([0-9a-f]{64})(?:\s+([1-9][0-9]{0,4}))?", command)

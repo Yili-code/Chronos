@@ -46,3 +46,23 @@ def test_concurrent_claims_have_one_winner(tmp_path):
     with ThreadPoolExecutor(max_workers=4) as pool:
         claims = list(pool.map(lambda _: SummaryJobs(Database(path)).claim(KEY, NOW), range(8)))
     assert sum(claim is not None for claim in claims) == 1
+
+
+def test_unavailable_backoff_survives_restart_and_stops_at_three(repo):
+    current = NOW
+    for attempt in range(1, 4):
+        jobs = SummaryJobs(repo)
+        claim = jobs.claim(KEY, current)
+        assert claim
+        state = jobs.finish(KEY, claim, current, outcome="unavailable")
+        assert state['attempt_count'] == attempt
+        assert state['last_error'] == 'generation_unavailable'
+        if attempt < 3:
+            due = datetime.fromisoformat(state['next_retry_at'])
+            assert 60 * 2 ** (attempt - 1) <= (due - current).total_seconds() <= 60 * 2 ** (attempt - 1) + 15
+            assert SummaryJobs(repo).claim(KEY, due - timedelta(seconds=1)) is None
+            current = due
+        else:
+            assert state['status'] == 'failed'
+            assert state['next_retry_at'] is None
+            assert SummaryJobs(repo).claim(KEY, current + timedelta(days=1)) is None

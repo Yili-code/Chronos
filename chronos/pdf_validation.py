@@ -35,7 +35,7 @@ def pdf_page_count(data: bytes) -> int:
         raise ValueError("pdf_unreadable_or_unsupported") from None
 
 
-def isolated_pdf_page_count(data: bytes, *, timeout: float = 10) -> int:
+def isolated_pdf_page_count(data: bytes, *, timeout: float = 10, page_range=None):
     if not isinstance(data, bytes) or not 32 <= len(data) <= 12 * 1024 * 1024:
         raise ValueError("pdf_size_invalid")
     if inspect_pdf_bytes(data).status is not PdfEvidenceStatus.VALID:
@@ -45,13 +45,23 @@ def isolated_pdf_page_count(data: bytes, *, timeout: float = 10) -> int:
     # No shell, no inherited provider keys, no document-controlled arguments.
     environment = {key: value for key, value in os.environ.items()
                    if key.upper() in {"SYSTEMROOT", "WINDIR", "TEMP", "TMP"}}
+    args = []
+    if page_range is not None:
+        start, end = page_range
+        if any(type(p) is not int for p in page_range) or not 1 <= start <= end <= 1000 or end - start > 3:
+            raise ValueError("invalid page range")
+        args = [str(start), str(end)]
     try:
         result = subprocess.run(
-            [sys.executable, "-I", str(Path(__file__).with_name("pdf_worker.py"))],
+            [sys.executable, "-I", str(Path(__file__).with_name("pdf_worker.py")), *args],
             input=data, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             timeout=timeout, check=False, env=environment,
             creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
         )
+        if page_range is not None:
+            if result.returncode != 0 or inspect_pdf_bytes(result.stdout).status is not PdfEvidenceStatus.VALID:
+                raise ValueError()
+            return result.stdout
         if result.returncode != 0 or not result.stdout.strip().isdigit():
             raise ValueError()
         count = int(result.stdout.strip())

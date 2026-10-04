@@ -2,7 +2,7 @@
 import logging
 import sys
 from io import BytesIO
-from pypdf import PdfReader
+from pypdf import PdfReader, PdfWriter
 
 
 def main():
@@ -26,7 +26,21 @@ def main():
         for page in reader.pages:
             if len(page.mediabox) != 4:
                 raise ValueError()
-        print(count)
+        if len(sys.argv) == 3:
+            start, end = map(int, sys.argv[1:])
+            if not 1 <= start <= end <= count or end - start > 3:
+                raise ValueError()
+            writer = PdfWriter()
+            for page in reader.pages[start - 1:end]:
+                writer.add_page(page)
+            output = BytesIO()
+            writer.write(output)
+            value = output.getvalue()
+            if len(value) > 12 * 1024 * 1024:
+                raise ValueError()
+            sys.stdout.buffer.write(value)
+        else:
+            print(count)
     except Exception:
         print("invalid")
 

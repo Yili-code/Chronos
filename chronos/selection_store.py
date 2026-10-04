@@ -23,6 +23,25 @@ class SelectionStore:
     def __init__(self, db):
         self.db = db
 
+    def bind_execution(self, key, chat_id, *, model, prompt_version, pagination_version):
+        """Pin generation configuration transactionally; never reset on deployment."""
+        self.validate_key(key)
+        binding = dict(model=model, prompt_version=prompt_version, pagination_version=pagination_version)
+        if any(not isinstance(value, str) or not value.strip() for value in binding.values()):
+            raise ValueError("execution configuration required")
+        def transition(previous):
+            if previous is None or previous['chat_id'] != chat_id or not previous['selection']['confirmed']:
+                raise ValueError("confirmed owner selection required")
+            existing = previous.get('execution')
+            if existing is not None:
+                if existing != binding:
+                    raise ValueError("execution configuration changed")
+                return previous
+            if previous.get('processing_status') not in (None, 'deferred_attachment', 'selection_binding_required'):
+                raise ValueError("legacy execution requires review")
+            return {**previous, 'execution': binding}
+        return self.db.mutate_material_selection(key, transition)
+
     @staticmethod
     def validate_key(key):
         if not re.fullmatch(r"[a-zA-Z0-9_-]{1,40}", key):

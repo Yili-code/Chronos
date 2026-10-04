@@ -26,7 +26,7 @@ class SummaryDraft(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     scope: list[NotePoint] = Field(min_length=1, max_length=20)
     concepts: list[NotePoint] = Field(min_length=1, max_length=30)
-    relationships: list[NotePoint] = Field(min_length=1, max_length=20)
+    relationships: list[NotePoint] = Field(max_length=20)
     exam_inferences: list[ExamInference] = Field(max_length=20)
     uncertainties: list[str] = Field(max_length=20)
 

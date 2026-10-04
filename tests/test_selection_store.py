@@ -50,3 +50,25 @@ def test_freeze_keeps_first_content_identity(repo):
         store.freeze_content("key", 123, replace(verified, reported_progress="different"))
     with pytest.raises(ValueError):
         store.freeze_content("key", 999, verified)
+
+
+def test_execution_binding_is_immutable_across_restarts(repo):
+    store = SelectionStore(repo)
+    store.create('key', 123, selection().choose('a', selected=True).confirm())
+    args = dict(model='m', prompt_version='v', pagination_version='p')
+    first = store.bind_execution('key', 123, **args)
+    assert SelectionStore(repo).bind_execution('key', 123, **args) == first
+    for field in args:
+        with pytest.raises(ValueError):
+            store.bind_execution('key', 123, **{**args, field:'changed'})
+    with pytest.raises(ValueError):
+        store.bind_execution('key', 999, **args)
+    assert repo.get_material_selection('key')['execution'] == args
+
+
+def test_legacy_attempt_cannot_reset_model_budget(repo):
+    store = SelectionStore(repo)
+    store.create('key', 123, selection().choose('a', selected=True).confirm())
+    repo.mutate_material_selection('key', lambda previous: {**previous, 'processing_status':'retry'})
+    with pytest.raises(ValueError):
+        store.bind_execution('key', 123, model='new', prompt_version='v', pagination_version='p')

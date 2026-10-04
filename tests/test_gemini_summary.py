@@ -23,6 +23,36 @@ def test_provider_schema_preserves_shape_while_local_bounds_remain_strict():
         SummaryDraft.model_validate(invalid)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("category", ["timeout", "transport", "server_response", "invalid_output"])
+async def test_uncertain_diagnostics_never_expose_provider_content(category):
+    from chronos.gemini_summary import ProviderUncertain
+    def handler(request):
+        if category == "timeout":
+            raise httpx.ReadTimeout("private-token", request=request)
+        if category == "transport":
+            raise httpx.ConnectError("private-token", request=request)
+        return httpx.Response(502 if category == "server_response" else 200,
+                              json={"error": "private-token"})
+    with pytest.raises(ProviderUncertain) as failure:
+        await adapter(handler, free_tier_confirmed=True).generate(**args())
+    assert failure.value.category == category
+    assert "private-token" not in repr(vars(failure.value))
+    assert failure.value.status_code == (502 if category == "server_response" else None)
+
+
+@pytest.mark.asyncio
+async def test_explicit_503_is_retryable_without_inline_retry():
+    from chronos.summary_pipeline import GenerationUnavailable
+    calls = []
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(503, json={"private": "not retained"})
+    with pytest.raises(GenerationUnavailable):
+        await adapter(handler, free_tier_confirmed=True).generate(**args())
+    assert len(calls) == 1
+
+
 def adapter(handler, **options):
     settings = SimpleNamespace(gemini_api_key="synthetic-test-key", gemini_model="test-model",
         gemini_api_base="https://generativelanguage.googleapis.com/v1beta", ai_timeout=5)
