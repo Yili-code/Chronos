@@ -1,5 +1,21 @@
 # Phase 2 — active implementation
 
+## Authorized Cloud Run deployment — 2026-10-04
+
+Deployed feature commit `724d261` after source-upload protection commit `44490b0`.
+The deployment inventory contained 86 files and excluded local Study data,
+environment files, virtual environments and test databases. The deployment used
+the existing service and secret bindings, not the broad provisioning script.
+The full local suite passed 293 tests before deployment.
+
+Cloud Run revision `chronos-00018-c68` became Ready and received 100% traffic;
+an independent GET `/health` returned `ok`. Readback confirmed Firestore backend,
+Study model `gemini-3.1-flash-lite`, and both `CHRONOS_ENABLE_STUDY_TRACKING` and
+`CHRONOS_ENABLE_INTERNAL_SCHEDULER` set to false. Existing external daily-task
+scheduling was not changed. No continuous local summary worker was started.
+Health and configuration checks do not prove a real owner reply/selection or
+end-to-end note delivery; those remain separate acceptance checks.
+
 ## Default-credential persistence verification — 2026-10-04
 
 Executed `python -m scripts.verify_phase2_firestore --default-credentials`.
