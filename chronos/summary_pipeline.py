@@ -74,16 +74,21 @@ async def generate_selected_summary(db, generator, telegram, *, selection, pdfs,
         raw = await generator.generate(progress=selection.reported_progress, pdfs=generation_pdfs,
                                        model=model, prompt_version=prompt_version)
         draft = SummaryDraft.model_validate(raw)
+        draft.validate_inference_categories()
         if segment is not None:
             draft.validate_sources({identity: pdf.page_count for identity, pdf in generation_pdfs.items()})
-            from .source_checks import requires_weekday_check, validate_weekday_presence
-            if requires_weekday_check(draft):
+            from .source_checks import requires_weekday_check, validate_weekday_presence, validate_inference_evidence
+            if requires_weekday_check(draft) or draft.exam_inferences:
                 source_pages = {identity: await asyncio.to_thread(isolated_pdf_page_count, pdf.data, extract_text=True)
                                 for identity, pdf in generation_pdfs.items()}
                 validate_weekday_presence(draft, source_pages)
+                validate_inference_evidence(draft, source_pages)
             for point in (*draft.scope, *draft.concepts, *draft.relationships, *draft.exam_inferences):
                 for citation in point.citations:
                     citation.page += start - 1
+            for inference in draft.exam_inferences:
+                for excerpt in inference.evidence:
+                    excerpt.page += start - 1
         markdown = render_note(draft, filenames={item.source_id: item.filename for item in chosen},
                                page_counts={identity: pdf.page_count for identity, pdf in pdfs.items()},
                                segment_only=segment is not None)

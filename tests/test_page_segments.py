@@ -30,7 +30,7 @@ def test_slice_is_actual_small_pdf():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('failure', ['category', 'weekday'])
+@pytest.mark.parametrize('failure', ['category', 'weekday', 'missing_excerpt', 'invented_excerpt'])
 async def test_category_failure_never_persists_sends_or_retries(tmp_path, failure):
     db = Database(tmp_path / 'quality.db')
     db.initialize()
@@ -45,6 +45,13 @@ async def test_category_failure_never_persists_sends_or_retries(tmp_path, failur
     if failure == 'weekday':
         generator.generate.return_value['exam_inferences'] = []
         generator.generate.return_value['uncertainties'] = ['12/25 為週三。']
+    if failure in {'missing_excerpt', 'invented_excerpt'}:
+        inference = generator.generate.return_value['exam_inferences'][0]
+        inference['text'] = '考試可能要求追蹤系統呼叫。'
+        inference['rationale'] = '課程目標列出追蹤系統呼叫。'
+        if failure == 'invented_excerpt':
+            inference['evidence'] = [{'source_id': 'a', 'page': 1,
+                                      'quote': 'Trace a system call across the kernel boundary.'}]
     now = datetime.now(timezone.utc)
     args = dict(selection=selection, pdfs={'a': PdfInput(data, 3)}, course='OS', class_date=now.date(),
                 chat_id=123, model='test', prompt_version='quality-test', now=now)
@@ -103,3 +110,49 @@ async def test_segments_persist_send_and_resume_without_duplicates(tmp_path, rej
     assert [next(iter(call.kwargs['pdfs'].values())).page_count for call in calls] == (([3, 2, 2] if reject_second else [3, 2]) + ([3, 2] if two_files else []))
     messages = str(bot.send_message.await_args_list)
     assert "p. 4–5" in messages and "p. 4" in messages
+
+
+@pytest.mark.asyncio
+async def test_verified_excerpt_survives_slice_mapping_persistence_and_delivery(tmp_path):
+    from io import BytesIO
+    from pypdf import PdfWriter
+    from pypdf.generic import DictionaryObject, NameObject, DecodedStreamObject
+    writer = PdfWriter()
+    quote = 'Trace a system call across the kernel boundary.'
+    font = DictionaryObject({NameObject('/Type'): NameObject('/Font'),
+                             NameObject('/Subtype'): NameObject('/Type1'),
+                             NameObject('/BaseFont'): NameObject('/Helvetica')})
+    for _ in range(4):
+        page = writer.add_blank_page(width=612, height=792)
+        page[NameObject('/Resources')] = DictionaryObject({NameObject('/Font'):
+            DictionaryObject({NameObject('/F1'): writer._add_object(font)})})
+        stream = DecodedStreamObject()
+        stream.set_data(f'BT /F1 12 Tf 72 720 Td ({quote}) Tj ET'.encode('ascii'))
+        page[NameObject('/Contents')] = writer._add_object(stream)
+    output = BytesIO()
+    writer.write(output)
+    data = output.getvalue()
+    db = Database(tmp_path / 'excerpt.db')
+    db.initialize()
+    item = PdfMaterial('a', 'course', 'lecture.pdf', None, hashlib.sha256(data).hexdigest())
+    selection = MaterialSelection('session', 'course', 'lecture', (item,)).choose('a', selected=True).confirm()
+    point = {'text': '系統呼叫', 'citations': [{'source_id': 'a', 'page': 1}]}
+    generator, bot = AsyncMock(), AsyncMock()
+    generator.generate.return_value = dict(scope=[point], concepts=[point], relationships=[],
+        exam_inferences=[{**point, 'text': '考試可能要求追蹤系統呼叫。', 'rationale': '課程目標包含追蹤技能。',
+                          'evidence': [{'source_id': 'a', 'page': 1, 'quote': quote}]}], uncertainties=[])
+    bot.send_message.return_value = {'ok': True, 'result': {'message_id': 9}}
+    now = datetime.now(timezone.utc)
+    args = dict(selection=selection, pdfs={'a': PdfInput(data, 4)}, course='OS', class_date=now.date(),
+                chat_id=123, model='test', prompt_version='excerpt-v1', now=now)
+    assert await generate_selected_segments(db, generator, bot, **args) == 'sent'
+    notes = db.list_study_notes()
+    assert len(notes) == 2
+    final = next(note for note in notes if note.page_start == 4)
+    assert quote in final.markdown
+    assert '原文依據：' in final.markdown and 'lecture.pdf, p. 4' in final.markdown
+    assert 'lecture.pdf, p. 1' not in final.markdown
+    assert final.export()[1].decode('utf-8') == final.markdown
+    assert await generate_selected_segments(db, generator, bot, **args) == 'sent'
+    assert generator.generate.await_count == 2
+    assert bot.send_message.await_count == 2

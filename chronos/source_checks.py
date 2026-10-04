@@ -1,5 +1,29 @@
 """Conservative weekday-presence check, not date arithmetic or entailment."""
 import re
+import unicodedata
+
+
+def validate_inference_evidence(draft, source_pages):
+    """Check excerpt provenance, NOT whether evidence entails the prediction.
+
+    Preserve punctuation and word order; tolerate Unicode presentation forms
+    and PDF line wrapping only. Missing/unextractable text fails closed.
+    """
+    def normalized(text):
+        return re.sub(r'\s+', '', unicodedata.normalize('NFKC', text))
+
+    for inference in draft.exam_inferences:
+        if not inference.evidence:
+            raise ValueError('exam inference requires source excerpts')
+        cited = {(c.source_id, c.page) for c in inference.citations}
+        for excerpt in inference.evidence:
+            pages = source_pages.get(excerpt.source_id, [])
+            if ((excerpt.source_id, excerpt.page) not in cited
+                    or not 1 <= excerpt.page <= len(pages)):
+                raise ValueError('inference excerpt outside cited pages')
+            quote = normalized(excerpt.quote)
+            if len(quote) < 12 or quote not in normalized(pages[excerpt.page - 1]):
+                raise ValueError('inference excerpt absent from cited page')
 
 WEEKDAYS = tuple(re.compile(pattern, re.I) for pattern in (
     r'星期一|週一|周一|\bmonday\b', r'星期二|週二|周二|\btuesday\b',

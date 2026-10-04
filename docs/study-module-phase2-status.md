@@ -1,5 +1,89 @@
 # Phase 2 — active implementation
 
+## Bounded source-review experiment — 2026-10-04
+
+v8 made five single-attempt local requests. Four drafts passed structural/source
+checks; pages 7–9 failed validation or saving. That version did not retain the
+candidate or a stage code, so the exact 7–9 failure is unknown and must not be
+attributed specifically to the quotation check. Pages 10–12 still inferred xv6
+exam content from an assignment-type quote; pages 13–14 omitted the group-work
+exception. This confirmed that quotation provenance alone is insufficient.
+
+The local v9 adapter now makes at most two requests per attempt: draft generation
+and a distinct source-review request containing the same original PDF segment,
+metadata and untrusted draft. Only the reviewed output reaches the pipeline.
+Review failure never falls back to publishing the initial draft. Existing job
+retry limits still apply to the entire attempt; there is no correction loop or
+paid-model fallback. The second call increases provider usage and latency; it
+is the same model, not an independent ground-truth authority. PRD records this
+mechanism and its limits. Diagnostics now retain private candidate JSON and an
+allowlisted processing-stage label, without provider response/error dumps.
+
+The v9 experiment completed all five segments once each (ten model requests),
+saved locally under `.study-data/lec0-lite-quality-v9/`. None was delivered or
+saved as a production canonical replacement. Visual inspection of source pages
+2, 3, 7, 8, 10, 11, 12 and 13 found:
+
+- Pages 4–6 preserve specific learning-objective quotations and appropriately
+  tentative predictions. Pages 7–9 no longer invent a date conflict.
+- Pages 10–12 no longer predict xv6 exam content from grading/lab existence and
+  preserve attendance-without-penalty and encouraged-participation semantics.
+- Pages 13–14 preserve the explicitly permitted group-work exception.
+- Quality acceptance still fails: pages 1–3 associate ECG 703 with IDA Lab,
+  although the source labels it as the instructor's office; pages 10–12 treat
+  the separate neutral `Others` list as excluded topics. Missing-information
+  wording also remains broader than the supplied segment in some bullets.
+
+Therefore a second model pass improved these samples but did not establish
+reliable factual correctness. Do not deploy this as a completed quality fix or
+silently relax the evidence-grounded requirement. Original notes remain intact.
+Live owner Markdown-export acceptance is still a separate, unverified gate.
+
+Final local regression run: **323 passed**, 435 warnings, 100.49 seconds.
+The two integration assertions were updated to account for exactly two requests
+per successful segment, while a first-request 503 still costs only one request.
+Review failures (invalid output, 429, 503) return no initial draft and perform no
+inline retry. A fresh read-only production query returned zero owner export
+receipts. No deployment occurred; revision `chronos-00018-c68` was not changed
+by this work.
+
+## Inference provenance gate, not semantic acceptance — 2026-10-04
+
+The v7 local experiment saved all five Lec0 segments, once each, with semantic
+review pending. Inspection of the 7–9 and 10–12 drafts still found unsupported
+reasoning: a speculative administrative conflict between December 24 and 25,
+and a prediction of xv6 exam content based only on the existence of a lab.
+Successful generation and structural validation therefore did not pass quality
+acceptance. These local drafts did not replace canonical notes or get delivered.
+
+The local v8 contract now requests original-language source excerpts for each
+exam inference. Before segmented persistence, the existing isolated PDF parser
+extracts the supplied pages, then verifies every excerpt against its exact cited
+source/page. Unicode presentation normalization and whitespace differences are
+tolerated; missing excerpts, unextractable text and invented quotations fail
+closed through the existing uncertain state, without automatic regeneration.
+Excerpt page numbers are remapped alongside citations and rendered in the note.
+Historical drafts remain readable, but cannot bypass the new generation gate.
+
+This establishes excerpt provenance only, NOT logical support or factual
+correctness. A regression explicitly demonstrates that a real grading-weight
+quote can pass matching while failing to justify a technical exam prediction.
+General claims and uncertainty prose still need semantic verification. Scanned
+PDFs without extractable text cannot pass this inference check. No v8 live
+request, deployment, canonical replacement or Telegram delivery has occurred.
+
+Validation: the full local suite passed 318 tests (390 warnings, 23.97 seconds).
+A subsequently added positive end-to-end test also passed (one test, 10 warnings,
+7.44 seconds). It uses a genuine text-bearing synthetic PDF through isolated
+slicing and extraction, verifies excerpt and citation remapping to physical page
+4, canonical Markdown export equality, mocked delivery and idempotent replay.
+Negative pipeline cases verify missing/invented excerpts produce no saved note,
+no delivery and no automatic second generation. These are local checks, not
+production Telegram or Firestore acceptance.
+
+Next acceptance work: review a bounded live output against its source. Do not
+classify Phase 2 as complete on quote matching alone.
+
 ## Owner-approved first-release catalog scope — 2026-10-04
 
 YiLi explicitly accepted an observed-materials first release after the coverage

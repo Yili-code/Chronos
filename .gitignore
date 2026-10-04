@@ -5,6 +5,9 @@ __pycache__/
 .pytest-phase1-current/
 .pytest-segments-check/
 .pytest_tmp*/
+.pytest-evidence-check/
+.pytest-evidence-full/
+.pytest-excerpt-positive/
 .venv/
 .env
 chronos.db

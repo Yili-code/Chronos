@@ -15,6 +15,9 @@ def test_provider_schema_preserves_shape_while_local_bounds_remain_strict():
     point=schema['properties']['concepts']['items']
     assert set(point['required'])=={'text','citations'}
     assert set(point['properties']['citations']['items']['required'])=={'source_id','page'}
+    inference = schema['properties']['exam_inferences']['items']
+    assert 'evidence' in inference['required']
+    assert set(inference['properties']['evidence']['items']['required']) == {'source_id', 'page', 'quote'}
     assert '$ref' not in json.dumps(schema)
     assert 'maxLength' not in json.dumps(schema)
     invalid=payload()
@@ -84,14 +87,51 @@ async def test_segment_request_exposes_original_physical_pages():
 @pytest.mark.asyncio
 async def test_pdf_request_and_validated_response():
     requests = []
+    expected = payload()
+    for inference in expected['exam_inferences']:
+        inference['evidence'] = [{'source_id': 'a', 'page': 2,
+                                  'quote': 'Compare resources shared by processes and threads.'}]
     def handler(request):
         requests.append(request)
         body = json.loads(request.content)
         assert body["contents"][0]["parts"][2]["inlineData"]["mimeType"] == "application/pdf"
         assert body["generationConfig"]["responseMimeType"] == "application/json"
-        return httpx.Response(200, json={"candidates": [{"finishReason": "STOP", "content": {"parts": [{"text": json.dumps(payload())}]}}]})
-    assert await adapter(handler, free_tier_confirmed=True).generate(**args()) == payload()
-    assert len(requests) == 1
+        return httpx.Response(200, json={"candidates": [{"finishReason": "STOP", "content": {"parts": [{"text": json.dumps(expected)}]}}]})
+    assert await adapter(handler, free_tier_confirmed=True).generate(**args()) == expected
+    assert len(requests) == 2
+    review = json.loads(requests[1].content)
+    assert json.loads(review['contents'][0]['parts'][-1]['text'])['untrusted_draft'] == expected
+    assert review['contents'][0]['parts'][2] == json.loads(requests[0].content)['contents'][0]['parts'][2]
+
+
+@pytest.mark.asyncio
+async def test_only_reviewed_draft_is_returned():
+    initial = payload()
+    corrected = payload()
+    corrected['exam_inferences'] = []
+    corrected['uncertainties'] = ['僅限本段提供的頁面。']
+    responses = [initial, corrected]
+    def handler(request):
+        return httpx.Response(200, json={'candidates': [{'finishReason': 'STOP', 'content':
+            {'parts': [{'text': json.dumps(responses.pop(0))}]}}]})
+    assert await adapter(handler, free_tier_confirmed=True).generate(**args()) == corrected
+    assert responses == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('status', [200, 429, 503])
+async def test_failed_review_never_returns_initial_draft_or_retries(status):
+    calls = []
+    def handler(request):
+        calls.append(request)
+        if len(calls) == 1:
+            return httpx.Response(200, json={'candidates': [{'finishReason': 'STOP', 'content':
+                {'parts': [{'text': json.dumps(payload())}]}}]})
+        return httpx.Response(status, json={'error': 'private-response-must-not-leak'})
+    with pytest.raises((RuntimeError, GenerationRejected)) as failure:
+        await adapter(handler, free_tier_confirmed=True).generate(**args())
+    assert len(calls) == 2
+    assert 'private-response' not in str(failure.value)
 
 
 @pytest.mark.asyncio

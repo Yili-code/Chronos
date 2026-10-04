@@ -81,7 +81,9 @@ def test_catalog_to_confirmed_summary_and_export(system, tmp_path, monkeypatch, 
         result = asyncio.run(run_summary_pass(main.db, generator, bot, pdf_store, **options))
     assert result["outcomes"] == {key: "sent"}
     assert asyncio.run(run_summary_pass(main.db, generator, bot, pdf_store, **options))["processed"] == 0
-    assert len(provider_requests) == (3 if unavailable else 1)
+    # Successful segments each use draft + original-source review. An initial
+    # 503 costs one request and never reaches review or persistence.
+    assert len(provider_requests) == (5 if unavailable else 2)
     notes = main.db.list_study_notes()
     assert len(notes) == (2 if pages == 6 else 1)
     notes.sort(key=lambda note: note.page_start)
