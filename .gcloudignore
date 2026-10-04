@@ -10,3 +10,8 @@ __pycache__
 chronos.db
 tests
 TEST_REPORT.md
+.study-data/
+.pytest*/
+.env.*
+*.sqlite3
+*.sqlite3-*
