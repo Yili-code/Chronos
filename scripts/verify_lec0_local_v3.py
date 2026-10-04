@@ -18,6 +18,7 @@ from chronos.source_checks import requires_weekday_check, validate_weekday_prese
 
 
 async def main():
+    quality_v10 = sys.argv[1:] == ['--execute-authorized-lite-quality-v10']
     quality_v9 = sys.argv[1:] == ['--execute-authorized-lite-quality-v9']
     quality_v8 = sys.argv[1:] == ['--execute-authorized-lite-quality-v8']
     quality_v7 = sys.argv[1:] == ['--execute-authorized-lite-quality-v7']
@@ -28,9 +29,9 @@ async def main():
     lite = sys.argv[1:] == ['--execute-authorized-31-lite']
     second = sys.argv[1:] == ['--execute-authorized-37-second-once']
     alternate = second or sys.argv[1:] == ['--execute-authorized-37-once']
-    if quality or quality_v5 or quality_v6 or quality_v7 or quality_v8 or quality_v9:
+    if quality or quality_v5 or quality_v6 or quality_v7 or quality_v8 or quality_v9 or quality_v10:
         lite = True
-    if (not lite and not alternate and sys.argv[1:] != ['--execute-authorized-local-v3']) or PROMPT_VERSION != ('study-segment-v9' if quality_v9 else 'study-segment-v8' if quality_v8 else 'study-segment-v7' if quality_v7 else 'study-segment-v6' if quality_v6 else 'study-segment-v5' if quality_v5 else 'study-segment-v4' if quality else 'study-segment-v3'):
+    if (not lite and not alternate and sys.argv[1:] != ['--execute-authorized-local-v3']) or PROMPT_VERSION != ('study-segment-v10' if quality_v10 else 'study-segment-v9' if quality_v9 else 'study-segment-v8' if quality_v8 else 'study-segment-v7' if quality_v7 else 'study-segment-v6' if quality_v6 else 'study-segment-v5' if quality_v5 else 'study-segment-v4' if quality else 'study-segment-v3'):
         print('disabled')
         return
     config = settings.model_copy(update={'ai_timeout':45, **({'gemini_model':'gemini-3.1-flash-lite'} if lite else {'gemini_model':'gemini-3.7-flash'} if alternate else {})})
@@ -45,18 +46,21 @@ async def main():
         directory = Path('.study-data/lec0-lite-quality-v8')
     if quality_v9:
         directory = Path('.study-data/lec0-lite-quality-v9')
+    if quality_v10:
+        directory = Path('.study-data/lec0-lite-quality-v10')
     directory.mkdir(parents=True, exist_ok=True)
     with (directory / 'attempt.json').open('x', encoding='utf-8') as output:
         json.dump({'started_at': datetime.now(timezone.utc).isoformat(), 'model': config.gemini_model,
                    'prompt_version': PROMPT_VERSION, 'local_only': True, 'max_attempts_per_segment': limit,
-                   'max_provider_requests_per_attempt': 2 if quality_v9 else 1}, output)
+                   'max_provider_requests_per_attempt': 2 if quality_v9 or quality_v10 else 1}, output)
     store = PdfStore(Path('.study-data/pdfs'))
     row = next(r for r in store.catalog('192072') if r['source_id'] == '9714342')
     data = store.read('192072', row['source_id'], expected_sha256=row['sha256'])
     generator = GeminiSummary(config, free_tier_confirmed=True)
     reports = []
-    for start, end in (((1,3),(4,6),(7,9),(10,12),(13,14)) if quality_v7 or quality_v8 or quality_v9 else ((7,9),(10,12)) if quality_v6 else ((1,3),(7,9),(10,12),(13,14)) if quality_v5 else ((4,6),) if quality_second else ((1,3),) if quality else ((4,6),) if second else ((1,3),) if alternate else ((1,3), (4,6))):
+    for start, end in (((1,3),(4,6),(7,9),(10,12),(13,14)) if quality_v7 or quality_v8 or quality_v9 or quality_v10 else ((7,9),(10,12)) if quality_v6 else ((1,3),(7,9),(10,12),(13,14)) if quality_v5 else ((4,6),) if quality_second else ((1,3),) if quality else ((4,6),) if second else ((1,3),) if alternate else ((1,3), (4,6))):
         sliced = isolated_pdf_page_count(data, page_range=(start,end))
+        extracted = tuple(isolated_pdf_page_count(sliced, extract_text=True)) if quality_v10 else ()
         for attempt in range(1,limit+1):
             report = {'start':start, 'end':end, 'attempt':attempt}
             reports.append(report)
@@ -65,7 +69,7 @@ async def main():
             try:
                 stage = 'provider_generation_and_review'
                 raw = await generator.generate(progress='Explicit local workflow test only; actual class progress unknown.',
-                    pdfs={row['source_id']:PdfInput(sliced,end-start+1,original_page_start=start)}, model=config.gemini_model, prompt_version=PROMPT_VERSION)
+                    pdfs={row['source_id']:PdfInput(sliced,end-start+1,original_page_start=start,source_pages=extracted)}, model=config.gemini_model, prompt_version=PROMPT_VERSION)
                 stage = 'schema_validation'
                 draft = SummaryDraft.model_validate(raw)
                 # Private diagnostic candidate, never canonical or deliverable.
@@ -74,7 +78,7 @@ async def main():
                 draft.validate_sources({row['source_id']:end-start+1})
                 if requires_weekday_check(draft) or draft.exam_inferences:
                     stage = 'pdf_text_extraction'
-                    texts = isolated_pdf_page_count(sliced, extract_text=True)
+                    texts = extracted or isolated_pdf_page_count(sliced, extract_text=True)
                     stage = 'weekday_presence'
                     validate_weekday_presence(draft, {row['source_id']: texts})
                     stage = 'inference_excerpt_presence'

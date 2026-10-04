@@ -1,5 +1,36 @@
 # Phase 2 — active implementation
 
+## Page-text assisted review and publication decision — 2026-10-04
+
+The local v10 pipeline extracts each selected 1–4-page slice once in the isolated
+parser. It passes page-scoped text alongside the original PDF to generation and
+review, then reuses that text for local quotation/weekday checks. Each text page
+includes source ID, local page and original physical page; it is explicitly
+untrusted data, not a system instruction. Text count and the existing 100,000
+character budget are checked before provider requests. No additional model call
+was added: the limit remains two requests per attempt. Full local regression:
+**327 passed**, 471 warnings, 29.07 seconds.
+
+The bounded v10 Lec0 run completed five segments once each, saved only under
+`.study-data/lec0-lite-quality-v10/`. The office/laboratory association and neutral
+`Others` list errors from v9 were corrected; the group-work exception remained
+present. However, source comparison still rejects full semantic acceptance:
+
+- Pages 10–12 again infer xv6 skills under possible exam topics from the mere
+  existence of an xv6 assignment, despite the two-pass review policy.
+- The same segment expands `10% penalty per day late` into a deduction based on
+  the assignment's total score; the source does not specify that denominator.
+
+No canonical production note was replaced, no revised note delivered, and no
+deployment performed. Testing completion does not imply content acceptance.
+Repeated same-model prompt changes have not established reliable automatic
+publication. Further blind prompt-variant runs are stopped pending a product
+choice: retain free-tier generation with explicit review-before-publication, or
+retain the automatic/free-tier requirements and assess other eligible models.
+The user has been asked; neither scope change has been assumed or implemented.
+The existing PRD automatic delivery contract remains in force until a decision.
+The separate owner `/export` acceptance also remains outstanding.
+
 ## Bounded source-review experiment — 2026-10-04
 
 v8 made five single-attempt local requests. Four drafts passed structural/source

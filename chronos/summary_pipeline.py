@@ -25,6 +25,7 @@ class PdfInput:
     data: bytes
     page_count: int  # Must come from the PDF parser, not model or browser metadata.
     original_page_start: int = 1
+    source_pages: tuple[str, ...] = ()  # Locally extracted from this exact slice.
 
 
 async def generate_selected_summary(db, generator, telegram, *, selection, pdfs,
@@ -70,7 +71,9 @@ async def generate_selected_summary(db, generator, telegram, *, selection, pdfs,
             item = chosen[0]
             sliced = await asyncio.to_thread(isolated_pdf_page_count, pdfs[item.source_id].data,
                                              page_range=(start, end))
-            generation_pdfs = {item.source_id: PdfInput(sliced, end - start + 1, original_page_start=start)}
+            source_pages = tuple(await asyncio.to_thread(isolated_pdf_page_count, sliced, extract_text=True))
+            generation_pdfs = {item.source_id: PdfInput(sliced, end - start + 1,
+                original_page_start=start, source_pages=source_pages)}
         raw = await generator.generate(progress=selection.reported_progress, pdfs=generation_pdfs,
                                        model=model, prompt_version=prompt_version)
         draft = SummaryDraft.model_validate(raw)
@@ -79,8 +82,7 @@ async def generate_selected_summary(db, generator, telegram, *, selection, pdfs,
             draft.validate_sources({identity: pdf.page_count for identity, pdf in generation_pdfs.items()})
             from .source_checks import requires_weekday_check, validate_weekday_presence, validate_inference_evidence
             if requires_weekday_check(draft) or draft.exam_inferences:
-                source_pages = {identity: await asyncio.to_thread(isolated_pdf_page_count, pdf.data, extract_text=True)
-                                for identity, pdf in generation_pdfs.items()}
+                source_pages = {identity: pdf.source_pages for identity, pdf in generation_pdfs.items()}
                 validate_weekday_presence(draft, source_pages)
                 validate_inference_evidence(draft, source_pages)
             for point in (*draft.scope, *draft.concepts, *draft.relationships, *draft.exam_inferences):

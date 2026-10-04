@@ -107,6 +107,7 @@ async def test_segments_persist_send_and_resume_without_duplicates(tmp_path, rej
     assert bot.send_message.await_count == (4 if two_files else 2)
     calls = generator.generate.await_args_list
     assert all(len(call.kwargs['pdfs']) == 1 for call in calls)
+    assert all(len(pdf.source_pages) == pdf.page_count for call in calls for pdf in call.kwargs['pdfs'].values())
     assert [next(iter(call.kwargs['pdfs'].values())).page_count for call in calls] == (([3, 2, 2] if reject_second else [3, 2]) + ([3, 2] if two_files else []))
     messages = str(bot.send_message.await_args_list)
     assert "p. 4–5" in messages and "p. 4" in messages
