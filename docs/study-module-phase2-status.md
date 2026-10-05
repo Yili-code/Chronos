@@ -1,5 +1,20 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Explicit local announcement handoff — 2026-10-05
+
+The extension popup now offers a separate save-announcements button. It sends
+only an explicitly observed partial payload to the loopback receiver's
+`/v1/browser-announcements` route and checks its receipt before reporting saved.
+The receiver applies its existing body-size, bridge-header and origin rules
+(configured extension origin for browser requests; originless local clients
+remain supported). It persists content versions in `announcements.sqlite3`
+beside the configured catalog. Responses contain counts, not bulletin text.
+
+Fourteen Python tests, including actual loopback HTTP rejection/replay checks,
+and seven popup tests passed. No real announcements were transferred. Installed
+extension reload, cloud import, Telegram delivery and automatic polling remain
+unverified or not wired; the popup explicitly describes local-only storage.
+
 ## Announcement content-version persistence — 2026-10-05
 
 The bulletin extractor now reads bounded rendered content using the previously

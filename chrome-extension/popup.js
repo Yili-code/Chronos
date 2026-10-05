@@ -107,6 +107,40 @@ assignmentButton.addEventListener("click", () => {
     });
   });
 });
+const announcementButton = document.createElement("button");
+announcementButton.textContent = "保存目前公告（僅本機）";
+output.before(announcementButton);
+announcementButton.addEventListener("click", () => {
+  announcementButton.disabled = true;
+  chrome.tabs.query({active:true, currentWindow:true}, ([tab]) => {
+    if (!tab?.id) {
+      show("找不到目前分頁。");
+      announcementButton.disabled = false;
+      return;
+    }
+    chrome.tabs.sendMessage(tab.id, {type:"chronos.observe_announcements"}, async payload => {
+      try {
+        if (chrome.runtime.lastError || payload?.status !== "observed_partial") {
+          show("尚未取得公告。請開啟課程公告頁並等待載入；這不代表沒有公告。");
+          return;
+        }
+        const response = await fetch("http://127.0.0.1:8765/v1/browser-announcements", {
+          method:"POST", headers:{"Content-Type":"application/json","X-Chronos-Bridge":"1"},
+          body:JSON.stringify(payload)
+        });
+        if (!response.ok) throw new Error("handoff rejected");
+        const receipt = await response.json();
+        if (receipt.status !== "observed_partial" || !Number.isInteger(receipt.inserted) || receipt.inserted < 0)
+          throw new Error("invalid receipt");
+        show(`公告已保存至本機：新增 ${receipt.inserted} 個內容版本。只涵蓋目前載入的公告，連結已移除；尚未傳到雲端或 Telegram。`);
+      } catch {
+        show("未確認公告保存成功，請檢查本機接收程式。");
+      } finally {
+        announcementButton.disabled = false;
+      }
+    });
+  });
+});
 materialButton.addEventListener("click", () => {
   downloads.replaceChildren();
   materialButton.disabled = true;

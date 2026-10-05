@@ -4,6 +4,34 @@ from http.client import HTTPConnection
 from chronos.local_observation_server import LocalObservationServer
 
 
+def test_announcement_handoff_is_origin_checked_and_durable(tmp_path):
+    import threading
+    from test_announcements import payload
+    extension = 'a' * 32
+    server = LocalObservationServer(0, catalog_path=tmp_path / 'catalog.sqlite3', extension_id=extension)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        for origin, body, expected, count in [
+            ('https://example.test', payload(), 403, None),
+            ('chrome-extension://' + extension, {**payload(), 'cookies':'synthetic'}, 400, None),
+            ('chrome-extension://' + extension, payload(), 202, 1),
+            ('chrome-extension://' + extension, payload(), 202, 0),
+        ]:
+            connection = HTTPConnection('127.0.0.1', server.server_port)
+            connection.request('POST', '/v1/browser-announcements', body=json.dumps(body),
+                headers={'Origin':origin, 'X-Chronos-Bridge':'1', 'Content-Type':'application/json'})
+            response = connection.getresponse()
+            receipt = json.loads(response.read())
+            connection.close()
+            assert response.status == expected
+            if count is not None:
+                assert receipt == {'status':'observed_partial', 'inserted':count}
+        assert len(server.announcement_store.snapshots()) == 1
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_pdf_handoff_requires_catalog_and_persists_bytes(tmp_path):
     import base64
     import threading
