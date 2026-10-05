@@ -79,6 +79,34 @@ def test_study_scheduler_endpoint_requires_secret_and_is_disabled_by_default(sys
     bot.send_message.assert_not_awaited()
 
 
+def test_study_endpoint_refreshes_calendar_before_course_policy(system, monkeypatch):
+    from chronos.academic_calendar import OFFICIAL_CALENDAR_URL
+    from chronos.course_tracking import TAIPEI
+    client, service, bot, config = system
+    config.enable_study_tracking = True
+    now = datetime(2026, 10, 5, 12, 10, tzinfo=TAIPEI)
+    class Clock:
+        @staticmethod
+        def now(tz):
+            return now
+    monkeypatch.setattr(main, 'datetime', Clock)
+    async def refresh(db, clock):
+        db.save_calendar_snapshot({'source_url': OFFICIAL_CALENDAR_URL,
+            'fetched_at': clock.isoformat(), 'content_sha256': 'a' * 64,
+            'events': [{'start_date': '2026-10-05', 'end_date': '2026-10-05',
+                        'classification': 'no_class', 'text': 'Official closure'}]})
+        return {'calendar_sync': 'updated'}
+    monkeypatch.setattr('chronos.calendar_sync.sync_calendar', refresh)
+    bot.send_message.return_value = {'ok': True, 'result': {'message_id': 42}}
+    response = client.post('/internal/study', headers={'X-Chronos-Scheduler-Secret': 'test-scheduler'})
+    assert response.status_code == 200
+    assert response.json()['calendar_sync'] == 'updated'
+    assert response.json()['course_prompts_suppressed'] is True
+    assert response.json()['holiday_notices_sent'] == 1
+    assert main.db.get_course_session('security:2026-10-05') is None
+    assert bot.send_message.await_count == 1
+
+
 def test_web_auth_and_task_lifecycle(system):
     client, service, bot, config = system
     assert client.get('/health').json() == {'status': 'ok'}

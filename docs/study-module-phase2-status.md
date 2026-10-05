@@ -1,5 +1,20 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Calendar connected to scheduler source — 2026-10-05
+
+The scheduler now refreshes calendar evidence, evaluates holiday notices, then
+evaluates course prompts. Current explicit closures and exam periods suppress
+both ordinary prompts and their reminders; pending sessions still receive
+next-day lifecycle cleanup. Normal instruction, unspecified dates and ambiguous
+events do not establish a closure. Stale data is returned as `unverified` and
+does not suppress prompts. The protected endpoint integration is tested with a
+mock refresh and Telegram; this is not evidence of production deployment.
+
+Still required: owner-facing stale/ambiguous-calendar health notices, early
+late-discovery holiday handling, exam confirmation/details and morning exam
+messages, plus live deployment acceptance. Previous component-only notes below
+describe their historical state before this source integration.
+
 ## Durable daily calendar synchronization — 2026-10-05
 
 Added a daily refresh component backed by atomic SQLite/Firestore claims. A

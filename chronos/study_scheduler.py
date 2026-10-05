@@ -6,6 +6,8 @@ from .course_tracking import (TAIPEI, ProgressStatus, course_for_weekday, new_se
                              prompt_text, mark_missed_at_day_end, record_reminder)
 from .study_delivery import StudyDeliveryLedger
 from .telegram import TelegramError
+from .academic_calendar import CalendarEvent, day_policy
+from .calendar_snapshot import is_current
 
 
 def delivery_outcome(result: object) -> tuple[int | None, bool]:
@@ -26,9 +28,15 @@ async def tick_study(db, telegram, chat_id: int, now: datetime) -> dict:
     if now.utcoffset() is None:
         raise ValueError("scheduler clock must be timezone-aware")
     now = now.astimezone(TAIPEI)
+    snapshot = db.get_calendar_snapshot()
+    policy = (day_policy([CalendarEvent(**row) for row in snapshot["events"]], now.date())
+              if is_current(snapshot, now) else "unverified")
+    suppressed = policy in {"no_class", "exam_period"}
     ledger = StudyDeliveryLedger(db)
     created = 0
     for slot in course_for_weekday(now.weekday()):
+        if suppressed:
+            continue
         due = datetime.combine(now.date(), slot.prompt_time, tzinfo=TAIPEI)
         if now < due:
             continue
@@ -56,6 +64,8 @@ async def tick_study(db, telegram, chat_id: int, now: datetime) -> dict:
     for session in db.list_pending_course_sessions():
         session = db.mutate_course_session(session.session_id,
             lambda current: mark_missed_at_day_end(current, local_date=now.date()))
+        if suppressed:
+            continue
         if session.status in {ProgressStatus.ANSWERED, ProgressStatus.MISSED} or session.reminder_count >= 2:
             continue
         number = session.reminder_count + 1
@@ -91,7 +101,8 @@ async def tick_study(db, telegram, chat_id: int, now: datetime) -> dict:
                 return record_reminder(current, number)
             db.mutate_course_session(session.session_id, advance)
             reminders += 1
-    return {"sessions_reconciled": created, "reminders_reconciled": reminders}
+    return {"sessions_reconciled": created, "reminders_reconciled": reminders,
+            "calendar_policy": policy, "course_prompts_suppressed": suppressed}
 
 
 async def notify_study_failures(db, telegram, chat_id: int, now: datetime) -> dict:
