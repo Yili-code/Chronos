@@ -1969,3 +1969,21 @@ access, live browser/authentication probe, the full collector and persistence,
 scheduled and reply-triggered execution, and computer-off acceptance. The build
 and one probe consumed existing Google Cloud resources; no billing plan was
 changed, and staying within free quotas has not been independently established.
+
+### Session provisioning boundary
+
+Created the empty `chronos-tronclass-session` Secret Manager resource with a
+user-managed `asia-east1` replica. Granted `secretAccessor` on that single secret
+to the dedicated collector identity, not the Telegram runtime. No secret version
+or real cookie payload has been uploaded or mounted.
+
+`cloud_session_publish.py` now validates the narrow cookie schema before sending
+an in-memory HTTPS addVersion request to the fixed project/secret. It obtains the
+operator token through captured gcloud output; it neither writes credentials to
+disk nor returns payloads. Redirects are disabled. Transport failures, ambiguous
+HTTP failures and malformed receipts return `publish_uncertain` without retry;
+only a matching numbered version receipt counts as success. Both project ID and
+canonical project number are accepted, never arbitrary projects. Implementation
+reference: https://docs.cloud.google.com/secret-manager/docs/add-secret-version.
+The publisher is not yet connected to an extension handoff endpoint. Actual
+session export, rotation/revocation and cloud login remain unverified.
