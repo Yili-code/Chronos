@@ -1,0 +1,10 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+COPY pyproject.toml ./
+COPY chronos ./chronos
+RUN pip install --no-cache-dir '.[collector]' \
+    && python -m playwright install --with-deps chromium
+
+# No HTTP server or locally running Chrome is required for this job.
+CMD ["python", "-m", "chronos.cloud_browser_probe"]

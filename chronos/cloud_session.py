@@ -5,10 +5,26 @@ authorized provisioning path must supply the payload in memory.
 """
 import json
 import math
+from pathlib import Path
 
 
 class CloudSessionError(ValueError):
     pass
+
+
+def load_cloud_session(path: Path):
+    """Read a mounted secret with a bounded allocation and no credential fallback.
+
+    Secret Manager mounts may be symlinks, so do not reject symlinks. The caller
+    supplies the deployment-controlled mount path, never a request parameter.
+    Errors deliberately omit paths, contents and underlying OS diagnostics.
+    """
+    try:
+        with path.open('rb') as stream:
+            raw = stream.read(65537)
+    except OSError:
+        raise CloudSessionError('session_unavailable') from None
+    return validate_cloud_session(raw)
 
 
 def validate_cloud_session(raw: bytes):

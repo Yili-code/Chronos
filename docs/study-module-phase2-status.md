@@ -1912,3 +1912,31 @@ Example launch: `.venv\\Scripts\\python.exe -m chronos.local_observation_server
 without Origin remain allowed for trusted local tools; Origin checks do not
 authenticate arbitrary local processes. Live installed-extension interoperability
 still requires the actual ID, reload and explicit popup test.
+
+## Cloud execution preparation — 2026-10-05
+
+The owner approved securely storing the TronClass session in the cloud and using
+Cloud Run. `Dockerfile.collector` is a separate, single-run browser image; the
+Telegram webhook image remains unchanged. Its initial command is a session probe,
+not the complete collector. Playwright's Python package, Chromium and OS libraries
+are installed together following https://playwright.dev/python/docs/docker.
+
+The probe reads only `/var/run/chronos-session/session.json`, intended as a Secret
+Manager mount. Reads are bounded to 65,537 bytes; missing, oversized or invalid
+secrets fail closed without a fallback or raw diagnostics. Cookies are scoped to
+TronClass, not the parent university domain or CAS. No real session was imported.
+The ephemeral browser disables downloads and service workers, restricts requests
+to HTTPS GET/HEAD on TronClass/CAS, and rejects media. It opens only the fixed
+course-home URL, never submits a login form, and closes its context after success
+or failure. A secret loading successfully is not authentication evidence: the
+probe requires the home path and authenticated-page markers. These markers are
+heuristic, not proof that every course resource is accessible. Blocked supporting
+requests can cause `unknown`; this must not be interpreted as session expiry.
+
+Evidence: 24 focused tests passed (mocked browser and synthetic secrets). Cloud
+Run jobs listing returned no jobs in the configured project/region. Local Docker
+client exists but the Linux engine is not running, so this image has not been
+built or executed. Outstanding: cloud build, dedicated service account and
+single-secret permission, controlled import/rotation, live cloud session probe,
+actual collection/persistence, scheduling, and computer-off end-to-end acceptance.
+No claim of full offline-computer operation is supported yet.
