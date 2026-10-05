@@ -38,8 +38,14 @@ class Assignment:
     completed_at: datetime | None = None
     submission_status: str = 'unknown'
     attachments: tuple[tuple[str, str], ...] = ()
+    deadline_owner_override: bool = False
+    source_observed_at: datetime | None = None
 
     def __post_init__(self):
+        if type(self.deadline_owner_override) is not bool:
+            raise ValueError('invalid deadline override')
+        if self.source_observed_at is not None:
+            aware(self.source_observed_at)
         if self.submission_status not in {'unknown', 'submitted'}:
             raise ValueError('unsupported submission evidence')
         if not isinstance(self.attachments, tuple) or len(self.attachments) > 100:
@@ -87,6 +93,7 @@ def set_deadline(assignment: Assignment, deadline: datetime, *, origin: str) -> 
         raise ValueError("completed assignments cannot be rescheduled")
     changed = assignment.deadline != deadline
     return replace(assignment, deadline=deadline, deadline_origin=origin,
+                   deadline_owner_override=origin == 'owner',
                    deadline_revision=assignment.deadline_revision + int(changed))
 
 
@@ -101,6 +108,7 @@ def owner_deadline_edit(assignment: Assignment, deadline: datetime | None) -> As
     if assignment.completed_at is not None:
         raise ValueError("completed assignments cannot be rescheduled")
     return replace(assignment, deadline=None, deadline_origin=None,
+                   deadline_owner_override=True,
                    deadline_revision=assignment.deadline_revision + int(assignment.deadline is not None))
 
 
@@ -132,10 +140,28 @@ def deadline_question(assignment: Assignment) -> str:
     return f"作業「{assignment.title}」尚未提供明確截止時間，請確認日期與時間（Asia/Taipei）。"
 
 
+def merge_source_observation(previous: Assignment, incoming: Assignment) -> Assignment:
+    if previous.key != incoming.key:
+        raise ValueError('source identity mismatch')
+    observed = incoming.source_observed_at or incoming.discovered_at
+    prior_observed = previous.source_observed_at or previous.discovered_at
+    if observed <= prior_observed or previous.completed_at is not None:
+        return previous
+    merged_attachments = dict(previous.attachments)
+    merged_attachments.update(dict(incoming.attachments))
+    keep_deadline = previous.deadline_owner_override or previous.deadline_origin == 'owner'
+    deadline = previous.deadline if keep_deadline else incoming.deadline
+    return replace(previous, title=incoming.title, description=incoming.description,
+        source_observed_at=observed, attachments=tuple(sorted(merged_attachments.items())),
+        submission_status='submitted' if 'submitted' in {previous.submission_status, incoming.submission_status} else 'unknown',
+        deadline=deadline, deadline_origin=previous.deadline_origin if keep_deadline else incoming.deadline_origin,
+        deadline_revision=previous.deadline_revision + int(deadline != previous.deadline))
+
+
 def to_record(assignment: Assignment) -> dict:
     data = asdict(assignment)
     data['attachments'] = [list(item) for item in assignment.attachments]
-    for field in ("discovered_at", "deadline", "completed_at"):
+    for field in ("discovered_at", "deadline", "completed_at", "source_observed_at"):
         data[field] = aware(data[field]).isoformat() if data[field] is not None else None
     return data
 
@@ -143,6 +169,6 @@ def to_record(assignment: Assignment) -> dict:
 def from_record(data: dict) -> Assignment:
     data = dict(data)
     data['attachments'] = tuple(tuple(item) for item in data.get('attachments', ()))
-    for field in ("discovered_at", "deadline", "completed_at"):
+    for field in ("discovered_at", "deadline", "completed_at", "source_observed_at"):
         data[field] = datetime.fromisoformat(data[field]) if data.get(field) is not None else None
     return Assignment(**data)

@@ -1,5 +1,16 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Source-update conflict rules — 2026-10-05
+
+Added source merge rules: newer evidence can refresh source content, but explicit
+owner deadlines (including deliberately cleared deadlines) remain authoritative.
+Partial attachment observations accumulate rather than erase unseen files;
+unknown submission evidence does not erase a previous submitted observation.
+Older/same-time evidence and completed records are unchanged. Persistence and
+importer wiring for these merge rules remain to be implemented. 36 focused tests
+passed. The disabled importer launcher also succeeded outside the restricted
+sandbox (`assignment_sync=disabled`); no live import was performed.
+
 ## Observation-to-assignment importer — 2026-10-05
 
 Added an AI-independent local worker: `python -m chronos.run_assignment_sync`
