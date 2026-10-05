@@ -1,5 +1,18 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Preparation worker and delivery — 2026-10-05
+
+The explicitly enabled local companion now processes bounded preparation jobs.
+It claims before generation, checks the assignment remains open, stores the
+validated draft before Telegram and resumes delivery from durable part receipts.
+Unknown generation outcomes do not automatically regenerate. Drafts remain
+stored independently of task completion. Mocked SQLite/Firestore tests verify
+save-before-send and delivery retry without another provider call.
+
+Not yet live-accepted or deployed. Remaining preparation work includes terminal
+failure notices, nonblocking fairness for stalled deliveries, draft retrieval,
+attachment context and live quality acceptance. No real provider call occurred.
+
 ## Explicit preparation queue — 2026-10-05
 
 `/prepare assignment-ID` now stores a deduplicated source snapshot in a durable

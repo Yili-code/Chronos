@@ -110,11 +110,14 @@ async def run(args):
             owner_chat_id=settings.telegram_chat_id, course_mapping=args.course_map,
             model=study_config.gemini_model, prompt_version=PROMPT_VERSION,
             now=datetime.now(settings.tz), enabled=True)
+        from .preparation_worker import run_preparation_pass
+        preparation_result = await run_preparation_pass(db, generator, bot,
+            settings.telegram_chat_id, datetime.now(settings.tz))
         # Never print note text, PDFs, request URLs or provider exceptions.
         counts = {}
         for outcome in result["outcomes"].values():
             counts[outcome] = counts.get(outcome, 0) + 1
-        print(json.dumps({"processed": result["processed"], "statuses": counts}))
+        print(json.dumps({"processed": result["processed"], "statuses": counts, **preparation_result}))
         if not args.watch:
             return 0
         await asyncio.sleep(30)
