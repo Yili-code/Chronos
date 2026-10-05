@@ -23,7 +23,8 @@ class AssignmentObservationStore:
             return {"status": result["status"], "saved": False}
         item = result["assignment"]
         data = {"assignment": to_record(item), "observed_at": aware(observed_at).isoformat(),
-                "submission_status": result["submission_status"], "attachments_status": result["attachments_status"]}
+                "submission_status": result["submission_status"], "attachments_status": result["attachments_status"],
+                "attachments": result["attachments"]}
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(self.path) as connection:
             connection.execute("CREATE TABLE IF NOT EXISTS assignment_observations (source_key TEXT PRIMARY KEY, record_json TEXT NOT NULL)")
@@ -51,7 +52,7 @@ def validate_assignment_observation(payload: dict, *, tracked_courses: set[str],
             raise ValueError("inconsistent observation")
         return {"status": status, "assignment": None}
     fields = {"course_id", "source_id", "title", "description", "deadline", "submission_status", "attachments_status"}
-    if not isinstance(row, dict) or set(row) != fields:
+    if not isinstance(row, dict) or set(row) not in (fields, fields | {"attachments"}):
         raise ValueError("unexpected assignment fields")
     for key in ("course_id", "source_id"):
         if not isinstance(row[key], str) or not re.fullmatch(r"[0-9]{1,20}", row[key]):
@@ -64,8 +65,23 @@ def validate_assignment_observation(payload: dict, *, tracked_courses: set[str],
             raise ValueError("invalid assignment text")
     if not row["title"].strip():
         raise ValueError("missing title")
-    if row["submission_status"] not in ("submitted", "unknown") or row["attachments_status"] != "not_observed":
+    if row["submission_status"] not in ("submitted", "unknown") or row["attachments_status"] not in ("not_observed", "observed_partial"):
         raise ValueError("unsupported evidence state")
+    attachments = row.get("attachments", [])
+    if not isinstance(attachments, list) or len(attachments) > 100:
+        raise ValueError("invalid attachments")
+    seen = set()
+    for attachment in attachments:
+        if not isinstance(attachment, dict) or set(attachment) != {"source_id", "filename"}:
+            raise ValueError("unexpected attachment fields")
+        source, filename = attachment["source_id"], attachment["filename"]
+        if not isinstance(source, str) or not re.fullmatch(r"[0-9]{1,20}", source) or source in seen:
+            raise ValueError("invalid attachment identity")
+        if not isinstance(filename, str) or not 1 <= len(filename) <= 255 or not filename.lower().endswith(".pdf") or any(c in filename for c in "\r\n/\\\x00"):
+            raise ValueError("invalid attachment filename")
+        seen.add(source)
+    if bool(attachments) != (row["attachments_status"] == "observed_partial"):
+        raise ValueError("inconsistent attachment evidence")
     deadline = row["deadline"]
     if deadline is not None:
         if not isinstance(deadline, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:00\+08:00", deadline):
@@ -74,4 +90,5 @@ def validate_assignment_observation(payload: dict, *, tracked_courses: set[str],
     item = Assignment(row["course_id"], row["source_id"], row["title"], row["description"],
                       observed_at, deadline, "source" if deadline else None)
     return {"status": "observed", "assignment": item,
-            "submission_status": row["submission_status"], "attachments_status": "not_observed"}
+            "submission_status": row["submission_status"], "attachments_status": row["attachments_status"],
+            "attachments": [dict(item) for item in attachments]}

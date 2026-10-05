@@ -96,6 +96,14 @@ Firestore after writes. Fifty-six command/scheduler/system tests and thirteen
 Firestore-fake tests pass; the latter exercise the real prepared command actions
 inside update-receipt transactions. Live production verification remains pending.
 
+Homework observations now reuse the existing visible PDF-reference extractor and
+retain only attachment source IDs and filenames. Nonempty results are explicitly
+`observed_partial`, not complete or downloaded; empty results remain
+`not_observed`. The local validator rejects URLs, extra fields, duplicate IDs and
+inconsistent evidence states. Six Node extractor tests and seventeen Python
+handoff tests pass. Non-PDF attachments, verified download state, cloud task
+ingestion and live installed-extension testing are still unfinished.
+
 ## Owner-approved deferral — 2026-10-05
 
 YiLi explicitly paused automatic lecture key-point generation and delivery.

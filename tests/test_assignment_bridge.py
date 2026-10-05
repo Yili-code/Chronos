@@ -43,6 +43,25 @@ def test_absent_deadline_remains_pending():
     assert validate(payload)["assignment"].status == "deadline_pending"
 
 
+def test_attachment_metadata_without_download_credentials(tmp_path):
+    payload = deepcopy(PAYLOAD)
+    payload["assignment"].update(attachments_status="observed_partial", attachments=[{"source_id": "987", "filename": "lab.pdf"}])
+    store = AssignmentObservationStore(tmp_path / "data.sqlite3", {"123"})
+    store.put(payload, NOW)
+    assert store.snapshots()[0]["attachments"] == [{"source_id": "987", "filename": "lab.pdf"}]
+    payload["assignment"]["attachments"][0]["url"] = "https://example.com/private"
+    with pytest.raises(ValueError, match="unexpected attachment fields"):
+        validate(payload)
+
+
+def test_attachment_status_cannot_claim_complete_or_saved():
+    for status in ("downloaded", "complete", "observed_partial"):
+        payload = deepcopy(PAYLOAD)
+        payload["assignment"]["attachments_status"] = status
+        with pytest.raises(ValueError):
+            validate(payload)
+
+
 def test_observation_persists_without_creating_task_and_reopens(tmp_path):
     path = tmp_path / "observations.sqlite3"
     store = AssignmentObservationStore(path, {"123"})

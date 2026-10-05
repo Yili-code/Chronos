@@ -31,3 +31,13 @@ test('missing homework identity and wrong host are not empty results',()=>{
 test('no submitted marker does not imply unsubmitted',()=>{
   assert.equal(extractAssignment(dom(undefined,undefined,''),url).assignment.submission_status,'unknown');
 });
+test('observed PDF references are partial and contain no URLs',()=>{
+  globalThis.ChronosMaterials = {extractMaterials:()=>({status:'observed', materials:[
+    {source_id:'987',filename:'lab.pdf',course_id:'123',activity_id:'456',uploaded_at:null}
+  ]})};
+  try {
+    const item=extractAssignment(dom(),url).assignment;
+    assert.equal(item.attachments_status,'observed_partial');
+    assert.deepEqual(item.attachments,[{source_id:'987',filename:'lab.pdf'}]);
+  } finally { delete globalThis.ChronosMaterials; }
+});

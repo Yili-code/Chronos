@@ -29,10 +29,15 @@
       if (!Number.isFinite(date.getTime()) || local.toISOString().slice(0,16) !== deadline.slice(0,16)) return unknown;
     }
     const submission = one('.section-prompt-message.homework') || "";
+    const catalog = root.ChronosMaterials?.extractMaterials(document, pageUrl);
+    const attachments = catalog?.status === "observed" ? catalog.materials.map(row => ({
+      source_id: row.source_id, filename: row.filename
+    })) : [];
     return {status: "observed", assignment: {
       course_id: course[1], source_id: activity[1], title, description,
       deadline, submission_status: submission.startsWith("已繳交") ? "submitted" : "unknown",
-      attachments_status: "not_observed"
+      attachments_status: attachments.length ? "observed_partial" : "not_observed",
+      attachments
     }};
   }
   root.ChronosAssignments = {extractAssignment};
