@@ -6,6 +6,27 @@ import re
 from .assignments import to_record
 
 
+def draft_query(db, command):
+    from .assignment_preparation import PreparationDraft, render_preparation
+    match = re.fullmatch(r'draft\s+([1-9][0-9]{0,18})(?:\s+([1-9][0-9]{0,5}))?', command)
+    if not match:
+        return '用法：/draft 作業固定ID [頁碼]。查閱不會生成新草稿。'
+    records = [(key, state) for key, state in db.list_preparations()
+               if state['task_id'] == int(match[1]) and state.get('draft') is not None]
+    if not records:
+        return '尚無已保存草稿；查閱不會啟動 AI。'
+    key, state = max(records, key=lambda item: (item[1]['requested_at'], item[0]))
+    text = render_preparation(PreparationDraft.model_validate(state['draft']))
+    pages = [text[offset:offset + 1500] for offset in range(0, len(text), 1500)]
+    page = int(match[2] or 1)
+    if page > len(pages):
+        return f'目前共 {len(pages)} 頁。'
+    footer = f"\n\n第 {page}/{len(pages)} 頁；請求時間：{state['requested_at']}"
+    if page < len(pages):
+        footer += f'\n下一頁：/draft {match[1]} {page + 1}'
+    return pages[page - 1] + footer
+
+
 def prepare_action(db, command, now):
     match = re.fullmatch(r'prepare\s+([1-9][0-9]{0,18})', command)
     if not match:

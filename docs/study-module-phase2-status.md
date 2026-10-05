@@ -1,5 +1,14 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Preparation recovery and inspection — 2026-10-05
+
+Added read-only `/draft assignment-ID [page]` for the latest saved draft,
+deduplicated terminal failure notices, and least-recently-checked scheduling so
+a stalled delivery does not starve later jobs. Uncertain/exhausted deliveries
+stop while retaining the draft. Tests cover unchanged storage during lookup,
+one notice across repeated passes, and progress past a stalled first job.
+No live provider or Telegram acceptance is claimed; deployment remains pending.
+
 ## Preparation worker and delivery — 2026-10-05
 
 The explicitly enabled local companion now processes bounded preparation jobs.

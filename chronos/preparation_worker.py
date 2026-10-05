@@ -15,12 +15,14 @@ async def run_preparation_pass(db, provider, telegram, chat_id, now, *, limit=3)
         raise ValueError('aware clock and bounded batch required')
     ledger = StudyDeliveryLedger(db)
     processed = 0
-    for key, state in db.list_preparations():
+    pending = sorted(db.list_preparations(), key=lambda row: (row[1].get('last_checked_at', ''), row[0]))
+    for key, state in pending:
         if processed >= limit:
             break
         if state['status'] not in {'queued', 'running', 'ready'}:
             continue
         processed += 1
+        state = db.mutate_preparation(key, lambda previous: {**previous, 'last_checked_at': now.isoformat()})
         if state['status'] != 'ready':
             token = uuid4().hex
             def claim(previous):
@@ -66,6 +68,10 @@ async def run_preparation_pass(db, provider, telegram, chat_id, now, *, limit=3)
                 continue
             claim = ledger.claim(delivery_key, now)
             if claim is None:
+                receipt = db.get_study_delivery(delivery_key)
+                if receipt and receipt['status'] in {'uncertain', 'failed'}:
+                    db.mutate_preparation(key, lambda previous: {**previous, 'status': 'delivery_stopped',
+                                                                'last_error': 'delivery_unconfirmed'})
                 complete = False
                 break
             try:
@@ -82,3 +88,25 @@ async def run_preparation_pass(db, provider, telegram, chat_id, now, *, limit=3)
         if complete:
             db.mutate_preparation(key, lambda previous: {**previous, 'status': 'sent', 'sent_at': now.isoformat()})
     return {'preparations_processed': processed}
+
+
+async def notify_preparation_failures(db, telegram, chat_id, now):
+    ledger = StudyDeliveryLedger(db)
+    for key, state in db.list_preparations():
+        if state['status'] not in {'failed', 'uncertain', 'delivery_stopped'}:
+            continue
+        notice_key = 'notice:preparation:' + key
+        claim = ledger.claim(notice_key, now)
+        if claim is None:
+            continue
+        reason = '額度不足或尚未配置' if state.get('last_error') == 'budget_exhausted' else '生成或傳送未能確認完成'
+        text = f"作業 #{state['task_id']} 準備已停止：{reason}。不會自動重跑 AI。"
+        if state.get('draft'):
+            text += f"已保存草稿，可用 /draft {state['task_id']} 查閱。"
+        try:
+            response = await telegram.send_message(chat_id, text)
+        except TelegramError:
+            ledger.finish(notice_key, claim, now)
+            continue
+        message_id, rejected = delivery_outcome(response)
+        ledger.finish(notice_key, claim, now, message_id=message_id, definitely_rejected=rejected)
