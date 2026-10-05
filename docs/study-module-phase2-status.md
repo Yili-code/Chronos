@@ -1,5 +1,26 @@
 # Phase 2 — active implementation
 
+## Explicitly authorized stage probe result — 2026-10-05
+
+YiLi explicitly authorized Lec0 physical pages 10–12 plus extracted text to
+Google's Gemini 3.6 Flash free API, at most two requests, no retries, under the
+previously accepted free-tier data policy. The previously denied probe was then
+executed once using the existing `flash36stages` cohort and exclusive checkpoint.
+
+Result: the **draft** request returned HTTP **503** after **2.62 seconds**.
+Exactly **one** request was recorded; review did not start, no retry occurred,
+and no candidate note was produced. Evidence is the private local
+`.study-data/free-model-comparison-v10-flash36stages/results.json` together with
+its attempt manifest. Production configuration, canonical notes and delivery
+state were unchanged; no deployment occurred.
+
+This localizes this attempt's failure to initial generation, not second-pass
+review. It does not establish the underlying provider cause, general model
+unavailability, or comparative content quality. Earlier small-text success
+remains a separate observation. The specific authorization is now consumed as
+a single no-retry test; do not reuse it for another upload or broader payload.
+Phase 2 quality acceptance and owner Markdown-export acceptance remain open.
+
 ## Stage-specific probe prepared; external execution denied by tool review
 
 The comparison adapter now records safe per-request stage (`draft` or `review`),
