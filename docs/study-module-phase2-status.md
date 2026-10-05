@@ -1,5 +1,15 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Semantic assignment-change notices — 2026-10-05
+
+Source revisions now advance only when observed content or deadline changes,
+not merely when the observation timestamp advances. The reminder worker sends
+one durable source-update notice per revision. If the owner deadline overrides
+the source, the notice displays the source date separately and explicitly says
+the manual setting was retained. Existing completion checks still apply.
+14 focused source/sync/metadata/reminder tests passed. Not yet deployed or live
+accepted; full instruction/attachment lookup is still needed for readable detail.
+
 ## Atomic assignment source refresh — 2026-10-05
 
 The importer now applies newer source observations through atomic SQLite and

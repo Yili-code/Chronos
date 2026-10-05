@@ -55,3 +55,21 @@ def test_removed_deadline_gets_one_new_confirmation_question(tmp_path):
         asyncio.run(tick_assignments(db, bot, 123, now))
     assert bot.send_message.await_count == 2
     assert "截止時間尚未提供" in bot.send_message.call_args.args[1]
+
+
+def test_source_changes_notify_once_but_identical_refresh_does_not(tmp_path):
+    from dataclasses import replace
+    db, now, task, bot = setup(tmp_path)
+    asyncio.run(tick_assignments(db, bot, 123, now))
+    old = task['assignment']
+    changed = replace(old, description='Updated instructions', discovered_at=now + timedelta(minutes=1))
+    db.refresh_assignment(changed)
+    asyncio.run(tick_assignments(db, bot, 123, now + timedelta(minutes=1)))
+    assert '作業來源更新' in bot.send_message.call_args.args[1]
+    assert db.get_assignment(old.key)['assignment'].source_revision == 1
+    db.refresh_assignment(replace(changed, discovered_at=now + timedelta(minutes=2)))
+    assert db.get_assignment(old.key)['assignment'].source_revision == 1
+    for minute in (2, 3, 4):
+        asyncio.run(tick_assignments(db, bot, 123, now + timedelta(minutes=minute)))
+    texts = [call.args[1] for call in bot.send_message.call_args_list]
+    assert sum('作業來源更新' in text for text in texts) == 1

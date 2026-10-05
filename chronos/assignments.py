@@ -40,8 +40,14 @@ class Assignment:
     attachments: tuple[tuple[str, str], ...] = ()
     deadline_owner_override: bool = False
     source_observed_at: datetime | None = None
+    source_revision: int = 0
+    source_deadline: datetime | None = None
 
     def __post_init__(self):
+        if type(self.source_revision) is not int or self.source_revision < 0:
+            raise ValueError('invalid source revision')
+        if self.source_deadline is not None:
+            aware(self.source_deadline)
         if type(self.deadline_owner_override) is not bool:
             raise ValueError('invalid deadline override')
         if self.source_observed_at is not None:
@@ -151,17 +157,22 @@ def merge_source_observation(previous: Assignment, incoming: Assignment) -> Assi
     merged_attachments.update(dict(incoming.attachments))
     keep_deadline = previous.deadline_owner_override or previous.deadline_origin == 'owner'
     deadline = previous.deadline if keep_deadline else incoming.deadline
-    return replace(previous, title=incoming.title, description=incoming.description,
+    merged = replace(previous, title=incoming.title, description=incoming.description,
         source_observed_at=observed, attachments=tuple(sorted(merged_attachments.items())),
         submission_status='submitted' if 'submitted' in {previous.submission_status, incoming.submission_status} else 'unknown',
         deadline=deadline, deadline_origin=previous.deadline_origin if keep_deadline else incoming.deadline_origin,
         deadline_revision=previous.deadline_revision + int(deadline != previous.deadline))
+    baseline_deadline = previous.source_deadline if previous.source_observed_at else previous.deadline
+    changed = (incoming.deadline != baseline_deadline or dict(previous.attachments) != dict(merged.attachments)
+               or any(getattr(previous, field) != getattr(merged, field)
+                      for field in ('title', 'description', 'submission_status')))
+    return replace(merged, source_revision=previous.source_revision + int(changed), source_deadline=incoming.deadline)
 
 
 def to_record(assignment: Assignment) -> dict:
     data = asdict(assignment)
     data['attachments'] = [list(item) for item in assignment.attachments]
-    for field in ("discovered_at", "deadline", "completed_at", "source_observed_at"):
+    for field in ("discovered_at", "deadline", "completed_at", "source_observed_at", "source_deadline"):
         data[field] = aware(data[field]).isoformat() if data[field] is not None else None
     return data
 
@@ -169,6 +180,6 @@ def to_record(assignment: Assignment) -> dict:
 def from_record(data: dict) -> Assignment:
     data = dict(data)
     data['attachments'] = tuple(tuple(item) for item in data.get('attachments', ()))
-    for field in ("discovered_at", "deadline", "completed_at", "source_observed_at"):
+    for field in ("discovered_at", "deadline", "completed_at", "source_observed_at", "source_deadline"):
         data[field] = datetime.fromisoformat(data[field]) if data.get(field) is not None else None
     return Assignment(**data)
