@@ -1,5 +1,16 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Bounded collection orchestration — 2026-10-05
+
+A disabled-by-default one-job worker now connects queue claims, the existing
+browser-session classifier and an asynchronous course-collector protocol.
+Reauthentication/unknown session states never invoke the collector. Completion
+requires explicit persisted coverage of announcements, materials, assignments
+and video metadata; partial evidence cannot be upgraded by a success label.
+Exceptions produce a safe unknown result without retaining raw error text.
+Thirteen worker/queue tests passed. The actual Chrome collector is not supplied
+or enabled: this establishes orchestration, not live collection acceptance.
+
 ## Collection candidate selection — 2026-10-05
 
 The queue now prioritizes accepted progress-reply requests and checks each
