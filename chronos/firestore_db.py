@@ -33,6 +33,7 @@ class FirestoreDatabase:
         self.summary_jobs = self.client.collection(f"{collection_prefix}_summary_jobs")
         self.material_selections = self.client.collection(f"{collection_prefix}_material_selections")
         self.assignments = self.client.collection(f"{collection_prefix}_assignments")
+        self.exams = self.client.collection(f"{collection_prefix}_exams")
         self._transaction: ContextVar[firestore.Transaction | None] = ContextVar(
             "firestore_transaction", default=None
         )
@@ -193,6 +194,17 @@ class FirestoreDatabase:
     def get_calendar_snapshot(self):
         snapshot = self.meta.document("academic_calendar").get()
         return snapshot.to_dict() if snapshot.exists else None
+
+    def save_exam(self, record):
+        from .exams import validate_exam, exam_key
+        record = validate_exam(record)
+        def save(transaction):
+            transaction.set(self.exams.document(exam_key(record)), record)
+            return record
+        return self._run_transaction(save)
+
+    def list_exams(self):
+        return [snapshot.to_dict() for snapshot in self.exams.stream()]
 
     def mutate_calendar_sync(self, transition):
         def mutate(transaction):

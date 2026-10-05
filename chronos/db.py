@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS summary_jobs (fingerprint TEXT PRIMARY KEY, state_jso
 CREATE TABLE IF NOT EXISTS assignments (source_key TEXT PRIMARY KEY, task_id INTEGER NOT NULL UNIQUE, record_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS calendar_snapshot (id INTEGER PRIMARY KEY CHECK(id=1), record_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS calendar_sync (id INTEGER PRIMARY KEY CHECK(id=1), record_json TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS exams (source_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS material_selections (selection_key TEXT PRIMARY KEY, state_json TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_study_notes_recent ON study_notes(created_epoch DESC, fingerprint DESC);
 CREATE INDEX IF NOT EXISTS idx_study_notes_course ON study_notes(course, created_epoch DESC, fingerprint DESC);
@@ -245,6 +246,17 @@ class Database:
         with self.connect() as connection:
             row = connection.execute("SELECT record_json FROM calendar_snapshot WHERE id=1").fetchone()
         return json.loads(row[0]) if row else None
+
+    def save_exam(self, record):
+        from .exams import validate_exam, exam_key
+        record = validate_exam(record)
+        with self.connect() as connection:
+            connection.execute("INSERT INTO exams VALUES(?, ?) ON CONFLICT(source_key) DO UPDATE SET record_json=excluded.record_json", (exam_key(record), json.dumps(record)))
+        return record
+
+    def list_exams(self):
+        with self.connect() as connection:
+            return [json.loads(row[0]) for row in connection.execute("SELECT record_json FROM exams ORDER BY source_key")]
 
     def mutate_calendar_sync(self, transition):
         with self.transaction() as connection:

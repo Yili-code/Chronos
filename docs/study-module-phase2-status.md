@@ -1,5 +1,18 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Exam record foundation and regression evidence — 2026-10-05
+
+Added explicit owner `/exam` input and `/exams` inspection with SQLite/Firestore
+persistence. Course plus exam name identifies the record; include year/term in
+the exam name to distinguish future sittings. Unknown date, location, scope and
+review fields remain null and render as `尚未提供`; no AI inference is involved.
+Exam-week confirmation prompts, daily messages, long-list pagination and live
+acceptance remain outstanding. These commands are not yet deployed.
+
+The full regression run started before these exam changes completed with
+448 passed and 525 dependency deprecation warnings in 152.73 seconds. That
+result covers the calendar integration, not the newly added exam commands.
+
 ## Calendar owner notices — 2026-10-05
 
 The integrated scheduler now reports exhausted calendar-refresh attempts once
