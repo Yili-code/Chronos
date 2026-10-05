@@ -35,10 +35,26 @@ def claim_poll(db,key,now):
             return old
         if old['status']!='queued' or datetime.fromisoformat(old['due_at'])>now:
             return old
+        if old['reason']=='scheduled' and key not in {job.key for job in scheduled_requests(now)}:
+            return {**old,'status':'superseded'}
         return {**old,'status':'running','claim':token,'claimed_at':now.isoformat(),
                 'attempt_count':old['attempt_count']+1}
     result=db.mutate_study_poll(key,transition)
     return token if result['status']=='running' and result['claim']==token else None
+
+
+def next_poll(db,now):
+    """Prefer owner replies; atomically recheck candidates before returning one."""
+    now=aware(now)
+    candidates=sorted(db.list_study_polls(),key=lambda entry:(
+        entry[1]['reason']!='progress_reply',entry[1]['due_at'],entry[0]))
+    for key,state in candidates:
+        if state['status'] not in ('queued','running'):
+            continue
+        claim=claim_poll(db,key,now)
+        if claim:
+            return {'key':key,'claim':claim,'course_id':state['course_id'],'reason':state['reason']}
+    return None
 
 
 def finish_poll(db,key,claim,outcome):

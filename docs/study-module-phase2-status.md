@@ -1,5 +1,15 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Collection candidate selection — 2026-10-05
+
+The queue now prioritizes accepted progress-reply requests and checks each
+candidate atomically before returning its claim. Queued fixed-slot jobs outside
+today's latest due slot become superseded, including yesterday's jobs after
+midnight. Reply-triggered jobs are retained rather than silently dropped during
+offline periods. Already running claims are not stolen. Eighteen planner/queue
+tests passed across SQLite and fake Firestore. This is not browser execution;
+the Chrome executor and reauthentication recovery remain incomplete.
+
 ## Correlated progress reply collection trigger — 2026-10-05
 
 Accepted Telegram progress replies now enqueue the matching tracked course's
