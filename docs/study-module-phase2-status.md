@@ -1940,3 +1940,32 @@ built or executed. Outstanding: cloud build, dedicated service account and
 single-secret permission, controlled import/rotation, live cloud session probe,
 actual collection/persistence, scheduling, and computer-off end-to-end acceptance.
 No claim of full offline-computer operation is supported yet.
+
+### Cloud build and missing-session execution evidence
+
+The preparation limitation above was advanced by a real source-only Cloud Build:
+`7224bcbc-6006-4955-8f05-4269a9ccae39` completed SUCCESS from commit `ff6637a`.
+Only tracked application source, packaging and Dockerfile were staged; no local
+configuration, PDFs or session data were uploaded. Image digest:
+`sha256:7baf4ecc77f9dcf03aa12b53ac36cc05a3b23699700facde8b5f69b97d3aa2e4`.
+
+Cloud Run job `chronos-session-probe` now exists in `asia-east1`, project
+`yili-chronos-prod`, pinned to that digest. Its dedicated `chronos-collector`
+service account has zero direct project role bindings. No session is mounted.
+Verified deployed controls: task count 1, parallelism 1, max retries 0, timeout
+120 seconds, CPU 1, memory 1 GiB. No scheduler was added and the Telegram service
+was not redeployed or granted access to a browser session.
+
+Execution `chronos-session-probe-c6xbh` started successfully and ended with exit
+code 1. Parsed Cloud Logging evidence confirmed exactly `session_unavailable`.
+This is the expected missing-secret safety test, not successful authentication
+and not proof that Chromium can yet start in Cloud Run: this path stops before
+launching the browser. Reproduce by executing the same job without a secret
+mount, then inspecting its execution status and safe session label. Do not
+enable retries or scheduling merely to repeat this known failure.
+
+Still required: controlled session provisioning and revocation, minimal secret
+access, live browser/authentication probe, the full collector and persistence,
+scheduled and reply-triggered execution, and computer-off acceptance. The build
+and one probe consumed existing Google Cloud resources; no billing plan was
+changed, and staying within free quotas has not been independently established.
