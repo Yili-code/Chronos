@@ -108,7 +108,8 @@ async def run_study_tick() -> dict:
     from .calendar_sync import sync_calendar
     from .calendar_scheduler import tick_calendar
     calendar_sync_result = await sync_calendar(db, now)
-    calendar_result = await tick_calendar(db, telegram, settings.telegram_chat_id, now)
+    calendar_result = await tick_calendar(db, telegram, settings.telegram_chat_id, now,
+                                          sync_result=calendar_sync_result)
     result = await tick_study(db, telegram, settings.telegram_chat_id, now)
     from .assignment_scheduler import tick_assignments
     assignment_result = await tick_assignments(db, telegram, settings.telegram_chat_id, now)

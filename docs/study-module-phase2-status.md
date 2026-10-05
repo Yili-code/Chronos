@@ -1,5 +1,15 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Calendar owner notices — 2026-10-05
+
+The integrated scheduler now reports exhausted calendar-refresh attempts once
+per Taipei day. Transient attempts remain silent. Ambiguous dates produce a
+date-keyed request to confirm with the teacher, not a holiday claim. A closure
+observed before 08:00 without a confirmed previous-day notice triggers an
+immediate notice and retains the scheduled 08:00 reminder. All these sends use
+the durable ledger. The confirmation reply workflow and exam information
+management are still outstanding; these changes are not yet deployed.
+
 ## Calendar connected to scheduler source — 2026-10-05
 
 The scheduler now refreshes calendar evidence, evaluates holiday notices, then

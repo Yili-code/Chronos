@@ -91,3 +91,42 @@ def test_explicit_rejection_waits_before_retry(tmp_path):
     assert bot.send_message.await_count == 1
     bot.send_message.return_value = {"ok": True, "result": {"message_id": 42}}
     assert asyncio.run(tick_calendar(db, bot, 123, now + timedelta(minutes=5)))["holiday_notices_sent"] == 1
+
+
+def test_health_waits_for_exhaustion_and_deduplicates(tmp_path):
+    db = Database(tmp_path / 'health.db')
+    db.initialize()
+    bot = AsyncMock()
+    bot.send_message.return_value = {'ok': True, 'result': {'message_id': 42}}
+    now = clock()
+    for attempts in (1, 2, 3, 3):
+        asyncio.run(tick_calendar(db, bot, 123, now,
+                                sync_result={'calendar_attempts': attempts}))
+    assert bot.send_message.await_count == 1
+    assert '尚無當日有效資料' in bot.send_message.call_args.args[1]
+
+
+def test_early_late_discovery_notifies_immediately_then_at_eight(tmp_path):
+    db = Database(tmp_path / 'late.db')
+    db.initialize()
+    bot = AsyncMock()
+    bot.send_message.return_value = {'ok': True, 'result': {'message_id': 42}}
+    now = clock(9, 6)
+    db.save_calendar_snapshot(snapshot(now))
+    for hour in (6, 7, 8, 9):
+        asyncio.run(tick_calendar(db, bot, 123, clock(9, hour)))
+    assert bot.send_message.await_count == 2
+
+
+def test_ambiguity_advisory_is_not_a_holiday_notice(tmp_path):
+    db = Database(tmp_path / 'ambiguous.db')
+    db.initialize()
+    bot = AsyncMock()
+    bot.send_message.return_value = {'ok': True, 'result': {'message_id': 42}}
+    now = clock()
+    db.save_calendar_snapshot(snapshot(now, ('needs_confirmation',)))
+    result = asyncio.run(tick_calendar(db, bot, 123, now))
+    assert result['holiday_notices_sent'] == 0
+    assert result['calendar_health_notices_sent'] == 1
+    asyncio.run(tick_calendar(db, bot, 123, now))
+    assert bot.send_message.await_count == 1

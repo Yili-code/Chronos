@@ -31,11 +31,41 @@ def holiday_notices(snapshot, now):
     return notices
 
 
-async def tick_calendar(db, telegram, chat_id, now):
+def calendar_advisories(snapshot, now, *, exhausted=False):
+    local = now.astimezone(TAIPEI)
+    if not is_current(snapshot, now):
+        if not exhausted:
+            return []
+        return [(f"calendar:health:{local.date()}:unverified",
+                 "今天的官方校曆更新已達嘗試上限，尚無當日有效資料。"
+                 "Chronos 不會根據舊資料停發課後調查；請自行確認是否停課。")]
+    events = [CalendarEvent(**row) for row in snapshot['events']]
+    return [(f"calendar:health:{day}:ambiguous",
+             f"{day} 的官方校曆含需確認或衝突的上課資訊。"
+             "請向授課教師確認；Chronos 尚未據此停發課後調查。")
+            for day in (local.date(), local.date() + timedelta(days=1))
+            if day_policy(events, day) == 'needs_confirmation']
+
+
+async def tick_calendar(db, telegram, chat_id, now, *, sync_result=None):
     snapshot = db.get_calendar_snapshot()
     ledger = StudyDeliveryLedger(db)
     sent = 0
-    for key, text in holiday_notices(snapshot, now):
+    health_sent = 0
+    notices = holiday_notices(snapshot, now)
+    # A closure first observed before 08:00 still deserves immediate notice if
+    # no previous-day notice was confirmed. The scheduled 08:00 reminder remains.
+    local = now.astimezone(TAIPEI)
+    if is_current(snapshot, now) and local.hour < 8:
+        events = [CalendarEvent(**row) for row in snapshot['events']]
+        prior = db.get_study_delivery(f"calendar:holiday:{local.date()}:tomorrow")
+        if day_policy(events, local.date()) == 'no_class' and (not prior or prior['status'] != 'sent'):
+            notices.append((f"calendar:holiday:{local.date()}:late",
+                f"剛確認今天（{local.date()}）官方校曆列為放假／停止上課。\n"
+                f"依據：{snapshot['source_url']}"))
+    exhausted = (sync_result or {}).get('calendar_attempts', 0) >= 3
+    notices += calendar_advisories(snapshot, now, exhausted=exhausted)
+    for key, text in notices:
         claim = ledger.claim(key, now)
         if claim is None:
             continue
@@ -47,5 +77,9 @@ async def tick_calendar(db, telegram, chat_id, now):
         message_id, rejected = delivery_outcome(response)
         result = ledger.finish(key, claim, now, message_id=message_id,
                                definitely_rejected=rejected)
-        sent += result["status"] == "sent"
-    return {"holiday_notices_sent": sent, "calendar_current": is_current(snapshot, now)}
+        if key.startswith('calendar:health:'):
+            health_sent += result['status'] == 'sent'
+        else:
+            sent += result["status"] == "sent"
+    return {"holiday_notices_sent": sent, "calendar_current": is_current(snapshot, now),
+            "calendar_health_notices_sent": health_sent}
