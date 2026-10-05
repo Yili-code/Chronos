@@ -3,6 +3,7 @@ from dataclasses import dataclass
 import hashlib
 import re
 import asyncio
+from .ai_budget import BudgetExceeded
 from .note_record import NoteRecord, NoteSource
 from .note_delivery import deliver_summary
 from .study_notes import SummaryDraft, render_note
@@ -109,6 +110,8 @@ async def generate_selected_summary(db, generator, telegram, *, selection, pdfs,
         db.save_study_note(record)
     except GenerationUnavailable:
         return jobs.finish(key, claim, now, outcome="unavailable")["status"]
+    except BudgetExceeded:
+        return jobs.finish(key, claim, now, outcome='budget_exhausted')['status']
     except GenerationRejected:
         return jobs.finish(key, claim, now, outcome="rejected")["status"]
     except Exception:

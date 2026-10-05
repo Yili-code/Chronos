@@ -30,3 +30,25 @@ class DailyAIBudget:
         return {**state, 'day': day, 'near_limit':
                 state['requests'] * 5 >= self.request_limit * 4 or
                 state['estimated_tokens'] * 5 >= self.token_limit * 4}
+
+
+async def notify_budget(db, telegram, chat_id, status, now):
+    from .study_delivery import StudyDeliveryLedger
+    from .study_scheduler import delivery_outcome
+    from .telegram import TelegramError
+    messages = {'near_limit': 'Study AI 已接近設定的每日上限；不會切換付費模型。',
+                'exhausted': 'Study AI 已達設定的每日上限或尚未配置額度，已停止送出請求。請檢查額度設定；不會切換付費模型。'}
+    if status not in messages:
+        raise ValueError('invalid budget notice')
+    ledger = StudyDeliveryLedger(db)
+    key = f'ai-budget:{now.astimezone(TAIPEI).date()}:{status}'
+    claim = ledger.claim(key, now)
+    if claim is None:
+        return
+    try:
+        response = await telegram.send_message(chat_id, messages[status])
+    except TelegramError:
+        ledger.finish(key, claim, now)
+        return
+    message_id, rejected = delivery_outcome(response)
+    ledger.finish(key, claim, now, message_id=message_id, definitely_rejected=rejected)

@@ -33,7 +33,7 @@ class SummaryJobs:
 
     def finish(self, key: str, claim: str, now: datetime, *, outcome: str) -> dict:
         self._validate(key, now)
-        if outcome not in {"completed", "rejected", "uncertain", "unavailable"}:
+        if outcome not in {"completed", "rejected", "uncertain", "unavailable", "budget_exhausted"}:
             raise ValueError("unsupported generation outcome")
         # Call completed only after canonical persistence, never on model response alone.
         if outcome == "completed" and self.db.get_study_note(key) is None:
@@ -45,6 +45,8 @@ class SummaryJobs:
                 return previous
             if outcome == "completed":
                 return {**previous, "status": "completed", "last_error": None, "next_retry_at": None}
+            if outcome == 'budget_exhausted':
+                return {**previous, 'status': 'failed', 'last_error': 'budget_exhausted', 'next_retry_at': None}
             if outcome in {"rejected", "unavailable"}:
                 retry = previous["attempt_count"] < 3
                 delay = (60 * 2 ** (previous["attempt_count"] - 1) + secrets.randbelow(16)

@@ -3,6 +3,9 @@ import base64
 import json
 import re
 import httpx
+from datetime import datetime
+from .course_tracking import TAIPEI
+from .ai_budget import BudgetExceeded
 from .study_notes import SummaryDraft
 from .summary_pipeline import GenerationRejected, GenerationUnavailable
 
@@ -130,10 +133,12 @@ REVIEW_PROMPT = (
 
 
 class GeminiSummary:
-    def __init__(self, settings, *, free_tier_confirmed=False, transport=None):
+    def __init__(self, settings, *, free_tier_confirmed=False, transport=None, budget=None, budget_notice=None):
         self.settings = settings
         self.free_tier_confirmed = free_tier_confirmed
         self.transport = transport
+        self.budget = budget
+        self.budget_notice = budget_notice
 
     async def generate(self, *, progress, pdfs, model, prompt_version):
         config = self.settings
@@ -176,6 +181,23 @@ class GeminiSummary:
 
     async def _request(self, body, model):
         config = self.settings
+        body = {**body, 'generationConfig': {**body.get('generationConfig', {}), 'maxOutputTokens': 8192}}
+        if self.budget is None:
+            if not isinstance(self.transport, httpx.MockTransport):
+                raise BudgetExceeded('daily study budget must be configured')
+        else:
+            now = datetime.now(TAIPEI)
+            # Conservative workload estimate, not provider tokenization: includes
+            # encoded PDF bytes and a bounded output allowance.
+            estimate = len(json.dumps(body, ensure_ascii=False).encode('utf-8')) + 8192
+            try:
+                reservation = self.budget.reserve(now, estimate)
+            except BudgetExceeded:
+                if self.budget_notice:
+                    await self.budget_notice('exhausted', now)
+                raise
+            if reservation['near_limit'] and self.budget_notice:
+                await self.budget_notice('near_limit', now)
         try:
             async with httpx.AsyncClient(timeout=config.ai_timeout, transport=self.transport, follow_redirects=False) as client:
                 response = await client.post(f"{config.gemini_api_base}/models/{model}:generateContent",

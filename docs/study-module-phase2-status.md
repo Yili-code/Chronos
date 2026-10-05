@@ -1,5 +1,18 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Gemini request budget enforcement — 2026-10-05
+
+The local Study companion now passes a durable budget into Gemini. Every draft
+and review request reserves one request plus a conservative workload/token
+estimate before HTTP; an uncertain call does not refund its reservation. Live
+transports without a budget are rejected. Output is capped at 8,192 tokens.
+`CHRONOS_STUDY_DAILY_REQUEST_LIMIT` and `CHRONOS_STUDY_DAILY_TOKEN_LIMIT` default
+to zero (disabled), requiring explicit operating limits before live generation.
+The estimate includes UTF-8 serialized request bytes and output allowance; it is
+not Gemini's measured tokenizer usage or a billing guarantee. Durable 80% and
+exhaustion notices are wired to Telegram. Exhausted jobs stop without automatic
+retry. No live lecture upload or provider quota was consumed by this change.
+
 ## Durable AI budget accounting foundation — 2026-10-05
 
 Added atomic daily request/token-estimate reservations in both repositories.

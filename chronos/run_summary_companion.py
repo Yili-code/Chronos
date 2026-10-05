@@ -93,8 +93,14 @@ async def run(args):
     db = create_database(settings)
     db.initialize()
     study_config = settings.model_copy(update={"gemini_model": settings.study_gemini_model})
-    generator = GeminiSummary(study_config, free_tier_confirmed=True)
     bot = TelegramClient(settings.telegram_bot_token)
+    from .ai_budget import DailyAIBudget, notify_budget
+    budget = DailyAIBudget(db, request_limit=settings.study_daily_request_limit,
+                          token_limit=settings.study_daily_token_limit)
+    async def budget_notice(status, now):
+        await notify_budget(db, bot, settings.telegram_chat_id, status, now)
+    generator = GeminiSummary(study_config, free_tier_confirmed=True, budget=budget,
+                              budget_notice=budget_notice)
     store = PdfStore(args.pdf_directory)
     while True:
         await prompt_observed_catalogs(db, bot, MaterialObservationStore(args.catalog_path),

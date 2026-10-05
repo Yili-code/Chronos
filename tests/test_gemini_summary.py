@@ -68,6 +68,29 @@ def args():
 
 
 @pytest.mark.asyncio
+async def test_budget_denial_prevents_http_request(tmp_path):
+    from chronos.ai_budget import DailyAIBudget, BudgetExceeded
+    from chronos.db import Database
+    db = Database(tmp_path / 'budget.db')
+    db.initialize()
+    calls = []
+    generator = adapter(lambda request: calls.append(request), free_tier_confirmed=True,
+        budget=DailyAIBudget(db, request_limit=0, token_limit=0))
+    with pytest.raises(BudgetExceeded):
+        await generator.generate(**args())
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_live_transport_requires_budget_before_request():
+    from chronos.ai_budget import BudgetExceeded
+    generator = adapter(lambda request: None, free_tier_confirmed=True)
+    generator.transport = None
+    with pytest.raises(BudgetExceeded):
+        await generator.generate(**args())
+
+
+@pytest.mark.asyncio
 async def test_segment_request_exposes_original_physical_pages():
     from chronos.summary_pipeline import GenerationUnavailable
     captured = []

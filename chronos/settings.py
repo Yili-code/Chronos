@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     gemini_model: str = "gemini-3.8-flash"
     study_gemini_model: str = "gemini-3.1-flash-lite"
+    study_daily_request_limit: int = Field(default=0, ge=0)
+    study_daily_token_limit: int = Field(default=0, ge=0)
     ai_timeout: float = Field(default=30, gt=0)
     web_username: str = "chronos"
     web_password: str = ""
