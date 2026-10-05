@@ -42,7 +42,7 @@ HELP_TEXT = (
     "/done 1 — Complete task 1\n"
     "/deadline assignment-ID YYYY-MM-DD HH:MM — Confirm assignment deadline (Taipei)\n"
     "/exam — Save confirmed exam details; unknown fields use ?\n"
-    "/exams — List saved exam details\n"
+    "/exams [page] — List saved exam details\n"
     "/reschedule 1 tomorrow at 10:00 — Change task 1's due time\n"
     "/edit 1 move it to Friday and rename it — Edit task 1\n"
     "/clear — Delete all tasks after confirmation\n"
@@ -321,9 +321,9 @@ async def prepare_message(text: str) -> Callable[[], str]:
     """Resolve external input first; the returned action performs no async work."""
     normalized = text.strip()
     command = normalized[1:].strip() if normalized.startswith("/") else None
-    if command == 'exams':
-        from .exams import format_exams
-        return lambda: format_exams(db.list_exams())
+    if command is not None and (command == 'exams' or command.startswith('exams ')):
+        from .exams import exams_query
+        return lambda: exams_query(db, command)
     if command is not None and (command == 'exam' or command.startswith('exam ')):
         from .exams import exam_action
         return exam_action(db, command)

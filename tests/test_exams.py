@@ -1,7 +1,7 @@
 import pytest
 
 from chronos.db import Database
-from chronos.exams import exam_action, format_exams
+from chronos.exams import exam_action, format_exams, exam_pages, exams_query, exam_key
 from test_firestore import database as firestore_fake
 
 
@@ -35,3 +35,20 @@ def test_exam_save_inside_telegram_receipt_transaction(db):
     db.process_update(99001, action)
     db.process_update(99001, action)
     assert len(db.list_exams()) == 1
+
+
+def test_pagination_is_lossless_stable_and_unicode_bounded(db):
+    for course in ('OS', 'DB', 'Architecture'):
+        exam_action(db, f'exam {course} | Midterm | ? | ? | ' + '😀' * 1000 + ' | ' + '範圍' * 500)()
+    records = db.list_exams()
+    pages = exam_pages(records)
+    assert len(pages) > 1
+    assert ''.join(pages) == format_exams(sorted(records, key=exam_key))
+    assert exam_pages(list(reversed(records))) == pages
+    for index, content in enumerate(pages, 1):
+        output = exams_query(db, f'exams {index}')
+        assert output.startswith(content)
+        assert len(output.encode('utf-16-le')) // 2 < 4096
+    assert '下一頁：/exams 2' in exams_query(db, 'exams')
+    assert '沒有第' in exams_query(db, 'exams 999')
+    assert '用法' in exams_query(db, 'exams 0')

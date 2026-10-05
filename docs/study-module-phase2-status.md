@@ -1,5 +1,14 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Exam query pagination — 2026-10-05
+
+`/exams [page]` now renders stable, lossless pages with next-page instructions.
+Tests concatenate every page back to the complete source text and check UTF-16
+length using supplementary Unicode characters. Save acknowledgments are bounded
+instead of echoing arbitrarily long course/exam names. Both database backends
+are covered; 66 focused exam and system tests passed. Delivery-plan consistency
+under edits and production acceptance remain outstanding.
+
 ## Exam-week scheduler integration — 2026-10-05
 
 Added one confirmation request per official exam period, eligible from seven

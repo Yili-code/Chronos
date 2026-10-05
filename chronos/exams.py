@@ -1,6 +1,7 @@
 """Owner-confirmed exam records; unknown fields never become inferred facts."""
 from datetime import datetime
 from hashlib import sha256
+import re
 
 from .course_tracking import TAIPEI
 
@@ -46,7 +47,7 @@ def exam_action(db, command):
         return lambda: usage
     def save():
         db.save_exam(record)
-        return f"已保存 {course}／{period}。未提供的資料保持未知，不會推測考試安排。"
+        return "已保存考試紀錄。用 /exams 查閱；未提供的資料保持未知，不會推測考試安排。"
     return save
 
 
@@ -61,3 +62,23 @@ def format_exams(records):
                      f"地點：{record['location'] or '尚未提供'}\n範圍：{record['scope'] or '尚未提供'}\n"
                      f"待複習：{record['review'] or '尚未提供'}")
     return '\n\n'.join(lines)
+
+
+def exam_pages(records):
+    """Stable record order and lossless, conservatively bounded Unicode chunks."""
+    text = format_exams(sorted(records, key=exam_key))
+    return [text[offset:offset + 1500] for offset in range(0, len(text), 1500)]
+
+
+def exams_query(db, command):
+    match = re.fullmatch(r'exams(?:\s+([1-9][0-9]{0,5}))?', command)
+    if not match:
+        return '用法：/exams [頁碼]，例如 /exams 2。'
+    page = int(match[1] or 1)
+    pages = exam_pages(db.list_exams())
+    if page > len(pages):
+        return f'沒有第 {page} 頁，目前共 {len(pages)} 頁。請用 /exams 從第一頁查閱。'
+    footer = f'\n\n第 {page}/{len(pages)} 頁'
+    if page < len(pages):
+        footer += f'；下一頁：/exams {page + 1}'
+    return pages[page - 1] + footer
