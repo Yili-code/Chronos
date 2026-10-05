@@ -1,5 +1,16 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Read-only saved bulletin lookup — 2026-10-05
+
+Added `/announcements [page]` and `/announcement version-hash [page]` for
+owner-only saved version lookup through existing command routing. Lists contain
+three entries per page; complete bodies use 1500-code-point pages with explicit
+next-page commands. Queries neither fetch TronClass nor generate AI content or
+change stored announcements. They warn that saved versions are not a complete
+or necessarily current course catalog. Failure notices now point to this lookup.
+Fifty-two command/system tests passed, including lossless Unicode reconstruction
+and unchanged records on SQLite and fake Firestore. Not yet deployed.
+
 ## Malformed bulletin handoff rejection — 2026-10-05
 
 Announcement validation now explicitly rejects non-string status values before

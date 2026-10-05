@@ -119,7 +119,7 @@ async def notify_study_failures(db, telegram, chat_id: int, now: datetime) -> di
         if claim:
             category = source_key.split(':', 1)[0]
             label, guidance = {
-                'announcement': ('課程公告通知', '請到 TronClass 公告頁確認內容。'),
+                'announcement': ('課程公告通知', '請用 /announcements 查閱已保存版本，或到 TronClass 確認最新內容。'),
                 'assignment': ('作業通知', '請用 /tasks 檢查作業，並到 TronClass 確認截止時間。'),
                 'calendar': ('校曆通知', '請確認官方校曆與老師的上課安排。'),
                 'exam': ('考試通知', '請用 /exams 查看已確認的考試資料。'),

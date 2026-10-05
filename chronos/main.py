@@ -43,6 +43,7 @@ HELP_TEXT = (
     "/deadline assignment-ID YYYY-MM-DD HH:MM — Confirm assignment deadline (Taipei)\n"
     "/exam — Save confirmed exam details; unknown fields use ?\n"
     "/exams [page] — List saved exam details\n"
+    "/announcements [page] — Browse saved bulletin versions\n"
     "/classday — Confirm a course-specific instruction day\n"
     "/study_budget — Inspect recorded Study AI usage without generating\n"
     "/prepare assignment-ID — Request an editable assignment draft\n"
@@ -328,6 +329,12 @@ async def prepare_message(text: str) -> Callable[[], str]:
     """Resolve external input first; the returned action performs no async work."""
     normalized = text.strip()
     command = normalized[1:].strip() if normalized.startswith("/") else None
+    if command is not None and (command == 'announcements' or command.startswith('announcements ')):
+        from .announcement_commands import announcements_query
+        return lambda: announcements_query(db, command)
+    if command is not None and (command == 'announcement' or command.startswith('announcement ')):
+        from .announcement_commands import announcement_query
+        return lambda: announcement_query(db, command)
     if command is not None and (command == 'assignment' or command.startswith('assignment ')):
         from .assignment_commands import assignment_query
         return lambda: assignment_query(db, command)
