@@ -1,4 +1,40 @@
-# Phase 2 — active implementation
+# Phase 2 — AI generation deferred
+
+## Owner-approved deferral — 2026-10-05
+
+YiLi explicitly paused automatic lecture key-point generation and delivery.
+This supersedes earlier instructions to keep implementing Phase 2 or comparing
+models. Phase 2 is **not accepted or complete**. Do not resume generation,
+lecture uploads, model comparisons, retries, deployment or automatic delivery
+without a new owner instruction.
+
+Preserve existing browser-session access, PDF download/persistence, material
+selection, canonical notes, tests and diagnostic evidence. No data deletion,
+paid-provider migration or replacement with combined summaries is authorized.
+
+Reasons: repeated HTTP 503 on real lecture inputs, including text-only controls;
+the latest draft failed before review. A read-only model metadata request
+returned HTTP 200 and advertised generation support, which does not establish
+generation availability. The official incident page failed to load, so a
+provider-wide outage and the underlying cause remain unproven. Separately,
+successful generations still contained unsupported inferences; availability
+alone cannot satisfy the content-quality gate.
+
+Restart requires explicit owner approval, a fixed page-scoped sample and a
+bounded request budget. Verify both draft/review availability and source-grounded
+content before enabling sequential generation/save/send. Complete the outstanding
+Markdown-export acceptance before claiming full Phase 2 acceptance. Retain the
+roughly three-page segmentation requirement; do not restart combined summaries.
+
+Operational check at deferral: no matching Chronos automation configuration was
+found in the local automation directory. Live Cloud Run configuration confirms
+`CHRONOS_ENABLE_STUDY_TRACKING=false` and
+`CHRONOS_ENABLE_INTERNAL_SCHEDULER=false`. Cloud Scheduler lists only the unrelated
+`chronos-daily-tasks` job, which remains enabled. Authorized local process
+inspection found no Python process matching the Study-worker command pattern.
+No cloud configuration changes or generation requests were needed.
+
+The following entries are historical evidence, not instructions to resume.
 
 ## Explicitly authorized stage probe result — 2026-10-05
 

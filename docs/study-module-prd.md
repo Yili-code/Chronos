@@ -1,5 +1,11 @@
 # Chronos Study Module — Product Requirements Document
 
+> **2026-10-05 owner decision — deferred:** 自動逐段生成與傳送講義重點正式暫緩，
+> Phase 2 尚未驗收完成。停止繼續模型測試、講義上傳、生成重試及此功能部署，
+> 直到 YiLi 明確要求重啟。保留 PDF 下載、保存、選檔、既有筆記與測試。
+> 重啟必須分別通過服務可用性及內容忠實度驗證；不恢復合併摘要功能。
+> 詳見 [Phase 2 狀態與重啟條件](study-module-phase2-status.md)。
+
 ## 1. Product definition
 
 Chronos Study Module 是整合進既有 Chronos 的個人課務助手。
