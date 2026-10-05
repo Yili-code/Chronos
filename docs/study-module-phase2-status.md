@@ -1,5 +1,17 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Durable browser-collection queue — 2026-10-05
+
+SQLite and Firestore now persist collection requests using first-writer-wins
+enqueue and atomic claim transitions. Re-enqueue cannot reset a completed,
+partial, reauthentication-required or unknown result. An interrupted running
+claim becomes unknown after five minutes, rather than falsely completed or
+silently rerun. Finish requires the matching claim and an explicit outcome.
+Fourteen planner/queue tests passed across SQLite and fake Firestore.
+No production queue creation or browser execution was enabled. Correlated reply
+wiring, executor selection of current jobs, obsolete-job expiry, safe retries,
+reauthentication recovery and end-to-end collection remain to be implemented.
+
 ## Browser collection timing contract — 2026-10-05
 
 A pure planner now emits per-course requests for Taipei 08:00, 12:00, 18:00 and

@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS calendar_sync (id INTEGER PRIMARY KEY CHECK(id=1), re
 CREATE TABLE IF NOT EXISTS exams (source_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS preparation_jobs (source_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS announcements (source_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS study_poll_jobs (source_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS ai_daily_budget (day TEXT PRIMARY KEY, record_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS course_day_decisions (source_key TEXT PRIMARY KEY, decision TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS exam_notice_plans (source_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
@@ -301,6 +302,19 @@ class Database:
     def list_announcements(self):
         with self.connect() as connection:
             return [(row[0], json.loads(row[1])) for row in connection.execute('SELECT source_key, record_json FROM announcements ORDER BY source_key')]
+
+    def mutate_study_poll(self, key, transition):
+        from contextlib import nullcontext
+        active = self._transaction.get()
+        with (nullcontext(active) if active is not None else self.transaction()) as connection:
+            row = connection.execute('SELECT record_json FROM study_poll_jobs WHERE source_key=?',(key,)).fetchone()
+            state = transition(json.loads(row[0]) if row else None)
+            connection.execute('INSERT INTO study_poll_jobs VALUES (?, ?) ON CONFLICT(source_key) DO UPDATE SET record_json=excluded.record_json',(key,json.dumps(state)))
+            return state
+
+    def list_study_polls(self):
+        with self.connect() as connection:
+            return [(row[0],json.loads(row[1])) for row in connection.execute('SELECT source_key,record_json FROM study_poll_jobs ORDER BY source_key')]
 
     def mutate_ai_budget(self, day, transition):
         with self.transaction() as connection:
