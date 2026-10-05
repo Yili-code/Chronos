@@ -1,5 +1,27 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Live announcement DOM evidence — 2026-10-05
+
+Read-only Chrome inspection of an authenticated course bulletin page found three
+rendered `.bulletin` rows. Verified bindings are `bulletin.title`,
+`bulletin.created_at | datetime`, and `bulletin.content|sanitizeHtml`.
+Rows expose `ng-click="recordRead(bulletin, isExpanded)"`; no row was clicked.
+No stable bulletin ID was exposed in inspected DOM attributes. Source content,
+private links and contact details were not copied into repository fixtures.
+
+The extension now supports `chronos.observe_announcements` for bounded title
+and publication metadata, explicitly returning `observed_partial`,
+`complete_course: false`, `source_id: null`, and `identity_status: not_exposed`.
+Empty/loading/malformed lists return unknown, not a successful empty catalog.
+Content is deliberately marked not_collected; stable identity, full content
+handoff, notification deduplication and scheduled collection remain incomplete.
+No new permissions or background navigation were enabled. Twelve focused Node
+tests passed; installed-extension reload and end-to-end delivery are unverified.
+
+Reproduce safely: open an authenticated course's 公告 page, inspect `.bulletin`
+attributes and the three bindings above without clicking a row; run
+`node --test chrome-extension/announcements.test.cjs` for synthetic fixtures.
+
 ## Preparation input identity — 2026-10-05
 
 Preparation deduplication now keys the actual text input (course/source identity,
