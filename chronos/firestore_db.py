@@ -128,6 +128,9 @@ class FirestoreDatabase:
         return {"id": task_id, **data}
 
     def _run_transaction(self, operation):
+        active = self._transaction.get()
+        if active is not None:
+            return operation(active)
         transaction = self.client.transaction()
 
         @firestore.transactional

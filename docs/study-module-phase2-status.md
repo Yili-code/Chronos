@@ -1,5 +1,13 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Webhook transaction boundary correction — 2026-10-05
+
+Firestore repository operations now reuse an active transaction instead of
+opening nested independent transactions. This keeps exam/class-day command
+writes in the same commit boundary as the Telegram update receipt. A regression
+asserts one transaction factory invocation per command; 34 focused Firestore,
+exam, preparation and course-decision tests passed. Not yet deployed.
+
 ## Full assignment detail lookup — 2026-10-05
 
 Added `/assignment fixed-ID [page]` and linked it from assignment notices.
