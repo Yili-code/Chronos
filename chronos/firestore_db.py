@@ -35,6 +35,7 @@ class FirestoreDatabase:
         self.assignments = self.client.collection(f"{collection_prefix}_assignments")
         self.exams = self.client.collection(f"{collection_prefix}_exams")
         self.preparation_jobs = self.client.collection(f"{collection_prefix}_preparation_jobs")
+        self.announcements = self.client.collection(f"{collection_prefix}_announcements")
         self.ai_daily_budget = self.client.collection(f"{collection_prefix}_ai_daily_budget")
         self.course_day_decisions = self.client.collection(f"{collection_prefix}_course_day_decisions")
         self.exam_notice_plans = self.client.collection(f"{collection_prefix}_exam_notice_plans")
@@ -244,6 +245,19 @@ class FirestoreDatabase:
 
     def list_preparations(self):
         return [(snapshot.id, snapshot.to_dict()) for snapshot in self.preparation_jobs.stream()]
+
+    def save_announcement(self, record):
+        from .announcements import canonical_announcement
+        key, record = canonical_announcement(record)
+        def save(transaction):
+            ref = self.announcements.document(key)
+            if not ref.get(transaction=transaction).exists:
+                transaction.set(ref, record)
+            return key
+        return self._run_transaction(save)
+
+    def list_announcements(self):
+        return sorted((snapshot.id, snapshot.to_dict()) for snapshot in self.announcements.stream())
 
     def mutate_ai_budget(self, day, transition):
         def mutate(transaction):

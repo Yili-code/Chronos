@@ -66,6 +66,22 @@ def validate_announcements(payload, tracked_courses=TRACKED_COURSES):
     return list(result.values())
 
 
+def canonical_announcement(record):
+    if not isinstance(record, dict) or set(record) != {'announcement', 'first_observed_at', 'fingerprint'}:
+        raise ValueError('invalid saved announcement')
+    row = record['announcement']
+    if not isinstance(row, dict) or set(row) != {'course_id', 'title', 'published_at', 'content'}:
+        raise ValueError('invalid saved content')
+    items = validate_announcements({'status':'observed_partial', 'complete_course':False,
+        'announcements':[{**row, 'source_id':None, 'identity_status':'not_exposed',
+                          'content_status':'observed_redacted'}]})
+    item = items[0]
+    observed = aware(datetime.fromisoformat(record['first_observed_at']))
+    if record['fingerprint'] != item.fingerprint:
+        raise ValueError('announcement fingerprint mismatch')
+    return item.fingerprint, {**record, 'first_observed_at':observed.isoformat()}
+
+
 class AnnouncementObservationStore:
     """Append-only versions; absence from a partial page never means deletion."""
 

@@ -1,5 +1,17 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Canonical announcement records and delivery worker — 2026-10-05
+
+SQLite and Firestore now expose first-writer-wins announcement persistence,
+validating the fingerprint and bounded redacted content before saving. The
+delivery worker sends immutable content in 1500-code-point parts with durable
+claims, resumes after confirmed parts and stops at uncertain outcomes rather
+than blindly resending. Each notice labels the missing upstream identity.
+Thirteen focused Python tests passed across SQLite and fake Firestore, including
+bounded multi-pass delivery, repeat imports and uncertain transport results.
+The import launcher and production scheduler wiring remain pending. No live
+Firestore writes or Telegram bulletin messages were performed for this change.
+
 ## Explicit local announcement handoff — 2026-10-05
 
 The extension popup now offers a separate save-announcements button. It sends
