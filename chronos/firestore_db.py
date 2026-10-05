@@ -13,6 +13,7 @@ from .course_tracking import ProgressSession, accept_reply, mark_missed_at_day_e
 from .course_tracking import progress_followup
 from .course_tracking_store import session_from_firestore, session_to_firestore
 from .note_record import NoteRecord
+from .assignments import Assignment, to_record, from_record
 
 
 class FirestoreDatabase:
@@ -31,6 +32,7 @@ class FirestoreDatabase:
         self.study_notes = self.client.collection(f"{collection_prefix}_study_notes")
         self.summary_jobs = self.client.collection(f"{collection_prefix}_summary_jobs")
         self.material_selections = self.client.collection(f"{collection_prefix}_material_selections")
+        self.assignments = self.client.collection(f"{collection_prefix}_assignments")
         self._transaction: ContextVar[firestore.Transaction | None] = ContextVar(
             "firestore_transaction", default=None
         )
@@ -160,13 +162,45 @@ class FirestoreDatabase:
         result = [self._task_data(int(snapshot.id), snapshot.to_dict()) for snapshot in snapshots]
         return sorted(result, key=lambda task: (task.get("due_at") is None, task.get("due_at") or "", task["id"]))
 
+    def create_assignment(self, assignment: Assignment) -> dict:
+        def create(transaction):
+            ref = self.assignments.document(assignment.key)
+            snapshot = ref.get(transaction=transaction)
+            if snapshot.exists:
+                data = snapshot.to_dict()
+                return {"task_id": data["task_id"], "assignment": from_record(data["record"])}
+            task = self.create_task(assignment.title, assignment.deadline, assignment.course_id, assignment.discovered_at)
+            transaction.create(ref, {"task_id": task["id"], "record": to_record(assignment)})
+            return {"task_id": task["id"], "assignment": assignment}
+        return self._run_transaction(create)
+
+    def get_assignment(self, key: str) -> dict | None:
+        def read(transaction):
+            snapshot = self.assignments.document(key).get(transaction=transaction)
+            if not snapshot.exists:
+                return None
+            data = snapshot.to_dict()
+            task = self.tasks.document(str(data["task_id"])).get(transaction=transaction)
+            item = from_record(data["record"])
+            if task.exists and task.get("completed_at"):
+                item = replace(item, completed_at=datetime.fromisoformat(task.get("completed_at")))
+            return {"task_id": data["task_id"], "assignment": item, "task_exists": task.exists}
+        return self._run_transaction(read)
+
     def _update_open_task(self, task_id: int, values: dict) -> bool:
         def update(transaction):
             reference = self.tasks.document(str(task_id))
             snapshot = reference.get(transaction=transaction)
             if not snapshot.exists or snapshot.get("status") != "open":
                 return False
+            linked = []
+            if "completed_at" in values:
+                linked = list(self.assignments.where(filter=FieldFilter("task_id", "==", task_id)).stream(transaction=transaction))
             transaction.update(reference, values)
+            for assignment in linked:
+                data = assignment.to_dict()
+                data["record"]["completed_at"] = values["completed_at"]
+                transaction.update(assignment.reference, data)
             return True
 
         active = self._transaction.get()

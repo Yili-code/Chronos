@@ -37,6 +37,15 @@ window instead of sending a burst of historical thresholds. This module is not
 yet connected to durable assignment storage, TronClass discovery, Telegram or
 `/prepare`; it is not a completed assignment feature or production evidence.
 
+Follow-up: SQLite and Firestore repositories now atomically create an assignment
+record and its ordinary task, keyed by course/source identity. Duplicate discovery
+returns the original task; ordinary task completion also persists assignment
+completion history, including when the task list is later cleared. Eight new
+storage tests pass on SQLite and a Firestore fake; the focused suite totals 52
+passing tests. This supersedes only the missing-storage statement above. Source
+updates, owner deadline confirmation, durable reminders, discovery integration
+and `/prepare` remain unfinished. No production assignment data was written.
+
 ## Owner-approved deferral — 2026-10-05
 
 YiLi explicitly paused automatic lecture key-point generation and delivery.

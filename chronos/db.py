@@ -12,6 +12,7 @@ from .course_tracking import ProgressSession, accept_reply, mark_missed_at_day_e
 from .course_tracking import progress_followup
 from .course_tracking_store import session_from_firestore, session_to_firestore
 from .note_record import NoteRecord
+from .assignments import Assignment, to_record, from_record
 
 
 SCHEMA = """
@@ -52,6 +53,7 @@ CREATE TABLE IF NOT EXISTS study_notes (
     record_json TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS summary_jobs (fingerprint TEXT PRIMARY KEY, state_json TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS assignments (source_key TEXT PRIMARY KEY, task_id INTEGER NOT NULL UNIQUE, record_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS material_selections (selection_key TEXT PRIMARY KEY, state_json TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_study_notes_recent ON study_notes(created_epoch DESC, fingerprint DESC);
 CREATE INDEX IF NOT EXISTS idx_study_notes_course ON study_notes(course, created_epoch DESC, fingerprint DESC);
@@ -211,12 +213,40 @@ class Database:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def create_assignment(self, assignment: Assignment) -> dict:
+        """Persist source identity and its ordinary task together, exactly once."""
+        with self.transaction() as connection:
+            row = connection.execute("SELECT * FROM assignments WHERE source_key=?", (assignment.key,)).fetchone()
+            if row:
+                return {"task_id": row["task_id"], "assignment": from_record(json.loads(row["record_json"]))}
+            task = self.create_task(assignment.title, assignment.deadline, assignment.course_id, assignment.discovered_at)
+            connection.execute("INSERT INTO assignments VALUES (?, ?, ?)",
+                               (assignment.key, task["id"], json.dumps(to_record(assignment))))
+            return {"task_id": task["id"], "assignment": assignment}
+
+    def get_assignment(self, key: str) -> dict | None:
+        with self.connect() as connection:
+            row = connection.execute("SELECT * FROM assignments WHERE source_key=?", (key,)).fetchone()
+            if row is None:
+                return None
+            task = connection.execute("SELECT * FROM tasks WHERE id=?", (row["task_id"],)).fetchone()
+        item = from_record(json.loads(row["record_json"]))
+        if task and task["completed_at"]:
+            item = replace(item, completed_at=datetime.fromisoformat(task["completed_at"]))
+        return {"task_id": row["task_id"], "assignment": item, "task_exists": task is not None}
+
     def complete_task(self, task_id: int, completed_at: datetime) -> bool:
         with self.connect() as connection:
             cursor = connection.execute(
                 "UPDATE tasks SET status = 'done', completed_at = ? WHERE id = ? AND status = 'open'",
                 (completed_at.isoformat(), task_id),
             )
+            if cursor.rowcount == 1:
+                row = connection.execute("SELECT record_json FROM assignments WHERE task_id=?", (task_id,)).fetchone()
+                if row:
+                    data = json.loads(row[0])
+                    data["completed_at"] = completed_at.isoformat()
+                    connection.execute("UPDATE assignments SET record_json=? WHERE task_id=?", (json.dumps(data), task_id))
         return cursor.rowcount == 1
 
     def postpone_task(self, task_id: int, due_at: datetime) -> bool:

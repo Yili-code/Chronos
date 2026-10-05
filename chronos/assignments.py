@@ -3,7 +3,7 @@
 An upstream source ID identifies an assignment independently of its title and
 deadline. Adapter failures must be handled before calling these rules.
 """
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta
 from hashlib import sha256
 
@@ -107,3 +107,17 @@ def deadline_question(assignment: Assignment) -> str:
     if assignment.status != "deadline_pending":
         raise ValueError("only missing deadlines need confirmation")
     return f"作業「{assignment.title}」尚未提供明確截止時間，請確認日期與時間（Asia/Taipei）。"
+
+
+def to_record(assignment: Assignment) -> dict:
+    data = asdict(assignment)
+    for field in ("discovered_at", "deadline", "completed_at"):
+        data[field] = aware(data[field]).isoformat() if data[field] is not None else None
+    return data
+
+
+def from_record(data: dict) -> Assignment:
+    data = dict(data)
+    for field in ("discovered_at", "deadline", "completed_at"):
+        data[field] = datetime.fromisoformat(data[field]) if data.get(field) is not None else None
+    return Assignment(**data)
