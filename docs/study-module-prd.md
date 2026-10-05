@@ -1,9 +1,9 @@
 # Chronos Study Module — Product Requirements Document
 
-> **2026-10-05 owner decision — deferred:** 自動逐段生成與傳送講義重點正式暫緩，
-> Phase 2 尚未驗收完成。停止繼續模型測試、講義上傳、生成重試及此功能部署，
-> 直到 YiLi 明確要求重啟。保留 PDF 下載、保存、選檔、既有筆記與測試。
-> 重啟必須分別通過服務可用性及內容忠實度驗證；不恢復合併摘要功能。
+> **2026-10-05 owner decision — resumed:** YiLi 明確要求完成整份 Study Module PRD，
+> 恢復開發，包括逐段 AI 重點生成。Phase 2 尚未驗收完成；重新開發不等於
+> 生成可用性或內容品質已通過，也不解除既有資料傳送與免費額度限制。
+> 保留 PDF 下載、保存、選檔、既有筆記與測試；不恢復合併摘要功能。
 > 詳見 [Phase 2 狀態與重啟條件](study-module-phase2-status.md)。
 
 ## 1. Product definition
@@ -64,7 +64,7 @@ YiLi 必須使用 Telegram 的 **Reply** 回覆該課程訊息，避免系統把
 在同一資料庫交易建立 session 與「填寫課程進度（日期）」代辦。
 使用 Reply 回覆有效進度時，在同一交易保存回覆、完成填寫代辦，
 並新增「複習課程（日期）：原始回覆」代辦；複習須由本人以 `/done` 完成。
-兩種代辦不自行指定截止日，不呼叫 Gemini，也不觸發暫緩中的摘要生成。
+兩種代辦不自行指定截止日、不呼叫 Gemini；摘要須走獨立的明確選檔流程。
 2026-10-05 補充：完整回覆為「我也不知道」「不確定上到哪裡」等明確未知進度時，
 調查仍視為已回答，停止催填並完成填寫代辦；改建「確認課程今日上課範圍（日期）」
 代辦，不建複習代辦。保留原始回答。不以包含「不懂／不確定」等關鍵字就判定未知，
@@ -190,12 +190,11 @@ MVP 處理：
 
 ### 5.3 Authentication
 
-- TronClass／CAS 帳號與密碼存入 Google Secret Manager。
-- 不得寫入 `.env.example`、Git、Firestore、log 或 Telegram。
-- Session cookie 視為 credential，不得輸出至 log。
-- Warm instance 可暫存在記憶體；失效或 cold start 時重新登入。
-- 登入失敗只進行有限次重試。
-- 連續失敗後停止自動登入並通知 YiLi，避免帳號鎖定。
+- 採 Phase 0 後已選定的 Chrome browser-session／local companion 路徑；不以不可靠的 CAS REST 密碼登入作為正式路徑。
+- 密碼與 session cookie 留在登入瀏覽器，不匯出至雲端、Git、Firestore、log 或 Telegram。
+- Session 失效時回報 `reauth_required`，由 YiLi 在瀏覽器重新登入；cold start 不得宣稱已登入。
+- 重新登入後重新觀察並驗證 session，不重用過期的就緒狀態。
+- 不反覆嘗試密碼登入；不可取得的附件明確標記 `deferred_attachment`，不得冒充已保存。
 
 CAS 或 TronClass 頁面結構改變時，系統必須明確回報 `tronclass_adapter_failed`，不得將抓取不到誤判為沒有新內容。
 
@@ -366,7 +365,7 @@ MVP 完成必須證明：
 2. 未回覆時只追加兩次提醒。
 3. Reply 能正確綁定課程與日期。
 4. 可從 TronClass 列出正確課程的 PDF。
-5. 可多選 PDF 並產生 combined summary。
+5. 可多選 PDF，按各檔案約三個實體頁碼逐段生成、保存並傳送重點；不產生合併摘要。
 6. 摘要可從 Firestore 重新取得及匯出 Markdown。
 7. 新作業只建立一次。
 8. 缺少 deadline 時會詢問，不會猜測。

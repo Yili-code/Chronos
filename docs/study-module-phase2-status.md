@@ -1,4 +1,41 @@
-# Phase 2 — AI generation deferred
+# Phase 2 — development resumed, acceptance incomplete
+
+## Full-PRD objective resumed — 2026-10-05
+
+The owner explicitly requested completion of the whole Study Module PRD. This
+supersedes the development pause below, but not source-grounding, free-tier,
+explicit file selection or secret-safety gates. Historical probe permissions
+with consumed request budgets are not automatically renewed. No new live AI
+success is established by this scope decision.
+
+Current requirement audit from source inspection:
+
+- Sections 2–3: seven-course scheduling, two reminders, reply correlation and
+  survey/review tasks are implemented; production evidence is in Phase 1 status.
+- Sections 3–4: browser-observed partial PDF catalog, explicit multi-selection,
+  PDF persistence, per-segment draft/review, canonical notes and export exist.
+  AI content-quality acceptance and live owner export acceptance remain open.
+- Sections 5–6: periodic upstream monitoring, announcement/video notifications,
+  assignment discovery, deadline confirmation, assignment reminder lifecycle and
+  `/prepare` are not wired into the production application.
+- Section 7: daily official-calendar synchronization, holiday suppression and
+  notifications, exam confirmation and exam-day messages are not implemented.
+- Section 8: no paid fallback is intended; persistent daily request/token budget
+  accounting and near-quota warnings still need implementation and verification.
+- Sections 9–10: delivery/update deduplication exists for current paths, but new
+  assignment/calendar paths and separate integration-health reporting need work.
+  Production health alone cannot establish full acceptance.
+
+Completion remains unproven for the full objective. These gaps are not a reduced
+scope or a declaration that scaffolding completes a feature.
+
+First Phase 3 implementation slice: `chronos.assignments` now defines stable
+course/source identity, explicit deadline provenance, missing-deadline state,
+four reminder windows, deadline revisions, and completion suppression. Eleven
+pure offline tests pass. A late discovery selects only the current reminder
+window instead of sending a burst of historical thresholds. This module is not
+yet connected to durable assignment storage, TronClass discovery, Telegram or
+`/prepare`; it is not a completed assignment feature or production evidence.
 
 ## Owner-approved deferral — 2026-10-05
 
