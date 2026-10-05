@@ -1,5 +1,16 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Assignment drafting provider foundation — 2026-10-05
+
+Added report/code output contracts, required review/verification sections,
+bounded editable content and a preparation provider using the same pre-request
+budget enforcement. Rendering explicitly states no submission, no execution,
+unverified references and attachments not supplied. Prompt constraints are not
+proof of factual correctness; live quality acceptance remains necessary.
+27 mocked preparation/provider tests passed. `/prepare` routing, durable job and
+draft persistence, delivery, attachment context and live acceptance are not yet
+connected. No real assignment was uploaded or generated during these tests.
+
 ## Read-only Study budget inspection — 2026-10-05
 
 `/study_budget` now reports today's persisted reservations and the limits used

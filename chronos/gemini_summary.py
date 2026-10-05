@@ -179,7 +179,7 @@ class GeminiSummary:
                 {'text': json.dumps({'untrusted_draft': draft}, ensure_ascii=False)}]}]}
         return await self._request(review_body, model)
 
-    async def _request(self, body, model):
+    async def _request(self, body, model, *, output_type=SummaryDraft):
         config = self.settings
         body = {**body, 'generationConfig': {**body.get('generationConfig', {}), 'maxOutputTokens': 8192}}
         if self.budget is None:
@@ -217,6 +217,6 @@ class GeminiSummary:
             if candidate.get("finishReason") != "STOP":
                 raise ValueError("incomplete output")
             text = "".join(part.get("text", "") for part in candidate["content"]["parts"] if not part.get("thought"))
-            return SummaryDraft.model_validate_json(text).model_dump()
+            return output_type.model_validate_json(text).model_dump()
         except (ValueError, KeyError, IndexError, TypeError):
             raise ProviderUncertain("invalid_output") from None
