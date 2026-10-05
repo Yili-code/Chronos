@@ -13,6 +13,7 @@ def test_announcement_handoff_is_origin_checked_and_durable(tmp_path):
     try:
         for origin, body, expected, count in [
             ('https://example.test', payload(), 403, None),
+            ('chrome-extension://' + extension, {**payload(), 'status':[]}, 400, None),
             ('chrome-extension://' + extension, {**payload(), 'cookies':'synthetic'}, 400, None),
             ('chrome-extension://' + extension, payload(), 202, 1),
             ('chrome-extension://' + extension, payload(), 202, 0),

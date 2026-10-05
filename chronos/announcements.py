@@ -32,7 +32,7 @@ def validate_announcements(payload, tracked_courses=TRACKED_COURSES):
     if payload['complete_course'] is not False:
         raise ValueError('complete bulletin coverage is not supported')
     status, rows = payload['status'], payload['announcements']
-    if status not in {'unknown', 'unsupported_page', 'observed_partial'} or not isinstance(rows, list):
+    if not isinstance(status, str) or status not in {'unknown', 'unsupported_page', 'observed_partial'} or not isinstance(rows, list):
         raise ValueError('invalid announcement status')
     if status != 'observed_partial':
         if rows:
@@ -53,6 +53,10 @@ def validate_announcements(payload, tracked_courses=TRACKED_COURSES):
             text = row[field]
             if not isinstance(text, str) or len(text) > limit or '\0' in text:
                 raise ValueError('invalid announcement text')
+            try:
+                text.encode('utf-8')
+            except UnicodeEncodeError:
+                raise ValueError('invalid announcement encoding') from None
             if re.search(r'https?://', text, re.I):
                 raise ValueError('unredacted announcement URL')
         if not row['title'].strip():

@@ -1,5 +1,16 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Malformed bulletin handoff rejection — 2026-10-05
+
+Announcement validation now explicitly rejects non-string status values before
+set membership, preventing malformed JSON from terminating a request with an
+uncaught TypeError. Invalid Unicode surrogates are rejected before hashing or
+storage. A batch containing a valid first item and invalid second item writes
+nothing. Twenty-two focused validator, loopback HTTP and pipeline tests passed.
+This correction is not yet deployed or loaded by the existing receiver process.
+Real owner handoff remains pending; no announcement database was found during
+the read-only local check.
+
 ## Announcement handoff pipeline verification — 2026-10-05
 
 Two additional synthetic integration tests exercise actual loopback HTTP,

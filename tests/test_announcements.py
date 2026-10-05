@@ -62,3 +62,21 @@ def test_versions_survive_restart_and_partial_absence(tmp_path):
     changed['announcements'][0]['content'] = 'Changed requirement'
     assert restarted.put(changed, now + timedelta(hours=2))['inserted'] == 1
     assert len(restarted.snapshots()) == 2
+
+
+@pytest.mark.parametrize('status',[[],{},None,True,1])
+def test_status_must_be_a_string(status):
+    data = payload()
+    data['status'] = status
+    with pytest.raises(ValueError):
+        validate_announcements(data)
+
+
+def test_invalid_second_record_does_not_partially_persist(tmp_path):
+    store = AnnouncementObservationStore(tmp_path/'atomic.sqlite3')
+    data = payload()
+    data['announcements'].append(deepcopy(data['announcements'][0]))
+    data['announcements'][1]['content'] = 'invalid \ud800 unicode'
+    with pytest.raises(ValueError):
+        store.put(data,datetime.now(TAIPEI))
+    assert store.snapshots() == []
