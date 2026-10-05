@@ -104,6 +104,18 @@ inconsistent evidence states. Six Node extractor tests and seventeen Python
 handoff tests pass. Non-PDF attachments, verified download state, cloud task
 ingestion and live installed-extension testing are still unfinished.
 
+Calendar runtime preparation — 2026-10-05: promoted the Phase 0 public-calendar
+parser into `chronos.academic_calendar`; the CLI now imports that same code.
+Both semester tables are read, invalid dated events fail visibly, and explicit
+closure takes precedence over exam mode. Contradictory normal/closed evidence
+requires confirmation. Six focused tests pass. A fresh public-source probe
+parsed 103 events (23 closures, 2 normal-instruction, 4 exam-period and 3
+confirmation-needed events), fingerprint
+`e61d487557d0866522aa5aa44316fdea9935242e6e45ad56aacb2887fa88e4ec`.
+Source: https://academic.ntou.edu.tw/p/405-1005-123146,c834.php?Lang=zh-tw .
+Daily snapshot persistence, synchronization, notifications and production
+suppression are still not connected. Do not call this calendar integration complete.
+
 ## Owner-approved deferral — 2026-10-05
 
 YiLi explicitly paused automatic lecture key-point generation and delivery.
