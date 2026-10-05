@@ -1,5 +1,16 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Announcement handoff pipeline verification — 2026-10-05
+
+Two additional synthetic integration tests exercise actual loopback HTTP,
+local observation persistence, canonical import, multipart Telegram mocks and
+identical replay on SQLite and fake Firestore. Reconstructed message parts
+preserve the complete synthetic body, and a second handoff produces no duplicate
+messages. These tests do not establish live extension or Telegram acceptance.
+The real loopback receiver was started and verified on `127.0.0.1:8765`;
+owner extension reload and explicit bulletin-save action have been requested.
+No real announcement database was present at the initial check.
+
 ## Study integration deployment — 2026-10-05
 
 Deployed exact source commit `d4845ef3ada0658806dc7de627a7c746e9ca7c1f`
