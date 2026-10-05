@@ -1,5 +1,14 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Full assignment detail lookup — 2026-10-05
+
+Added `/assignment fixed-ID [page]` and linked it from assignment notices.
+It displays complete stored instructions, deadlines, completion history and
+partial safe attachment metadata without AI, download or writes. Completed and
+cleared task history remains readable. Tests reconstruct full multi-page Unicode
+content and verify unchanged records on both backends. 56 focused query,
+notification and system tests passed; deployment and live acceptance remain open.
+
 ## Semantic assignment-change notices — 2026-10-05
 
 Source revisions now advance only when observed content or deadline changes,
