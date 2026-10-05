@@ -6,6 +6,7 @@ deadline. Adapter failures must be handled before calling these rules.
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta
 from hashlib import sha256
+import re
 
 from .course_tracking import TAIPEI
 
@@ -35,8 +36,21 @@ class Assignment:
     deadline_origin: str | None = None
     deadline_revision: int = 0
     completed_at: datetime | None = None
+    submission_status: str = 'unknown'
+    attachments: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self):
+        if self.submission_status not in {'unknown', 'submitted'}:
+            raise ValueError('unsupported submission evidence')
+        if not isinstance(self.attachments, tuple) or len(self.attachments) > 100:
+            raise ValueError('invalid attachment metadata')
+        seen = set()
+        for source, filename in self.attachments:
+            if (not re.fullmatch(r'[0-9]{1,20}', source) or source in seen or
+                    not 1 <= len(filename) <= 255 or not filename.lower().endswith('.pdf') or
+                    any(char in filename for char in '\r\n/\\\0')):
+                raise ValueError('invalid attachment metadata')
+            seen.add(source)
         if not all(value.strip() for value in (self.course_id, self.source_id, self.title)):
             raise ValueError("assignment identity and title are required")
         aware(self.discovered_at)
@@ -120,6 +134,7 @@ def deadline_question(assignment: Assignment) -> str:
 
 def to_record(assignment: Assignment) -> dict:
     data = asdict(assignment)
+    data['attachments'] = [list(item) for item in assignment.attachments]
     for field in ("discovered_at", "deadline", "completed_at"):
         data[field] = aware(data[field]).isoformat() if data[field] is not None else None
     return data
@@ -127,6 +142,7 @@ def to_record(assignment: Assignment) -> dict:
 
 def from_record(data: dict) -> Assignment:
     data = dict(data)
+    data['attachments'] = tuple(tuple(item) for item in data.get('attachments', ()))
     for field in ("discovered_at", "deadline", "completed_at"):
         data[field] = datetime.fromisoformat(data[field]) if data.get(field) is not None else None
     return Assignment(**data)

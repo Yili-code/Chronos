@@ -36,6 +36,9 @@ async def tick_assignments(db, telegram, chat_id, now):
                     else f"截止時間尚未提供。請用 /deadline {task_id} YYYY-MM-DD HH:MM 確認。")
         text = (f"{'新作業' if initial else '作業截止提醒'} #{task_id}：{item.title[:500]}\n"
                 f"課程：{item.course_id[:100]}\n{deadline}\n"
+                + ("TronClass 頁面顯示已繳交；是否結案仍由你確認。\n" if item.submission_status == 'submitted'
+                   else "TronClass 繳交狀態尚未確認。\n") +
+                f"已觀察到 PDF 附件：{len(item.attachments)} 個（僅部分清單，未代表已下載）。\n"
                 "完成後請在 /tasks 找到此作業，再用 /done 清單順位 結案。")
         try:
             response = await telegram.send_message(chat_id, text)

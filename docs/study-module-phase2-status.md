@@ -1,5 +1,14 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Assignment evidence retained in canonical records — 2026-10-05
+
+Assignment records now preserve observed submission status and safe PDF
+attachment identifiers/names. Legacy records default to unknown/empty metadata.
+Submitted evidence does not auto-complete the owner's task. Notices explicitly
+distinguish observed submission from owner completion and partial attachment
+metadata from downloaded files. Browser observations populate these fields;
+automatic upstream collection/cloud ingestion remains incomplete. Not deployed.
+
 ## Preparation recovery and inspection — 2026-10-05
 
 Added read-only `/draft assignment-ID [page]` for the latest saved draft,

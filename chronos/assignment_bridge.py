@@ -95,7 +95,9 @@ def validate_assignment_observation(payload: dict, *, tracked_courses: set[str],
             raise ValueError("invalid deadline format")
         deadline = datetime.fromisoformat(deadline)
     item = Assignment(row["course_id"], row["source_id"], row["title"], row["description"],
-                      observed_at, deadline, "source" if deadline else None)
+                      observed_at, deadline, "source" if deadline else None,
+                      submission_status=row['submission_status'],
+                      attachments=tuple((item['source_id'], item['filename']) for item in attachments))
     return {"status": "observed", "assignment": item,
             "submission_status": row["submission_status"], "attachments_status": row["attachments_status"],
             "attachments": [dict(item) for item in attachments]}
