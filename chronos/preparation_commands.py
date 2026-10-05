@@ -6,6 +6,18 @@ import re
 from .assignments import to_record
 
 
+def preparation_key(source):
+    """Identify actual text input, not observation or reminder bookkeeping.
+
+    Attachments are not read by prepare-v1. Include source identity to keep
+    identical instructions from different assignments separate.
+    """
+    content = {field: source[field] for field in
+               ('course_id', 'source_id', 'title', 'description')}
+    return sha256(json.dumps({'source': content, 'version': 'prepare-v1'},
+                             sort_keys=True).encode()).hexdigest()
+
+
 def draft_query(db, command):
     from .assignment_preparation import PreparationDraft, render_preparation
     match = re.fullmatch(r'draft\s+([1-9][0-9]{0,18})(?:\s+([1-9][0-9]{0,5}))?', command)
@@ -41,7 +53,17 @@ def prepare_action(db, command, now):
         if not item.description.strip():
             return '缺少作業說明，請先取得要求；不會憑標題生成草稿。'
         source = to_record(item)
-        key = sha256(json.dumps({'source': source, 'version': 'prepare-v1'}, sort_keys=True).encode()).hexdigest()
+        key = preparation_key(source)
+        # Reuse jobs written before semantic keys, including uncertain jobs:
+        # a metadata refresh must not authorize another provider request.
+        previous_jobs = [state for _, state in db.list_preparations()
+                         if state.get('version') == 'prepare-v1'
+                         and state.get('task_id') == task_id
+                         and preparation_key(state['assignment']) == key]
+        if previous_jobs:
+            state = max(previous_jobs, key=lambda job: job['requested_at'])
+            return (f"作業 #{task_id} 準備狀態：{state['status']}。"
+                    '相同文字要求已有準備紀錄，不會重複生成；已保存草稿可用 /draft 查閱。')
         state = db.mutate_preparation(key, lambda previous: previous or {
             'status': 'queued', 'assignment': source, 'task_id': task_id,
             'requested_at': now.isoformat(), 'version': 'prepare-v1', 'draft': None,

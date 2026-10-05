@@ -1,5 +1,15 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Preparation input identity — 2026-10-05
+
+Preparation deduplication now keys the actual text input (course/source identity,
+title and description), not observation timestamps, deadline bookkeeping or
+unread attachment metadata. Existing prepare-v1 jobs are reused, including
+uncertain legacy jobs, so refreshing source evidence cannot silently authorize
+another AI request. Changed instructions remain a distinct explicit request.
+Nine focused command/worker tests passed across SQLite and fake Firestore.
+No live AI requests were made; this change is not yet deployed.
+
 ## Webhook transaction boundary correction — 2026-10-05
 
 Firestore repository operations now reuse an active transaction instead of
