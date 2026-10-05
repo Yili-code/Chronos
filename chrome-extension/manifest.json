@@ -19,7 +19,7 @@
         "https://tronclass.ntou.edu.tw/*",
         "https://tccas.ntou.edu.tw/*"
       ],
-      "js": ["observation.js", "materials.js", "pdf-download.js", "content.js"],
+      "js": ["observation.js", "materials.js", "assignments.js", "pdf-download.js", "content.js"],
       "run_at": "document_idle"
     }
   ]

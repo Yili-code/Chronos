@@ -64,6 +64,22 @@ revision, while an unchanged date does not. Personal task titles do not overwrit
 upstream assignment metadata. Forty-three focused tests pass. This supersedes
 the generic-rescheduling gap above; production and browser ingestion remain open.
 
+Live browser evidence — 2026-10-05: the connected Chrome session was authenticated.
+The Operating Systems homework list explicitly reported no assignments. A second
+tracked course exposed a homework detail with a numeric activity path, a dedicated
+title element, teacher-description container, explicit activity end timestamp,
+an attachment reference and a submitted-status banner. No submission, edit,
+history inspection or attachment download was performed. This is evidence for
+the current detail-page DOM, not complete enumeration or future parser stability.
+
+The extension now has a read-only `chronos.observe_assignment` extraction handler
+based on those observed DOM selectors. It returns only allowlisted text/identity,
+explicit deadline, conservative submission status and `attachments_status:
+not_observed`. Five synthetic Node tests pass, covering missing/invalid dates,
+unsupported pages and unknown submission state. It is not yet handed off to the
+local/production assignment store; the installed extension has not been reloaded
+or live-tested with this new code. Preserve this acceptance boundary.
+
 ## Owner-approved deferral — 2026-10-05
 
 YiLi explicitly paused automatic lecture key-point generation and delivery.
