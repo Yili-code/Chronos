@@ -217,6 +217,10 @@ CAS 或 TronClass 頁面結構改變時，系統必須明確回報 `tronclass_ad
 - Telegram 詢問 YiLi
 - 在確認前標示 `deadline_pending`
 
+明確截止時間可使用 `/deadline 作業固定ID YYYY-MM-DD HH:MM` 確認，時區為
+Asia/Taipei；固定 ID 由作業通知提供，和 `/tasks` 清單順位不同。無效日期或缺少
+時間時不更新，已完成的作業不得重設截止時間。此指令不經 AI 日期推測。
+
 ### 6.2 Reminder schedule
 
 有 deadline 的作業在以下時間提醒：

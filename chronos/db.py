@@ -12,7 +12,7 @@ from .course_tracking import ProgressSession, accept_reply, mark_missed_at_day_e
 from .course_tracking import progress_followup
 from .course_tracking_store import session_from_firestore, session_to_firestore
 from .note_record import NoteRecord
-from .assignments import Assignment, to_record, from_record
+from .assignments import Assignment, to_record, from_record, set_deadline
 
 
 SCHEMA = """
@@ -235,6 +235,10 @@ class Database:
             item = replace(item, completed_at=datetime.fromisoformat(task["completed_at"]))
         return {"task_id": row["task_id"], "assignment": item, "task_exists": task is not None}
 
+    def list_assignment_keys(self) -> list[str]:
+        with self.connect() as connection:
+            return [row[0] for row in connection.execute("SELECT source_key FROM assignments ORDER BY source_key")]
+
     def complete_task(self, task_id: int, completed_at: datetime) -> bool:
         with self.connect() as connection:
             cursor = connection.execute(
@@ -248,6 +252,18 @@ class Database:
                     data["completed_at"] = completed_at.isoformat()
                     connection.execute("UPDATE assignments SET record_json=? WHERE task_id=?", (json.dumps(data), task_id))
         return cursor.rowcount == 1
+
+    def confirm_assignment_deadline(self, task_id: int, deadline: datetime) -> bool:
+        scope = self.connect() if self._transaction.get() is not None else self.transaction()
+        with scope as connection:
+            row = connection.execute("SELECT record_json FROM assignments WHERE task_id=?", (task_id,)).fetchone()
+            task = connection.execute("SELECT status FROM tasks WHERE id=?", (task_id,)).fetchone()
+            if row is None or task is None or task["status"] != "open":
+                return False
+            updated = set_deadline(from_record(json.loads(row[0])), deadline, origin="owner")
+            connection.execute("UPDATE assignments SET record_json=? WHERE task_id=?", (json.dumps(to_record(updated)), task_id))
+            connection.execute("UPDATE tasks SET due_at=? WHERE id=?", (updated.deadline.isoformat(), task_id))
+            return True
 
     def postpone_task(self, task_id: int, due_at: datetime) -> bool:
         with self.connect() as connection:

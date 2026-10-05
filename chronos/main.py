@@ -40,6 +40,7 @@ HELP_TEXT = (
     "/help — Show this guide\n"
     "/tasks — List open tasks\n"
     "/done 1 — Complete task 1\n"
+    "/deadline assignment-ID YYYY-MM-DD HH:MM — Confirm assignment deadline (Taipei)\n"
     "/reschedule 1 tomorrow at 10:00 — Change task 1's due time\n"
     "/edit 1 move it to Friday and rename it — Edit task 1\n"
     "/clear — Delete all tasks after confirmation\n"
@@ -105,8 +106,10 @@ async def run_study_tick() -> dict:
         raise HTTPException(status_code=503, detail="Study delivery is not configured")
     now = datetime.now(settings.tz)
     result = await tick_study(db, telegram, settings.telegram_chat_id, now)
+    from .assignment_scheduler import tick_assignments
+    assignment_result = await tick_assignments(db, telegram, settings.telegram_chat_id, now)
     notices = await notify_study_failures(db, telegram, settings.telegram_chat_id, now)
-    return {**result, **notices}
+    return {**result, **assignment_result, **notices}
 
 
 @app.post("/internal/study")
@@ -309,6 +312,9 @@ async def prepare_message(text: str) -> Callable[[], str]:
     """Resolve external input first; the returned action performs no async work."""
     normalized = text.strip()
     command = normalized[1:].strip() if normalized.startswith("/") else None
+    if command is not None and (command == "deadline" or command.startswith("deadline ")):
+        from .assignment_commands import deadline_action
+        return deadline_action(db, command)
     if command == "export" or (command is not None and command.startswith("export ")):
         return lambda: "找不到可匯出的筆記，或編號格式不正確。用法：/export 完整編號；請先用 /notes 取得編號。"
     if command is not None and (command == "notes" or command.startswith("notes ") or command == "note" or command.startswith("note ")):

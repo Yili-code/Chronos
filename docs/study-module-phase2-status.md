@@ -46,6 +46,17 @@ passing tests. This supersedes only the missing-storage statement above. Source
 updates, owner deadline confirmation, durable reminders, discovery integration
 and `/prepare` remain unfinished. No production assignment data was written.
 
+Next integration slice adds `/deadline` with explicit Taipei date/time input,
+atomic assignment/task deadline updates inside the webhook receipt transaction,
+and assignment discovery/deadline notifications through the durable delivery
+ledger. The existing protected study tick calls the assignment scheduler.
+Thirty-two focused offline tests pass, including unknown-delivery suppression,
+missing-deadline prompting, duplicate receipts and completion suppression.
+This has not yet been deployed or tested with live assignment discovery. Browser
+ingestion, source updates, `/prepare`, and production acceptance remain open.
+Generic task rescheduling still requires review so it cannot diverge from the
+assignment deadline; the explicit `/deadline` path is the integrated path.
+
 ## Owner-approved deferral — 2026-10-05
 
 YiLi explicitly paused automatic lecture key-point generation and delivery.

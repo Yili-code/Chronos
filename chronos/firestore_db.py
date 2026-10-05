@@ -13,7 +13,7 @@ from .course_tracking import ProgressSession, accept_reply, mark_missed_at_day_e
 from .course_tracking import progress_followup
 from .course_tracking_store import session_from_firestore, session_to_firestore
 from .note_record import NoteRecord
-from .assignments import Assignment, to_record, from_record
+from .assignments import Assignment, to_record, from_record, set_deadline
 
 
 class FirestoreDatabase:
@@ -187,6 +187,9 @@ class FirestoreDatabase:
             return {"task_id": data["task_id"], "assignment": item, "task_exists": task.exists}
         return self._run_transaction(read)
 
+    def list_assignment_keys(self) -> list[str]:
+        return sorted(snapshot.id for snapshot in self.assignments.stream())
+
     def _update_open_task(self, task_id: int, values: dict) -> bool:
         def update(transaction):
             reference = self.tasks.document(str(task_id))
@@ -208,6 +211,20 @@ class FirestoreDatabase:
 
     def complete_task(self, task_id: int, completed_at: datetime) -> bool:
         return self._update_open_task(task_id, {"status": "done", "completed_at": completed_at.isoformat()})
+
+    def confirm_assignment_deadline(self, task_id: int, deadline: datetime) -> bool:
+        def confirm(transaction):
+            linked = list(self.assignments.where(filter=FieldFilter("task_id", "==", task_id)).stream(transaction=transaction))
+            ref = self.tasks.document(str(task_id))
+            task = ref.get(transaction=transaction)
+            if len(linked) != 1 or not task.exists or task.get("status") != "open":
+                return False
+            updated = set_deadline(from_record(linked[0].to_dict()["record"]), deadline, origin="owner")
+            transaction.update(linked[0].reference, {"record": to_record(updated)})
+            transaction.update(ref, {"due_at": updated.deadline.isoformat()})
+            return True
+        active = self._transaction.get()
+        return confirm(active) if active is not None else self._run_transaction(confirm)
 
     def postpone_task(self, task_id: int, due_at: datetime) -> bool:
         return self._update_open_task(task_id, {"due_at": due_at.isoformat()})

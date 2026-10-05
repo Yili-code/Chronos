@@ -7,6 +7,7 @@ from chronos.assignments import Assignment, due_reminder
 from chronos.course_tracking import TAIPEI
 from chronos.db import Database
 from test_firestore import database as firestore_fake
+from chronos.assignment_commands import deadline_action
 
 
 @pytest.fixture(params=["sqlite", "firestore"])
@@ -58,3 +59,26 @@ def test_missing_deadline_stays_pending_after_storage(db):
 
 def test_unknown_identity_returns_none(db):
     assert db.get_assignment("missing") is None
+
+
+def test_deadline_command_is_atomic_and_receipt_deduplicated(db):
+    item = replace(sample(), deadline=None, deadline_origin=None)
+    task_id = db.create_assignment(item)["task_id"]
+    action = deadline_action(db, f"deadline {task_id} 2026-10-20 23:59")
+    first = db.process_update(100, action)
+    assert db.process_update(100, action) == first
+    saved = db.get_assignment(item.key)["assignment"]
+    assert saved.deadline_origin == "owner"
+    assert saved.deadline_revision == 1
+    assert saved.deadline.isoformat() == db.list_open_tasks()[0]["due_at"]
+    assert saved.deadline.hour == 23 and saved.deadline.minute == 59
+    db.complete_task(task_id, item.discovered_at)
+    assert "未變更" in deadline_action(db, f"deadline {task_id} 2026-10-21 12:00")()
+
+
+@pytest.mark.parametrize("command", ["deadline 1 tomorrow", "deadline 1 2026-02-30 12:00", "deadline 1 2026-10-20", "deadline 1 2026-10-20 24:00"])
+def test_invalid_deadline_does_not_mutate(db, command):
+    item = sample()
+    db.create_assignment(item)
+    assert "用法" in deadline_action(db, command)()
+    assert db.get_assignment(item.key)["assignment"] == item
