@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from chronos.course_tracking import COURSE_SCHEDULE, TAIPEI, new_session
+from chronos.course_tracking import progress_is_unknown
 from chronos.db import Database
 from chronos.study_scheduler import tick_study
 from test_firestore import database as fake_firestore
@@ -70,6 +71,31 @@ def test_old_sessions_do_not_backfill_tasks(db):
     db.create_course_session(session)
     db.process_update(5, lambda: db.record_course_reply(501, 502, "Chapter 1"))
     assert not db.list_open_tasks()
+
+
+@pytest.mark.parametrize("text", ["我也不知道", "不知道。", "不確定上到哪裡", "我忘了今天上到哪裡", "I don't know.", "Not sure"])
+def test_unknown_scope_is_recognized(text):
+    assert progress_is_unknown(text)
+
+
+@pytest.mark.parametrize("text", ["第三章有些地方不懂", "第 20 頁，不確定考不考", "不知道第三章的證明怎麼做", "Chapter 3, not sure I understand it"])
+def test_uncertainty_about_understanding_keeps_known_scope(text):
+    assert not progress_is_unknown(text)
+
+
+def test_unknown_reply_creates_confirmation_task_once(db):
+    session = new_session(COURSE_SCHEDULE[0], date(2026, 10, 5), 501)
+    db.create_course_session(session, create_tasks=True)
+    action = lambda: db.record_course_reply(501, 502, "我也不知道")
+    receipt = db.process_update(30, action)
+    db.process_update(31, action)
+    task, = db.list_open_tasks()
+    assert task["title"] == "確認資訊安全實務與管理今日上課範圍（2026-10-05）"
+    assert "新增確認範圍代辦" in receipt["reply"]
+    assert "複習後" not in receipt["reply"]
+    saved = db.get_course_session(session.session_id)
+    assert saved.status.value == "answered"
+    assert saved.reported_progress == "我也不知道"
 
 
 def test_sqlite_reply_failure_rolls_back_tasks_session_and_receipt(tmp_path, monkeypatch):

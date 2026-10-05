@@ -10,6 +10,7 @@ from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
 from .course_tracking import ProgressSession, accept_reply, mark_missed_at_day_end
+from .course_tracking import progress_followup
 from .course_tracking_store import session_from_firestore, session_to_firestore
 from .note_record import NoteRecord
 
@@ -252,21 +253,22 @@ class FirestoreDatabase:
             if answered is None:
                 return "這堂課已記錄或已結束，未變更進度。"
             review = None
+            title, kind, completion = progress_followup(answered)
             if session.survey_task_id is not None:
                 # Read the linked task before create_task writes its counter.
                 task_ref = self.tasks.document(str(session.survey_task_id))
                 survey = task_ref.get(transaction=transaction)
                 now = datetime.now().astimezone()
                 review = self.create_task(
-                    f"複習{session.course_name}（{session.class_date}）：{answered.reported_progress}",
+                    title,
                     None, session.course_name, now)
                 if survey.exists and survey.get("status") == "open":
                     transaction.update(task_ref, {"status": "done", "completed_at": now.isoformat()})
             transaction.update(snapshot.reference, session_to_firestore(answered))
             if review is not None:
                 return (f"已記錄{session.course_name}的進度，填寫進度代辦已完成。\n"
-                        f"新增複習代辦 #{review['id']}。\n"
-                        f"複習後輸入 /done {review['id']} 完成；/tasks 查看代辦。")
+                        f"新增{kind}代辦 #{review['id']}。\n"
+                        f"{completion}輸入 /done {review['id']} 完成；/tasks 查看代辦。")
             return f"已記錄{session.course_name}（{session.class_date}）的進度。"
 
         active = self._transaction.get()

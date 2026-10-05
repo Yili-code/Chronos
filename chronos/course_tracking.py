@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
 from enum import Enum
+import re
+import unicodedata
 from zoneinfo import ZoneInfo
 
 TAIPEI = ZoneInfo("Asia/Taipei")
@@ -21,6 +23,26 @@ class ProgressStatus(str, Enum):
     REMINDED_TWICE = "reminded_twice"
     ANSWERED = "answered"
     MISSED = "missed"
+
+
+def progress_is_unknown(text: str) -> bool:
+    """Recognize only whole uncertainty replies, never keywords inside a scope."""
+    normalized = unicodedata.normalize("NFKC", text).casefold()
+    normalized = re.sub(r"[\s，。！？,.!?、'’]", "", normalized)
+    if normalized in {"idontknow", "imnotsure", "notsure", "unknown", "不知道", "不清楚", "不確定", "忘了"}:
+        return True
+    return re.fullmatch(
+        r"(?:我)?(?:也)?(?:不知道|不清楚|不確定|忘記了|忘了)"
+        r"(?:今天)?(?:上到哪裡|上到哪|上了什麼|上課範圍|進度)?(?:了)?", normalized
+    ) is not None
+
+
+def progress_followup(session: "ProgressSession") -> tuple[str, str, str]:
+    if progress_is_unknown(session.reported_progress or ""):
+        return (f"確認{session.course_name}今日上課範圍（{session.class_date}）",
+                "確認範圍", "確認範圍後")
+    return (f"複習{session.course_name}（{session.class_date}）：{session.reported_progress}",
+            "複習", "複習後")
 
 
 @dataclass(frozen=True)
@@ -65,7 +87,8 @@ def course_for_weekday(weekday: int) -> tuple[CourseSlot, ...]:
 def prompt_text(course_name: str) -> str:
     return (f"{course_name}剛下課。請回覆這則訊息，告訴我今天上到哪裡。\n"
             "你可以使用章節、頁碼、講義名稱或自然語言描述。\n"
-            "回覆後會完成填寫進度代辦，並新增複習代辦；複習完成後再自行勾選。")
+            "回覆後會完成填寫進度代辦，並新增複習代辦；複習完成後再自行勾選。\n"
+            "若不知道進度，可直接回覆「不知道」，改建立確認上課範圍代辦。")
 
 
 def new_session(slot: CourseSlot, class_date: date, prompt_message_id: int) -> ProgressSession:

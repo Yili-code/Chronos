@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Callable, Iterator
 
 from .course_tracking import ProgressSession, accept_reply, mark_missed_at_day_end
+from .course_tracking import progress_followup
 from .course_tracking_store import session_from_firestore, session_to_firestore
 from .note_record import NoteRecord
 
@@ -293,17 +294,18 @@ class Database:
             if answered is None:
                 return "這堂課已記錄或已結束，未變更進度。"
             review = None
+            title, kind, completion = progress_followup(answered)
             if session.survey_task_id is not None:
                 now = datetime.now().astimezone()
                 self.complete_task(session.survey_task_id, now)
                 review = self.create_task(
-                    f"複習{session.course_name}（{session.class_date}）：{answered.reported_progress}",
+                    title,
                     None, session.course_name, now)
             self.save_course_session(answered)
             if review is not None:
                 return (f"已記錄{session.course_name}的進度，填寫進度代辦已完成。\n"
-                        f"新增複習代辦 #{review['id']}。\n"
-                        f"複習後輸入 /done {review['id']} 完成；/tasks 查看代辦。")
+                        f"新增{kind}代辦 #{review['id']}。\n"
+                        f"{completion}輸入 /done {review['id']} 完成；/tasks 查看代辦。")
             return f"已記錄{session.course_name}（{session.class_date}）的進度。"
 
     def get_course_session(self, session_id: str) -> ProgressSession | None:
