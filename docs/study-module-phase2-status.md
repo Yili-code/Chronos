@@ -1,5 +1,23 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Calendar and exam release evidence — 2026-10-05
+
+- Source commit: `cc954d14ed4511527132e3ab5e52c849397165b3`.
+- Full regression: 468 passed, 525 dependency warnings, 37.14 seconds.
+- Cloud Run revision: `chronos-00022-lrw`, serving 100% traffic; public health OK.
+- Existing minute scheduler remains enabled in Asia/Taipei; secrets and service
+  environment were preserved by source-only deployment.
+- Read-only Firestore verification: calendar snapshot and sync records HTTP 200;
+  fetched at `2026-10-05T16:01:00.809548+08:00`, 103 events, sync `updated` on attempt 1.
+- Snapshot SHA-256: `e61d487557d0866522aa5aa44316fdea9935242e6e45ad56aacb2887fa88e4ec`.
+- Reproduction: `python -m scripts.verify_study_calendar_release` prints only
+  allowlisted release/calendar metadata, never credentials or response bodies.
+
+This proves deployed calendar refresh and persistence, not live delivery of
+future holiday/exam messages. Owner exam-command acceptance, ambiguous-day
+confirmation, upstream monitoring, preparation and AI acceptance remain open.
+Earlier undeployed notes below are historical implementation checkpoints.
+
 ## Immutable exam delivery batches — 2026-10-05
 
 Exam confirmation and daily batches are now persisted with first-writer-wins
