@@ -1,5 +1,24 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Authorized background bulletin collector — 2026-10-05
+
+Owner explicitly approved background monitoring. Manifest now declares alarms
+and a service worker, with popup start/stop controls; installation alone does
+not create alarms. Enabled schedules use Taipei 08/12/18/22, checking local
+receiver availability before opening inactive course bulletin tabs. Only owned
+inactive tabs still at the expected bulletin or CAS page are closed. A cleanup
+alarm handles interrupted bulletin tabs. No download/video/submission API is
+called. All 47 extension tests passed, including offline receiver, CAS redirect,
+active-tab preservation and timezone cases. Installed-extension validation is
+still required after reload and explicit start.
+
+This collector currently saves partial bulletin observations only. It is not
+the complete PRD collector: cloud queue/reply triggers, other content types,
+durable collection outcomes and failure notifications are not yet connected.
+Chrome can delay alarms or clear them on restart; enablement currently derives
+from alarm existence and does not promise catch-up or automatic reconstruction.
+No real background run was performed during implementation.
+
 ## Fixed-slot queue integration — 2026-10-05
 
 Enabled Study ticks now ensure the latest due fixed-slot requests for all seven
