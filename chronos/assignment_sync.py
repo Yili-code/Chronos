@@ -9,9 +9,9 @@ def sync_assignment_observations(db, store, now, *, limit=20):
     now = aware(now)
     if not 1 <= limit <= 100:
         raise ValueError('bounded import batch required')
-    counts = {'created': 0, 'existing': 0, 'invalid': 0, 'stale': 0}
+    counts = {'created': 0, 'updated': 0, 'existing': 0, 'invalid': 0, 'stale': 0}
     for snapshot in store.snapshots():
-        if counts['created'] >= limit:
+        if counts['created'] + counts['updated'] >= limit:
             break
         try:
             observed = aware(datetime.fromisoformat(snapshot['observed_at']))
@@ -30,9 +30,7 @@ def sync_assignment_observations(db, store, now, *, limit=20):
             continue
         previous = db.get_assignment(item.key)
         if previous is not None:
-            # Preserve owner edits and cleared/completed task history. Source
-            # revisions need a separate conflict-aware update path.
-            counts['existing'] += 1
+            counts['updated' if db.refresh_assignment(item) else 'existing'] += 1
             continue
         db.create_assignment(item)
         counts['created'] += 1

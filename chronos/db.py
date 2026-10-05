@@ -246,6 +246,25 @@ class Database:
         with self.connect() as connection:
             return [row[0] for row in connection.execute("SELECT source_key FROM assignments ORDER BY source_key")]
 
+    def refresh_assignment(self, incoming):
+        from .assignments import merge_source_observation
+        with self.transaction() as connection:
+            row = connection.execute("SELECT * FROM assignments WHERE source_key=?", (incoming.key,)).fetchone()
+            if not row:
+                return False
+            task = connection.execute("SELECT * FROM tasks WHERE id=?", (row['task_id'],)).fetchone()
+            if not task or task['status'] != 'open':
+                return False
+            previous = from_record(json.loads(row['record_json']))
+            merged = merge_source_observation(previous, incoming)
+            if merged == previous:
+                return False
+            title = merged.title if task['title'] == previous.title else task['title']
+            connection.execute("UPDATE assignments SET record_json=? WHERE source_key=?", (json.dumps(to_record(merged)), incoming.key))
+            connection.execute("UPDATE tasks SET title=?, due_at=? WHERE id=?", (title,
+                merged.deadline.isoformat() if merged.deadline else None, row['task_id']))
+            return True
+
     def get_calendar_snapshot(self):
         with self.connect() as connection:
             row = connection.execute("SELECT record_json FROM calendar_snapshot WHERE id=1").fetchone()

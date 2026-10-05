@@ -195,6 +195,28 @@ class FirestoreDatabase:
     def list_assignment_keys(self) -> list[str]:
         return sorted(snapshot.id for snapshot in self.assignments.stream())
 
+    def refresh_assignment(self, incoming):
+        from .assignments import merge_source_observation
+        def refresh(transaction):
+            ref = self.assignments.document(incoming.key)
+            snapshot = ref.get(transaction=transaction)
+            if not snapshot.exists:
+                return False
+            data = snapshot.to_dict()
+            task_ref = self.tasks.document(str(data['task_id']))
+            task = task_ref.get(transaction=transaction)
+            if not task.exists or task.get('status') != 'open':
+                return False
+            previous = from_record(data['record'])
+            merged = merge_source_observation(previous, incoming)
+            if merged == previous:
+                return False
+            title = merged.title if task.get('title') == previous.title else task.get('title')
+            transaction.set(ref, {**data, 'record': to_record(merged)})
+            transaction.update(task_ref, {'title': title, 'due_at': merged.deadline.isoformat() if merged.deadline else None})
+            return True
+        return self._run_transaction(refresh)
+
     def get_calendar_snapshot(self):
         snapshot = self.meta.document("academic_calendar").get()
         return snapshot.to_dict() if snapshot.exists else None

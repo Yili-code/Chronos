@@ -1,5 +1,15 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Atomic assignment source refresh — 2026-10-05
+
+The importer now applies newer source observations through atomic SQLite and
+Firestore updates. Source deadline changes update task due times and reminder
+revision together; explicit owner dates/clears and custom task titles survive.
+Missing, cleared or completed tasks are not resurrected or reopened. Tests cover
+new discovery, refresh, owner conflicts and completion across both backends.
+11 focused synchronization/rule/reminder tests passed. Live synchronization and
+source-change-specific notifications remain unverified/incomplete.
+
 ## Source-update conflict rules — 2026-10-05
 
 Added source merge rules: newer evidence can refresh source content, but explicit
