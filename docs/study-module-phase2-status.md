@@ -1,5 +1,26 @@
 # Phase 2 — active implementation
 
+## Stage-specific probe prepared; external execution denied by tool review
+
+The comparison adapter now records safe per-request stage (`draft` or `review`),
+elapsed time and allowlisted outcome/status only. It never includes request
+bodies, source text, provider error bodies, headers or credentials in telemetry.
+Six focused mock-only tests passed (55 warnings, 0.30 seconds), including draft
+versus review failure identification and no private content in observations.
+
+Follow-up full local regression: **333 passed**, 525 warnings, 57.88 seconds.
+This used mocked external services, not live lecture uploads. The new probe's
+attempt directory remained absent; external execution is still awaiting the
+specific authorization requested below.
+
+The proposed `flash36stages` run was rejected before process creation by the
+tool approval reviewer, citing insufficiently explicit authorization for the
+exact document payload/destination. The attempt directory does not exist; no
+new live request or result is claimed. Do not work around this denial. The user
+was asked to explicitly authorize Lec0 physical pages 10–12 plus extracted text
+to Google's Gemini 3.6 Flash free API, at most two requests, no retries, under
+the previously accepted free-tier data policy. No production settings changed.
+
 ## Owner retains automatic delivery; alternative-model comparison — 2026-10-04
 
 YiLi selected option 2: retain automatic segmented delivery and assess other

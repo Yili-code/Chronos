@@ -21,11 +21,42 @@ from chronos.summary_pipeline import PdfInput, GenerationUnavailable
 
 MODELS = ('gemini-2.5-flash', 'gemini-3.7-flash')
 COHORTS = {'initial': MODELS, 'flash36': ('gemini-3.6-flash',),
-           'flash36text': ('gemini-3.6-flash',), 'flash36json': ('gemini-3.6-flash',)}
+           'flash36text': ('gemini-3.6-flash',), 'flash36json': ('gemini-3.6-flash',),
+           'flash36stages': ('gemini-3.6-flash',)}
 EXPECTED_HASH = 'fd31bde477c7c1e3b00e56139f1e37019b542268e7bb51fa9e4e1b888f1d3a14'
 
 
-class TextOnlyControl(GeminiSummary):
+class ObservedSummary(GeminiSummary):
+    """Record only request stages, safe outcomes and elapsed time, never content."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.request_events = []
+
+    async def _request(self, body, model):
+        event = {'stage': 'draft' if not self.request_events else 'review', 'status': 'started'}
+        self.request_events.append(event)
+        started = time.monotonic()
+        try:
+            result = await super()._request(body, model)
+            event['status'] = 'schema_validated'
+            return result
+        except ProviderRejected as error:
+            event.update(status='rejected', http_status=error.status_code, category=error.category)
+            raise
+        except ProviderUncertain as error:
+            event.update(status='uncertain', http_status=error.status_code, category=error.category)
+            raise
+        except GenerationUnavailable:
+            event.update(status='unavailable', http_status=503)
+            raise
+        except Exception:
+            event['status'] = 'unknown'
+            raise
+        finally:
+            event['elapsed_seconds'] = round(time.monotonic() - started, 2)
+
+
+class TextOnlyControl(ObservedSummary):
     """Diagnostic only: remove binary PDF, preserving prompt/schema/page text."""
     async def _request(self, body, model):
         body = copy.deepcopy(body)
@@ -73,10 +104,12 @@ async def run(cohort='initial'):
         reports.append(report)
         (directory / 'results.json').write_text(json.dumps(reports, indent=2), encoding='utf-8')
         stage = 'generation_and_review'
+        generator = None
         try:
             config = settings.model_copy(update={'gemini_model': model, 'ai_timeout': 45})
-            adapter = JsonModeControl if cohort == 'flash36json' else TextOnlyControl if cohort == 'flash36text' else GeminiSummary
-            raw = await adapter(config, free_tier_confirmed=True).generate(
+            adapter = JsonModeControl if cohort == 'flash36json' else TextOnlyControl if cohort == 'flash36text' else ObservedSummary
+            generator = adapter(config, free_tier_confirmed=True)
+            raw = await generator.generate(
                 progress='Explicit local workflow test only; actual class progress unknown.',
                 pdfs={'9714342': pdf}, model=model, prompt_version=PROMPT_VERSION)
             stage = 'schema'
@@ -110,6 +143,7 @@ async def run(cohort='initial'):
         except Exception:
             report.update(status='validation_or_save_failed', stage=stage)
         report['elapsed_seconds'] = round(time.monotonic() - started, 2)
+        report['requests'] = generator.request_events if generator is not None else []
         (directory / 'results.json').write_text(json.dumps(reports, indent=2), encoding='utf-8')
         print(json.dumps(report), flush=True)
     return {'status': 'comparison_finished', 'production_changed': False}
