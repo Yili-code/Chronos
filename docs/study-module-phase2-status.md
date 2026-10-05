@@ -1,5 +1,21 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Announcement content-version persistence — 2026-10-05
+
+The bulletin extractor now reads bounded rendered content using the previously
+verified binding, omits HTTP(S) URLs and never inspects link destinations or
+clicks read-tracking handlers. The Python boundary validates tracked courses,
+timestamps, size limits and explicit missing source identity. SQLite stores
+append-only content-version fingerprints: identical observations deduplicate
+across restart, changed text is retained separately, and partial absence never
+deletes history. A fingerprint is not an upstream ID: identical separate
+bulletins can collapse, and edited bulletins cannot reliably be linked to their
+previous version. Link-only changes are also invisible after redaction.
+
+Nine Python and four Node tests passed using synthetic data. The local HTTP
+handoff, canonical cloud import and Telegram announcement delivery are not yet
+wired. No actual bulletin content was persisted or sent during this change.
+
 ## Live announcement DOM evidence — 2026-10-05
 
 Read-only Chrome inspection of an authenticated course bulletin page found three

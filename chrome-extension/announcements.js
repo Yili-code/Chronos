@@ -24,13 +24,19 @@
     for (const row of rows) {
       const title = one(row, '[ng-bind="bulletin.title"]');
       const published = timestamp(one(row, '[ng-bind="bulletin.created_at | datetime"]'));
+      const content = one(row, '[ng-bind-html="bulletin.content|sanitizeHtml"]');
       if (!title || title.length > 500 || /[\u0000-\u001f]/.test(title) || !published)
         return {...result, announcements: []};
+      if (content === null || content.length > 20000 || content.includes('\0'))
+        return {...result, announcements: []};
+      // Link destinations can carry invitation or download capabilities. Keep
+      // prose only; never inspect href attributes or export embedded URLs.
+      const safeContent = content.replace(/https?:\/\/[^\s<>]+/gi, '[link omitted]');
       // Stable source IDs have not been observed. Do not manufacture one from
       // a title, row position or timestamp and silently promise source dedup.
       result.announcements.push({course_id: course[1], source_id: null,
         identity_status: 'not_exposed', title, published_at: published,
-        content_status: 'not_collected'});
+        content_status: 'observed_redacted', content: safeContent});
     }
     return {...result, status: 'observed_partial'};
   }

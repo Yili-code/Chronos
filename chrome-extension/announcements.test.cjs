@@ -2,9 +2,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {extractAnnouncements} = require('./announcements.js');
 const url = 'https://tronclass.ntou.edu.tw/course/123/bulletin#/';
-function row(title='Synthetic notice', date='2026.10.05 12:00') {
+function row(title='Synthetic notice', date='2026.10.05 12:00', content='Synthetic content') {
   return {querySelectorAll(selector) {
-    const text = selector.includes('created_at') ? date : title;
+    const text = selector.includes('created_at') ? date : selector.includes('content|') ? content : title;
     return text === null ? [] : [{textContent: text}];
   }, click() { throw new Error('must never mark read'); }};
 }
@@ -17,7 +17,14 @@ test('observes metadata without claiming source identity or completeness', () =>
   assert.equal(result.complete_course, false);
   assert.deepEqual(result.announcements, [{course_id:'123', source_id:null,
     identity_status:'not_exposed', title:'Synthetic notice',
-    published_at:'2026-10-05T12:00:00+08:00', content_status:'not_collected'}]);
+    published_at:'2026-10-05T12:00:00+08:00', content_status:'observed_redacted', content:'Synthetic content'}]);
+});
+test('content export omits URLs and rejects missing or oversized body', () => {
+  const result = extractAnnouncements(dom([row(undefined,undefined,
+    'Read https://example.test/invite/synthetic then HTTPS://example.test/file?key=synthetic')]),url);
+  assert.equal(result.announcements[0].content,'Read [link omitted] then [link omitted]');
+  for(const content of [null,'a'.repeat(20001),'bad\0text'])
+    assert.equal(extractAnnouncements(dom([row(undefined,undefined,content)]),url).status,'unknown');
 });
 test('empty and malformed pages are unknown rather than no announcements', () => {
   for (const rows of [[], [row(null)], [row('a','2026.02.30 12:00')],
