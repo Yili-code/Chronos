@@ -1,5 +1,19 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Exam-week scheduler integration — 2026-10-05
+
+Added one confirmation request per official exam period, eligible from seven
+days before its start with catch-up until the period begins. During the period,
+08:00 daily notices include only owner records explicitly dated that day.
+Missing daily arrangements are labeled unknown, never interpreted as no exams.
+Fresh official-calendar evidence is required. Durable keys prevent duplicate
+sends and uncertain delivery stops subsequent parts. Long record messages are
+split into bounded parts without dropping their text.
+
+64 focused exam and system tests passed offline. Not yet deployed. Remaining
+exam work includes long-list query pagination, consistent delivery snapshots
+when owner records change mid-send, and live acceptance.
+
 ## Exam record foundation and regression evidence — 2026-10-05
 
 Added explicit owner `/exam` input and `/exams` inspection with SQLite/Firestore

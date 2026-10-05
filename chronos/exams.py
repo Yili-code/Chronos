@@ -13,7 +13,7 @@ def validate_exam(record):
         value = record[key]
         if value is None and key in {'location', 'scope', 'review'}:
             continue
-        if not isinstance(value, str) or not value.strip() or len(value) > 1000:
+        if not isinstance(value, str) or not value.strip() or len(value) > 1000 or '\0' in value:
             raise ValueError('invalid exam field')
     if record['starts_at'] is not None:
         parsed = datetime.fromisoformat(record['starts_at'])

@@ -115,8 +115,10 @@ async def run_study_tick() -> dict:
     result = await tick_study(db, telegram, settings.telegram_chat_id, now)
     from .assignment_scheduler import tick_assignments
     assignment_result = await tick_assignments(db, telegram, settings.telegram_chat_id, now)
+    from .exam_scheduler import tick_exams
+    exam_result = await tick_exams(db, telegram, settings.telegram_chat_id, now)
     notices = await notify_study_failures(db, telegram, settings.telegram_chat_id, now)
-    return {**result, **assignment_result, **notices, **calendar_sync_result, **calendar_result}
+    return {**result, **assignment_result, **notices, **calendar_sync_result, **calendar_result, **exam_result}
 
 
 @app.post("/internal/study")
