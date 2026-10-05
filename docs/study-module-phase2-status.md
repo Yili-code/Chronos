@@ -1,5 +1,19 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Holiday delivery component — 2026-10-05
+
+Implemented an offline-tested holiday notification planner and durable sender.
+Only a same-Taipei-day, non-future official snapshot and an unambiguous `no_class`
+classification permit a notice. Previous-day noon and holiday-day 08:00 windows
+catch up when fresh evidence arrives later that day; past holiday dates are not
+replayed. Date/window keys survive refreshes and process restarts. Unknown send
+outcomes are not blindly retried; explicit rejection follows bounded ledger retries.
+
+This component is not wired into production. Daily source synchronization,
+early-morning late-discovery policy (before 08:00), course-prompt suppression,
+calendar-health reporting and live acceptance remain open. It does not establish
+completion of PRD section 7.
+
 ## Full-PRD objective resumed — 2026-10-05
 
 The owner explicitly requested completion of the whole Study Module PRD. This
