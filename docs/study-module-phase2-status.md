@@ -1,5 +1,16 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Browser collection timing contract — 2026-10-05
+
+A pure planner now emits per-course requests for Taipei 08:00, 12:00, 18:00 and
+22:00, plus independently keyed immediate requests for correlated progress
+replies. Restart policy selects only today's latest due slot; it does not burst
+through missed slots or backfill yesterday at midnight. Confirmed completed
+keys suppress repeats; attempts alone must not be marked completed. Twelve
+tests cover slots, UTC conversion, midnight, partial completion and reply replay.
+This is planning only: durable collection claims, reply wiring, a browser
+executor, permission approval and actual scheduled collection remain unfinished.
+
 ## Read-only saved bulletin lookup — 2026-10-05
 
 Added `/announcements [page]` and `/announcement version-hash [page]` for
