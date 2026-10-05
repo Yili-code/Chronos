@@ -1,5 +1,18 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Durable daily calendar synchronization — 2026-10-05
+
+Added a daily refresh component backed by atomic SQLite/Firestore claims. A
+current snapshot prevents another fetch that day. Failed or interrupted attempts
+are bounded to three per Taipei day, separated by at least 30 minutes. Failed
+fetches/parses preserve the last evidence without labeling it current. The source
+is fixed, redirects are rejected, TLS verification remains enabled, and decoded
+response size is capped at 1 MB. Error bodies are not stored.
+
+Tests use mocked public HTTP and both database backends, including concurrent
+ticks. This component is not yet invoked by the production scheduler; production
+calendar activation and complete section-7 acceptance remain outstanding.
+
 ## Holiday delivery component — 2026-10-05
 
 Implemented an offline-tested holiday notification planner and durable sender.

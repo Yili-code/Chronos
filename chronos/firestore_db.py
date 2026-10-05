@@ -194,6 +194,15 @@ class FirestoreDatabase:
         snapshot = self.meta.document("academic_calendar").get()
         return snapshot.to_dict() if snapshot.exists else None
 
+    def mutate_calendar_sync(self, transition):
+        def mutate(transaction):
+            ref = self.meta.document("academic_calendar_sync")
+            previous = ref.get(transaction=transaction)
+            state = transition(previous.to_dict() if previous.exists else None)
+            transaction.set(ref, state)
+            return state
+        return self._run_transaction(mutate)
+
     def save_calendar_snapshot(self, snapshot):
         from .calendar_snapshot import validate_snapshot
         snapshot = validate_snapshot(snapshot)

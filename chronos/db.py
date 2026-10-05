@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS study_notes (
 CREATE TABLE IF NOT EXISTS summary_jobs (fingerprint TEXT PRIMARY KEY, state_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS assignments (source_key TEXT PRIMARY KEY, task_id INTEGER NOT NULL UNIQUE, record_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS calendar_snapshot (id INTEGER PRIMARY KEY CHECK(id=1), record_json TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS calendar_sync (id INTEGER PRIMARY KEY CHECK(id=1), record_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS material_selections (selection_key TEXT PRIMARY KEY, state_json TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_study_notes_recent ON study_notes(created_epoch DESC, fingerprint DESC);
 CREATE INDEX IF NOT EXISTS idx_study_notes_course ON study_notes(course, created_epoch DESC, fingerprint DESC);
@@ -244,6 +245,13 @@ class Database:
         with self.connect() as connection:
             row = connection.execute("SELECT record_json FROM calendar_snapshot WHERE id=1").fetchone()
         return json.loads(row[0]) if row else None
+
+    def mutate_calendar_sync(self, transition):
+        with self.transaction() as connection:
+            row = connection.execute("SELECT record_json FROM calendar_sync WHERE id=1").fetchone()
+            state = transition(json.loads(row[0]) if row else None)
+            connection.execute("INSERT INTO calendar_sync VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET record_json=excluded.record_json", (json.dumps(state),))
+            return state
 
     def save_calendar_snapshot(self, snapshot):
         from .calendar_snapshot import validate_snapshot
