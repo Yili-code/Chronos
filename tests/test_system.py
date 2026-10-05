@@ -55,6 +55,10 @@ def test_course_reply_is_correlated_and_receipt_deduplicated(system):
     assert bot.send_message.await_count == 1
     main.ai.parse.assert_not_awaited()
     assert service.list_open() == []
+    polls = main.db.list_study_polls()
+    assert len(polls) == 1
+    assert polls[0][0] == 'poll:reply:900:189717'
+    assert polls[0][1]['status'] == 'queued'
 
 
 def test_unknown_reply_never_creates_task(system):

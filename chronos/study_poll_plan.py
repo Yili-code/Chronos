@@ -7,6 +7,12 @@ from .assignments import aware
 
 
 POLL_HOURS = (8, 12, 18, 22)
+COURSE_SOURCE_IDS = {
+    'security':'189717', 'computer-architecture':'189687',
+    'software-engineering':'188571', 'graph-algorithms':'189756',
+    'database-systems':'189684', 'competitive-programming':'193842',
+    'operating-systems':'192072',
+}
 
 
 @dataclass(frozen=True)

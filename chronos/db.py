@@ -461,7 +461,7 @@ class Database:
             )
         return self.get_course_session(session.session_id) or session
 
-    def record_course_reply(self, prompt_id: int, message_id: int, text: str, *, local_date=None) -> str:
+    def record_course_reply(self, prompt_id: int, message_id: int, text: str, *, local_date=None, update_id=None, received_at=None) -> str:
         """Called inside process_update, sharing the webhook receipt transaction."""
         with self.connect() as connection:
             row = connection.execute(
@@ -479,6 +479,12 @@ class Database:
                                     reply_message_id=message_id, text=text)
             if answered is None:
                 return "這堂課已記錄或已結束，未變更進度。"
+            if update_id is not None:
+                from .study_poll_plan import COURSE_SOURCE_IDS, reply_request
+                from .study_poll_queue import initial_poll_state
+                request = reply_request(COURSE_SOURCE_IDS[session.course_key], update_id, received_at)
+                connection.execute('INSERT OR IGNORE INTO study_poll_jobs VALUES (?, ?)',
+                                   (request.key,json.dumps(initial_poll_state(request))))
             review = None
             title, kind, completion = progress_followup(answered)
             if session.survey_task_id is not None:

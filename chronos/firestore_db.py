@@ -431,7 +431,7 @@ class FirestoreDatabase:
 
         return self._run_transaction(create)
 
-    def record_course_reply(self, prompt_id: int, message_id: int, text: str, *, local_date=None) -> str:
+    def record_course_reply(self, prompt_id: int, message_id: int, text: str, *, local_date=None, update_id=None, received_at=None) -> str:
         """Read state and write progress inside the webhook receipt transaction."""
         def record(transaction):
             query = self.course_sessions.where(filter=FieldFilter("prompt_message_id", "==", prompt_id))
@@ -449,6 +449,15 @@ class FirestoreDatabase:
                                     reply_message_id=message_id, text=text)
             if answered is None:
                 return "這堂課已記錄或已結束，未變更進度。"
+            poll = None
+            if update_id is not None:
+                from .study_poll_plan import COURSE_SOURCE_IDS, reply_request
+                from .study_poll_queue import initial_poll_state
+                request = reply_request(COURSE_SOURCE_IDS[session.course_key], update_id, received_at)
+                ref = self.study_poll_jobs.document(request.key)
+                existing = ref.get(transaction=transaction)
+                if not existing.exists:
+                    poll = (ref, initial_poll_state(request))
             review = None
             title, kind, completion = progress_followup(answered)
             if session.survey_task_id is not None:
@@ -462,6 +471,8 @@ class FirestoreDatabase:
                 if survey.exists and survey.get("status") == "open":
                     transaction.update(task_ref, {"status": "done", "completed_at": now.isoformat()})
             transaction.update(snapshot.reference, session_to_firestore(answered))
+            if poll is not None:
+                transaction.set(*poll)
             if review is not None:
                 return (f"已記錄{session.course_name}的進度，填寫進度代辦已完成。\n"
                         f"新增{kind}代辦。\n"

@@ -1,5 +1,17 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Correlated progress reply collection trigger — 2026-10-05
+
+Accepted Telegram progress replies now enqueue the matching tracked course's
+collection request inside the same transaction as progress and update receipt.
+The Telegram update ID forms a replay-stable key. Unrelated, expired or already
+answered replies do not enqueue another job. Firestore reads the potential job
+before other writes, preserving read-before-write transaction requirements.
+Sixty-four existing system/backend/queue tests passed, followed by four queue
+tests including the new reply path on both backends. Queueing does not open a
+browser or prove data collection. This change is not yet deployed; executor and
+permission gates remain open.
+
 ## Durable browser-collection queue — 2026-10-05
 
 SQLite and Firestore now persist collection requests using first-writer-wins

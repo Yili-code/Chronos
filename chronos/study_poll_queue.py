@@ -5,11 +5,15 @@ from .assignments import aware
 from .study_poll_plan import scheduled_requests
 
 
-def enqueue_poll(db, request):
-    return db.mutate_study_poll(request.key,lambda old: old or {
+def initial_poll_state(request):
+    return {
         'course_id':request.course_id, 'reason':request.reason,
         'due_at':aware(request.due_at).isoformat(), 'status':'queued',
-        'claim':None, 'claimed_at':None, 'attempt_count':0})
+        'claim':None, 'claimed_at':None, 'attempt_count':0}
+
+
+def enqueue_poll(db, request):
+    return db.mutate_study_poll(request.key,lambda old: old or initial_poll_state(request))
 
 
 def enqueue_scheduled_polls(db, now):
