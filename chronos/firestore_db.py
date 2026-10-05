@@ -34,6 +34,7 @@ class FirestoreDatabase:
         self.material_selections = self.client.collection(f"{collection_prefix}_material_selections")
         self.assignments = self.client.collection(f"{collection_prefix}_assignments")
         self.exams = self.client.collection(f"{collection_prefix}_exams")
+        self.exam_notice_plans = self.client.collection(f"{collection_prefix}_exam_notice_plans")
         self._transaction: ContextVar[firestore.Transaction | None] = ContextVar(
             "firestore_transaction", default=None
         )
@@ -202,6 +203,16 @@ class FirestoreDatabase:
             transaction.set(self.exams.document(exam_key(record)), record)
             return record
         return self._run_transaction(save)
+
+    def freeze_exam_notice_plan(self, key, notices):
+        def freeze(transaction):
+            ref = self.exam_notice_plans.document(key)
+            previous = ref.get(transaction=transaction)
+            if previous.exists:
+                return [[row['key'], row['text']] for row in previous.get('notices')]
+            transaction.set(ref, {'notices': [{'key': item[0], 'text': item[1]} for item in notices]})
+            return notices
+        return self._run_transaction(freeze)
 
     def list_exams(self):
         return [snapshot.to_dict() for snapshot in self.exams.stream()]

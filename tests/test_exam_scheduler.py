@@ -51,3 +51,23 @@ def test_unknown_send_stops_later_parts(tmp_path):
     for _ in range(2):
         asyncio.run(tick_exams(db, bot, 123, now))
     assert bot.send_message.await_count == 1
+
+
+def test_edit_between_rejected_attempt_and_retry_keeps_original_batch(tmp_path):
+    db = Database(tmp_path / 'exams.db')
+    db.initialize()
+    now = datetime(2026, 10, 26, 8, tzinfo=TAIPEI)
+    db.save_calendar_snapshot(snapshot(now))
+    exam_action(db, 'exam OS | Midterm | 2026-10-26 09:00 | A | Original scope | Lab')()
+    bot = AsyncMock()
+    bot.send_message.side_effect = [{'ok': True, 'result': {'message_id': 42}},
+                                    {'ok': False, 'error_code': 400}]
+    asyncio.run(tick_exams(db, bot, 123, now))
+    exam_action(db, 'exam OS | Midterm | 2026-10-27 10:00 | B | Changed scope | Lab')()
+    reopened = Database(db.path)
+    bot.send_message.side_effect = None
+    bot.send_message.return_value = {'ok': True, 'result': {'message_id': 43}}
+    asyncio.run(tick_exams(reopened, bot, 123, now + timedelta(minutes=5)))
+    assert 'Original scope' in bot.send_message.call_args.args[1]
+    assert 'Changed scope' not in bot.send_message.call_args.args[1]
+    assert reopened.list_exams()[0]['scope'] == 'Changed scope'

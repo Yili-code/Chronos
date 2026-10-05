@@ -1,5 +1,15 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Immutable exam delivery batches — 2026-10-05
+
+Exam confirmation and daily batches are now persisted with first-writer-wins
+transactions before sending. A retry or process restart uses the original batch,
+even when owner records changed meanwhile; `/exams` continues to show current
+records. The daily header explicitly distinguishes the delivery snapshot from
+latest records. Both storage backends are covered, including an edit between a
+definitive rejection and retry. 69 focused exam and system tests passed offline.
+These changes remain undeployed and do not establish full PRD acceptance.
+
 ## Exam query pagination — 2026-10-05
 
 `/exams [page]` now renders stable, lossless pages with next-page instructions.

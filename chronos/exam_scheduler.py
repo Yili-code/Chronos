@@ -30,7 +30,7 @@ def exam_notices(snapshot, records, now):
     notices.append((prefix + ':header', f'{today} 考試週提醒\n' +
                     ('以下為已保存的當日考試與複習事項。' if confirmed else
                      '當日考試與複習安排：尚未提供。這不代表今天沒有考試。') +
-                    '\n請用 /exam 補充，或 /exams 查閱紀錄。'))
+                    '\n本批內容固定於開始發送時；最新紀錄請用 /exams 查閱。'))
     for record in sorted(confirmed, key=exam_key):
         text = format_exams([record])
         # Bound UTF-16 length too: 1,500 Unicode code points <= 3,000 units.
@@ -42,7 +42,14 @@ def exam_notices(snapshot, records, now):
 async def tick_exams(db, telegram, chat_id, now):
     ledger = StudyDeliveryLedger(db)
     sent = 0
+    groups = {}
     for key, text in exam_notices(db.get_calendar_snapshot(), db.list_exams(), now):
+        group = ':'.join(key.split(':')[:3]) if key.startswith('exam:daily:') else key
+        groups.setdefault(group, []).append((key, text))
+    notices = []
+    for group, parts in groups.items():
+        notices.extend(db.freeze_exam_notice_plan(group, parts))
+    for key, text in notices:
         previous = db.get_study_delivery(key)
         if previous and previous['status'] == 'sent':
             continue

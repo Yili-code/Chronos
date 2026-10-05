@@ -52,3 +52,9 @@ def test_pagination_is_lossless_stable_and_unicode_bounded(db):
     assert '下一頁：/exams 2' in exams_query(db, 'exams')
     assert '沒有第' in exams_query(db, 'exams 999')
     assert '用法' in exams_query(db, 'exams 0')
+
+
+def test_notification_plan_first_writer_wins(db):
+    original = [['a', 'Original'], ['b', 'Second part']]
+    assert db.freeze_exam_notice_plan('exam:daily:2026-10-26', original) == original
+    assert db.freeze_exam_notice_plan('exam:daily:2026-10-26', [['a', 'Changed']]) == original
