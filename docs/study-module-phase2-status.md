@@ -80,6 +80,15 @@ unsupported pages and unknown submission state. It is not yet handed off to the
 local/production assignment store; the installed extension has not been reloaded
 or live-tested with this new code. Preserve this acceptance boundary.
 
+Local handoff implementation now includes an explicit popup action, the existing
+origin-checked loopback receiver's `/v1/browser-assignment` endpoint, and durable
+SQLite observation snapshots with receipt timestamps. Nineteen focused tests pass,
+including an actual loopback HTTP test, wrong-origin rejection and restart readback.
+Snapshots preserve submitted/unknown status and do not create cloud tasks, upload
+content to AI or submit homework. Installed-extension reload and live end-to-end
+handoff remain unverified; background monitoring and production ingestion remain
+unfinished. This local observation stage is not a substitute for the full PRD.
+
 ## Owner-approved deferral — 2026-10-05
 
 YiLi explicitly paused automatic lecture key-point generation and delivery.

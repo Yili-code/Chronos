@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+from datetime import datetime, timezone
 from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Lock
@@ -18,6 +19,7 @@ from pathlib import Path
 
 from .chrome_bridge import BrowserBridgeError, BrowserObservation, parse_observation
 from .material_bridge import MaterialObservationStore
+from .assignment_bridge import AssignmentObservationStore
 from .pdf_store import PdfStore, MAX_PDF_BYTES
 from .native_pdf_import import import_native_pdf
 
@@ -84,7 +86,7 @@ class _ObservationHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_POST(self) -> None:  # noqa: N802
-        if self.path not in {"/v1/browser-observation", "/v1/browser-materials", "/v1/browser-pdf", "/v1/browser-native-pdf"}:
+        if self.path not in {"/v1/browser-observation", "/v1/browser-materials", "/v1/browser-pdf", "/v1/browser-native-pdf", "/v1/browser-assignment"}:
             self._send_json(404, {"error": "not_found"})
             return
         if not self._allowed_origin() or self.headers.get("X-Chronos-Bridge") != "1":
@@ -98,6 +100,10 @@ class _ObservationHandler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(content_length))
             if not isinstance(payload, dict):
                 raise BrowserBridgeError("observation must be an object")
+            if self.path == "/v1/browser-assignment":
+                receipt = self.server.assignment_store.put(payload, datetime.now(timezone.utc))
+                self._send_json(202, receipt)
+                return
             if self.path == "/v1/browser-native-pdf":
                 if not isinstance(payload.get("course_id"), str):
                     raise ValueError("invalid course")
@@ -141,6 +147,8 @@ class LocalObservationServer(ThreadingHTTPServer):
         super().__init__(("127.0.0.1", port), _ObservationHandler)
         self.observation_store = ObservationStore()
         self.material_store = MaterialObservationStore(catalog_path)
+        self.assignment_store = AssignmentObservationStore(
+            catalog_path.with_name("assignments.sqlite3") if catalog_path else Path(".study-data/assignments.sqlite3"))
         self.pdf_store = PdfStore(pdf_directory or Path(".study-data/pdfs"))
 
 

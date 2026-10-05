@@ -2,6 +2,7 @@ from copy import deepcopy
 from datetime import datetime
 import pytest
 from chronos.assignment_bridge import validate_assignment_observation
+from chronos.assignment_bridge import AssignmentObservationStore
 from chronos.course_tracking import TAIPEI
 
 NOW = datetime(2026, 10, 5, 12, tzinfo=TAIPEI)
@@ -40,3 +41,41 @@ def test_absent_deadline_remains_pending():
     payload = deepcopy(PAYLOAD)
     payload["assignment"]["deadline"] = None
     assert validate(payload)["assignment"].status == "deadline_pending"
+
+
+def test_observation_persists_without_creating_task_and_reopens(tmp_path):
+    path = tmp_path / "observations.sqlite3"
+    store = AssignmentObservationStore(path, {"123"})
+    assert store.put(PAYLOAD, NOW)["saved"]
+    assert store.put(PAYLOAD, NOW)["saved"]
+    saved, = AssignmentObservationStore(path, {"123"}).snapshots()
+    assert saved["submission_status"] == "submitted"
+    assert saved["observed_at"] == NOW.isoformat()
+    assert store.put({"status": "unknown", "assignment": None}, NOW)["saved"] is False
+    assert len(store.snapshots()) == 1  # failed reads never erase evidence
+
+
+def test_http_assignment_handoff_checks_origin_and_persists(tmp_path):
+    import json
+    import threading
+    from http.client import HTTPConnection
+    from chronos.local_observation_server import LocalObservationServer
+    server = LocalObservationServer(0, catalog_path=tmp_path / "catalog.sqlite3", extension_id="a" * 32)
+    payload = deepcopy(PAYLOAD)
+    payload["assignment"]["course_id"] = "188571"
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        for origin, expected in [("https://example.com", 403), ("chrome-extension://" + "a" * 32, 202)]:
+            connection = HTTPConnection("127.0.0.1", server.server_port)
+            connection.request("POST", "/v1/browser-assignment", json.dumps(payload),
+                               {"Content-Type": "application/json", "X-Chronos-Bridge": "1", "Origin": origin})
+            response = connection.getresponse()
+            assert response.status == expected
+            receipt = json.loads(response.read())
+            if expected == 202:
+                assert receipt == {"status": "observed", "saved": True}
+            connection.close()
+        assert len(server.assignment_store.snapshots()) == 1
+    finally:
+        server.shutdown()
+        server.server_close()

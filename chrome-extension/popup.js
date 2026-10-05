@@ -73,6 +73,40 @@ function offerDownloads(tabId, materials) {
 const materialButton = document.createElement("button");
 materialButton.textContent = "傳送目前教材頁／活動的 PDF 清單";
 output.before(materialButton);
+
+const assignmentButton = document.createElement("button");
+assignmentButton.textContent = "保存目前作業說明（僅本機）";
+output.before(assignmentButton);
+assignmentButton.addEventListener("click", () => {
+  assignmentButton.disabled = true;
+  chrome.tabs.query({active:true, currentWindow:true}, ([tab]) => {
+    if (!tab?.id) {
+      show("找不到目前分頁。");
+      assignmentButton.disabled = false;
+      return;
+    }
+    chrome.tabs.sendMessage(tab.id, {type:"chronos.observe_assignment"}, async (payload) => {
+      try {
+        if (chrome.runtime.lastError || payload?.status !== "observed") {
+          show("尚未取得可辨識的作業說明。請開啟作業內容頁，並確認擴充功能已重新載入。");
+          return;
+        }
+        const response = await fetch("http://127.0.0.1:8765/v1/browser-assignment", {
+          method:"POST", headers:{"Content-Type":"application/json","X-Chronos-Bridge":"1"},
+          body:JSON.stringify(payload)
+        });
+        if (!response.ok) throw new Error("handoff rejected");
+        const receipt = await response.json();
+        if (receipt.saved !== true) throw new Error("not saved");
+        show("作業觀察已保存至本機；尚未建立雲端代辦、生成草稿或提交作業。");
+      } catch {
+        show("未確認作業保存成功，請檢查本機接收程式。");
+      } finally {
+        assignmentButton.disabled = false;
+      }
+    });
+  });
+});
 materialButton.addEventListener("click", () => {
   downloads.replaceChildren();
   materialButton.disabled = true;
