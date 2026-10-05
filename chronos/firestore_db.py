@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from contextvars import ContextVar
 from datetime import datetime
+from dataclasses import replace
 from typing import Callable
 
 from google.cloud import firestore
@@ -214,15 +215,21 @@ class FirestoreDatabase:
     def mark_update_delivered(self, update_id: int) -> None:
         self.updates.document(str(update_id)).update({"delivered": True})
 
-    def create_course_session(self, session: ProgressSession) -> ProgressSession:
+    def create_course_session(self, session: ProgressSession, *, create_tasks: bool = False) -> ProgressSession:
         """Create once by deterministic session id; retries return the existing value."""
         def create(transaction):
             reference = self.course_sessions.document(session.session_id)
             snapshot = reference.get(transaction=transaction)
             if snapshot.exists:
                 return session_from_firestore(snapshot.to_dict())
-            transaction.create(reference, session_to_firestore(session))
-            return session
+            stored = session
+            if create_tasks:
+                task = self.create_task(
+                    f"填寫{session.course_name}進度（{session.class_date}）", None,
+                    session.course_name, datetime.now().astimezone())
+                stored = replace(session, survey_task_id=task["id"])
+            transaction.create(reference, session_to_firestore(stored))
+            return stored
 
         return self._run_transaction(create)
 
@@ -244,7 +251,22 @@ class FirestoreDatabase:
                                     reply_message_id=message_id, text=text)
             if answered is None:
                 return "這堂課已記錄或已結束，未變更進度。"
+            review = None
+            if session.survey_task_id is not None:
+                # Read the linked task before create_task writes its counter.
+                task_ref = self.tasks.document(str(session.survey_task_id))
+                survey = task_ref.get(transaction=transaction)
+                now = datetime.now().astimezone()
+                review = self.create_task(
+                    f"複習{session.course_name}（{session.class_date}）：{answered.reported_progress}",
+                    None, session.course_name, now)
+                if survey.exists and survey.get("status") == "open":
+                    transaction.update(task_ref, {"status": "done", "completed_at": now.isoformat()})
             transaction.update(snapshot.reference, session_to_firestore(answered))
+            if review is not None:
+                return (f"已記錄{session.course_name}的進度，填寫進度代辦已完成。\n"
+                        f"新增複習代辦 #{review['id']}。\n"
+                        f"複習後輸入 /done {review['id']} 完成；/tasks 查看代辦。")
             return f"已記錄{session.course_name}（{session.class_date}）的進度。"
 
         active = self._transaction.get()

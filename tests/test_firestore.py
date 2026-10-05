@@ -35,6 +35,8 @@ class FakeDocument:
         return self.collection, self.id
 
     def get(self, transaction=None):
+        if transaction is not None and transaction.has_writes:
+            raise RuntimeError("Firestore does not allow reads after writes in a transaction")
         return FakeSnapshot(self, self.client.data.get(self.key))
 
     def update(self, values):

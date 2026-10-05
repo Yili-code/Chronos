@@ -4,6 +4,7 @@ import re
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime
+from dataclasses import replace
 from pathlib import Path
 from typing import Callable, Iterator
 
@@ -65,6 +66,9 @@ class Database:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as connection:
             connection.executescript(SCHEMA)
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(course_sessions)")}
+            if "survey_task_id" not in columns:
+                connection.execute("ALTER TABLE course_sessions ADD COLUMN survey_task_id INTEGER")
 
     def save_study_note(self, note: NoteRecord) -> NoteRecord:
         validated = NoteRecord.model_validate(note.model_dump())
@@ -246,18 +250,26 @@ class Database:
                 return {"reply": reply, "delivered": False}
             return receipt
 
-    def create_course_session(self, session: ProgressSession) -> ProgressSession:
-        data = session_to_firestore(session)
-        with self.connect() as connection:
+    def create_course_session(self, session: ProgressSession, *, create_tasks: bool = False) -> ProgressSession:
+        with self.transaction() as connection:
+            existing = self.get_course_session(session.session_id)
+            if existing is not None:
+                return existing
+            if create_tasks:
+                task = self.create_task(
+                    f"填寫{session.course_name}進度（{session.class_date}）", None,
+                    session.course_name, datetime.now().astimezone())
+                session = replace(session, survey_task_id=task["id"])
+            data = session_to_firestore(session)
             connection.execute(
                 """INSERT OR IGNORE INTO course_sessions
                 (session_id, course_key, course_name, class_date, prompt_message_id,
-                 status, reminder_count, reported_progress, reply_message_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                 status, reminder_count, reported_progress, reply_message_id, survey_task_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 tuple(data[field] for field in (
                     "session_id", "course_key", "course_name", "class_date",
                     "prompt_message_id", "status", "reminder_count",
-                    "reported_progress", "reply_message_id",
+                    "reported_progress", "reply_message_id", "survey_task_id",
                 )),
             )
         return self.get_course_session(session.session_id) or session
@@ -280,7 +292,18 @@ class Database:
                                     reply_message_id=message_id, text=text)
             if answered is None:
                 return "這堂課已記錄或已結束，未變更進度。"
+            review = None
+            if session.survey_task_id is not None:
+                now = datetime.now().astimezone()
+                self.complete_task(session.survey_task_id, now)
+                review = self.create_task(
+                    f"複習{session.course_name}（{session.class_date}）：{answered.reported_progress}",
+                    None, session.course_name, now)
             self.save_course_session(answered)
+            if review is not None:
+                return (f"已記錄{session.course_name}的進度，填寫進度代辦已完成。\n"
+                        f"新增複習代辦 #{review['id']}。\n"
+                        f"複習後輸入 /done {review['id']} 完成；/tasks 查看代辦。")
             return f"已記錄{session.course_name}（{session.class_date}）的進度。"
 
     def get_course_session(self, session_id: str) -> ProgressSession | None:

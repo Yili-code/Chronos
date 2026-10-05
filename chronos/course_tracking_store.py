@@ -55,5 +55,6 @@ def session_from_firestore(data: dict) -> ProgressSession:
         status=ProgressStatus(str(data["status"])),
         reminder_count=int(data["reminder_count"]),
         reported_progress=data.get("reported_progress"),
+        survey_task_id=data.get("survey_task_id"),
         reply_message_id=(int(data["reply_message_id"]) if data.get("reply_message_id") is not None else None),
     )

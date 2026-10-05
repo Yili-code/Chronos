@@ -8,6 +8,7 @@ __pycache__/
 .pytest-evidence-check/
 .pytest-evidence-full/
 .pytest-excerpt-positive/
+.pytest-course-tasks*/
 .venv/
 .env
 chronos.db

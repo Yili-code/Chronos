@@ -42,6 +42,14 @@ provisioning and activation have not been performed.
 
 ## Operational limits
 
+- New scheduled sessions atomically create a survey task. A valid same-day reply
+  atomically completes it and creates one review task alongside the webhook
+  receipt. Review completion is manual via `/done`; neither task receives an
+  invented deadline. This flow uses no AI and does not resume Phase 2.
+- Historical sessions are not backfilled. Cleared tasks are not resurrected.
+  Missed surveys stay open until manually closed; a late reply does not invent
+  a review task. The scheduler currently uses the weekly timetable, not holidays.
+
 - Initial prompts catch up only for the current Taipei date. Reminders are spaced
   from their recorded preceding delivery, never sent across dates.
 - A reminder already in flight can arrive after a reply; its completion cannot

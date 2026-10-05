@@ -44,6 +44,7 @@ class ProgressSession:
     reminder_count: int
     reported_progress: str | None = None
     reply_message_id: int | None = None
+    survey_task_id: int | None = None
 
 
 COURSE_SCHEDULE: tuple[CourseSlot, ...] = (
@@ -62,7 +63,9 @@ def course_for_weekday(weekday: int) -> tuple[CourseSlot, ...]:
 
 
 def prompt_text(course_name: str) -> str:
-    return f"{course_name}剛下課。請回覆這則訊息，告訴我今天上到哪裡。\n你可以使用章節、頁碼、講義名稱或自然語言描述。"
+    return (f"{course_name}剛下課。請回覆這則訊息，告訴我今天上到哪裡。\n"
+            "你可以使用章節、頁碼、講義名稱或自然語言描述。\n"
+            "回覆後會完成填寫進度代辦，並新增複習代辦；複習完成後再自行勾選。")
 
 
 def new_session(slot: CourseSlot, class_date: date, prompt_message_id: int) -> ProgressSession:

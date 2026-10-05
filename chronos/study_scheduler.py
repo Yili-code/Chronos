@@ -50,7 +50,7 @@ async def tick_study(db, telegram, chat_id: int, now: datetime) -> dict:
         delivery = db.get_study_delivery(key)
         if delivery and delivery["status"] == "sent":
             # A crash after recording the receipt is repaired without re-sending.
-            db.create_course_session(new_session(slot, now.date(), delivery["message_id"]))
+            db.create_course_session(new_session(slot, now.date(), delivery["message_id"]), create_tasks=True)
             created += 1
     reminders = 0
     for session in db.list_pending_course_sessions():
