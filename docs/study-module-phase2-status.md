@@ -1,5 +1,14 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Durable AI budget accounting foundation — 2026-10-05
+
+Added atomic daily request/token-estimate reservations in both repositories.
+The local budget day follows Asia/Taipei; it does not claim to match provider
+quota reset times or guarantee zero billing. Reservations are not refunded on
+uncertain outcomes. Zero limits disable reservation; 80% usage marks near-limit.
+The provider request path and Telegram warning are not wired yet, so existing
+generation must not be described as protected by this component until integrated.
+
 ## Task completion guidance correction — 2026-10-05
 
 Course-reply acknowledgments previously suggested `/done <database ID>` even

@@ -34,6 +34,7 @@ class FirestoreDatabase:
         self.material_selections = self.client.collection(f"{collection_prefix}_material_selections")
         self.assignments = self.client.collection(f"{collection_prefix}_assignments")
         self.exams = self.client.collection(f"{collection_prefix}_exams")
+        self.ai_daily_budget = self.client.collection(f"{collection_prefix}_ai_daily_budget")
         self.course_day_decisions = self.client.collection(f"{collection_prefix}_course_day_decisions")
         self.exam_notice_plans = self.client.collection(f"{collection_prefix}_exam_notice_plans")
         self._transaction: ContextVar[firestore.Transaction | None] = ContextVar(
@@ -204,6 +205,15 @@ class FirestoreDatabase:
             transaction.set(self.exams.document(exam_key(record)), record)
             return record
         return self._run_transaction(save)
+
+    def mutate_ai_budget(self, day, transition):
+        def mutate(transaction):
+            ref = self.ai_daily_budget.document(day)
+            previous = ref.get(transaction=transaction)
+            state = transition(previous.to_dict() if previous.exists else None)
+            transaction.set(ref, state)
+            return state
+        return self._run_transaction(mutate)
 
     def save_course_day_decision(self, key, decision):
         if decision not in {'class', 'off', 'auto'}:
