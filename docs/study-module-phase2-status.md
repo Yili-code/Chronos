@@ -1,5 +1,15 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Course-specific calendar confirmation — 2026-10-05
+
+Added `/classday YYYY-MM-DD course-key class|off|auto`: the owner's explicit
+decision applies only to that scheduled course/date and overrides automatic
+calendar suppression; `auto` restores it. Both initial prompts and reminders
+respect the decision. Ambiguous-calendar notices point to this command. Existing
+messages are not recalled. The command deliberately rejects dates outside the
+course's regular weekday: arbitrary makeup-class rescheduling is not implemented.
+This change is not yet deployed.
+
 ## Calendar and exam release evidence — 2026-10-05
 
 - Source commit: `cc954d14ed4511527132e3ab5e52c849397165b3`.

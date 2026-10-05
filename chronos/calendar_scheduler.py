@@ -42,7 +42,7 @@ def calendar_advisories(snapshot, now, *, exhausted=False):
     events = [CalendarEvent(**row) for row in snapshot['events']]
     return [(f"calendar:health:{day}:ambiguous",
              f"{day} 的官方校曆含需確認或衝突的上課資訊。"
-             "請向授課教師確認；Chronos 尚未據此停發課後調查。")
+             "請向授課教師確認，再用 /classday 設定指定課程；尚未確認前照課表詢問。")
             for day in (local.date(), local.date() + timedelta(days=1))
             if day_policy(events, day) == 'needs_confirmation']
 

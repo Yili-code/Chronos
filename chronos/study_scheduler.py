@@ -32,10 +32,13 @@ async def tick_study(db, telegram, chat_id: int, now: datetime) -> dict:
     policy = (day_policy([CalendarEvent(**row) for row in snapshot["events"]], now.date())
               if is_current(snapshot, now) else "unverified")
     suppressed = policy in {"no_class", "exam_period"}
+    def suppress_course(course, day):
+        decision = db.get_course_day_decision(f'{course}:{day}')
+        return suppressed if decision == 'auto' else decision == 'off'
     ledger = StudyDeliveryLedger(db)
     created = 0
     for slot in course_for_weekday(now.weekday()):
-        if suppressed:
+        if suppress_course(slot.key, now.date()):
             continue
         due = datetime.combine(now.date(), slot.prompt_time, tzinfo=TAIPEI)
         if now < due:
@@ -64,7 +67,7 @@ async def tick_study(db, telegram, chat_id: int, now: datetime) -> dict:
     for session in db.list_pending_course_sessions():
         session = db.mutate_course_session(session.session_id,
             lambda current: mark_missed_at_day_end(current, local_date=now.date()))
-        if suppressed:
+        if suppress_course(session.course_key, session.class_date):
             continue
         if session.status in {ProgressStatus.ANSWERED, ProgressStatus.MISSED} or session.reminder_count >= 2:
             continue

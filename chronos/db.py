@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS assignments (source_key TEXT PRIMARY KEY, task_id INT
 CREATE TABLE IF NOT EXISTS calendar_snapshot (id INTEGER PRIMARY KEY CHECK(id=1), record_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS calendar_sync (id INTEGER PRIMARY KEY CHECK(id=1), record_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS exams (source_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS course_day_decisions (source_key TEXT PRIMARY KEY, decision TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS exam_notice_plans (source_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS material_selections (selection_key TEXT PRIMARY KEY, state_json TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_study_notes_recent ON study_notes(created_epoch DESC, fingerprint DESC);
@@ -254,6 +255,17 @@ class Database:
         with self.connect() as connection:
             connection.execute("INSERT INTO exams VALUES(?, ?) ON CONFLICT(source_key) DO UPDATE SET record_json=excluded.record_json", (exam_key(record), json.dumps(record)))
         return record
+
+    def save_course_day_decision(self, key, decision):
+        if decision not in {'class', 'off', 'auto'}:
+            raise ValueError('invalid course-day decision')
+        with self.connect() as connection:
+            connection.execute("INSERT INTO course_day_decisions VALUES(?, ?) ON CONFLICT(source_key) DO UPDATE SET decision=excluded.decision", (key, decision))
+
+    def get_course_day_decision(self, key):
+        with self.connect() as connection:
+            row = connection.execute("SELECT decision FROM course_day_decisions WHERE source_key=?", (key,)).fetchone()
+        return row[0] if row else 'auto'
 
     def freeze_exam_notice_plan(self, key, notices):
         with self.transaction() as connection:

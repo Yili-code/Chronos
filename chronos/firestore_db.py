@@ -34,6 +34,7 @@ class FirestoreDatabase:
         self.material_selections = self.client.collection(f"{collection_prefix}_material_selections")
         self.assignments = self.client.collection(f"{collection_prefix}_assignments")
         self.exams = self.client.collection(f"{collection_prefix}_exams")
+        self.course_day_decisions = self.client.collection(f"{collection_prefix}_course_day_decisions")
         self.exam_notice_plans = self.client.collection(f"{collection_prefix}_exam_notice_plans")
         self._transaction: ContextVar[firestore.Transaction | None] = ContextVar(
             "firestore_transaction", default=None
@@ -203,6 +204,16 @@ class FirestoreDatabase:
             transaction.set(self.exams.document(exam_key(record)), record)
             return record
         return self._run_transaction(save)
+
+    def save_course_day_decision(self, key, decision):
+        if decision not in {'class', 'off', 'auto'}:
+            raise ValueError('invalid course-day decision')
+        return self._run_transaction(lambda transaction:
+            transaction.set(self.course_day_decisions.document(key), {'decision': decision}))
+
+    def get_course_day_decision(self, key):
+        value = self.course_day_decisions.document(key).get()
+        return value.get('decision') if value.exists else 'auto'
 
     def freeze_exam_notice_plan(self, key, notices):
         def freeze(transaction):
