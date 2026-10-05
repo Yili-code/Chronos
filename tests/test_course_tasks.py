@@ -39,7 +39,9 @@ def test_scheduler_creates_one_survey_and_reply_creates_one_review(db):
     assert review["id"] != survey["id"]
     assert review["title"] == "複習資訊安全實務與管理（2026-10-05）：講義 A 第 10–12 頁"
     assert review["due_at"] is None
-    assert f"/done {review['id']}" in first["reply"]
+    assert '/done 清單順位' in first['reply']
+    assert f"/done {review['id']}" not in first['reply']
+    assert '/tasks' in first['reply']
     assert db.complete_task(review["id"], now)
     assert not db.list_open_tasks()
 

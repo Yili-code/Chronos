@@ -1,5 +1,13 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Task completion guidance correction — 2026-10-05
+
+Course-reply acknowledgments previously suggested `/done <database ID>` even
+though that command resolves a current open-list position. Both backends now
+direct the owner to `/tasks` and `/done 清單順位`, and help text explicitly states
+position semantics. The regression uses a review whose ID differs from its
+open-list position. No tasks or completion semantics were migrated. Not deployed.
+
 ## Browser monitoring permission and ordering — 2026-10-05
 
 Current extension inspection confirms manual popup observation only: no

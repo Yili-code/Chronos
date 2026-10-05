@@ -161,7 +161,7 @@ def test_webhook_auth_and_commands(system):
     assert '(Dates, times, and tags are optional.)' in help_text
     assert '/help — Show this guide' in help_text
     assert '/tasks — List open tasks' in help_text
-    assert '/done 1 — Complete task 1' in help_text
+    assert '/done 1 — Complete position 1 in the current /tasks list' in help_text
     assert '/reschedule 1 tomorrow at 10:00' in help_text
     assert '/edit 1 move it to Friday and rename it' in help_text
     assert '/clear — Delete all tasks after confirmation' in help_text

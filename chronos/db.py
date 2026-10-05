@@ -418,8 +418,8 @@ class Database:
             self.save_course_session(answered)
             if review is not None:
                 return (f"已記錄{session.course_name}的進度，填寫進度代辦已完成。\n"
-                        f"新增{kind}代辦 #{review['id']}。\n"
-                        f"{completion}輸入 /done {review['id']} 完成；/tasks 查看代辦。")
+                        f"新增{kind}代辦。\n"
+                        f"{completion}先用 /tasks 查看目前清單，再輸入 /done 清單順位 完成。")
             return f"已記錄{session.course_name}（{session.class_date}）的進度。"
 
     def get_course_session(self, session_id: str) -> ProgressSession | None:

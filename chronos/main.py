@@ -39,7 +39,7 @@ HELP_TEXT = (
     "Commands:\n"
     "/help — Show this guide\n"
     "/tasks — List open tasks\n"
-    "/done 1 — Complete task 1\n"
+    "/done 1 — Complete position 1 in the current /tasks list\n"
     "/deadline assignment-ID YYYY-MM-DD HH:MM — Confirm assignment deadline (Taipei)\n"
     "/exam — Save confirmed exam details; unknown fields use ?\n"
     "/exams [page] — List saved exam details\n"
