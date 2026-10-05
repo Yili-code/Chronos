@@ -1,6 +1,7 @@
 # Phase 1 operation and verification
 
-Course tracking is implemented behind `CHRONOS_ENABLE_STUDY_TRACKING=false`.
+Course tracking is controlled by `CHRONOS_ENABLE_STUDY_TRACKING` (default false).
+Production was explicitly activated on 2026-10-05; see the current status record.
 Do not confuse passing local tests with deployment or production verification.
 
 ## Configuration
@@ -16,8 +17,13 @@ Do not confuse passing local tests with deployment or production verification.
 - Set `CHRONOS_ENABLE_STUDY_TRACKING=false` to stop scheduled study delivery.
   Existing persisted course records are preserved.
 
-The deployment script currently provisions the daily task job only. Study job
-provisioning and activation have not been performed.
+The general deployment script provisions the daily task job only. The separately
+authorized `scripts/activate_course_schedule.py` provisions or updates the
+`chronos-course-progress` job using the existing service's secret binding, and
+executes two current-time ticks. It may send due course notifications; run only
+when activation is authorized, not as a read-only diagnostic. It prints only
+allowlisted evidence and never secret-bearing response bodies. Production
+activation has been verified; no AI companion worker is required.
 
 ## Verification sequence
 

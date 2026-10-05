@@ -1,5 +1,28 @@
 # Phase 1 status
 
+## Tracking-only production activation — 2026-10-05
+
+Owner explicitly authorized deployment and scheduling. Source commit `e636b64`
+is deployed as Cloud Run revision `chronos-00020-bqn`, serving 100% of traffic.
+Study tracking is enabled; the internal scheduler remains disabled. The external
+`chronos-course-progress` job runs every minute in `Asia/Taipei`, using the
+existing scheduler-secret binding. The separate daily-tasks job is unchanged.
+This supersedes the earlier activation-off statements below, not the AI deferral.
+
+Verified live: health OK; unauthenticated Study POST rejected with 403; first
+authenticated tick reconciled one session and the immediately repeated tick
+reconciled zero. The current course session and linked survey task exist in
+production Firestore, with the session pending. Cloud Scheduler completion logs
+at 06:22:02Z and 06:22:09Z report HTTP 200. A real owner reply completing the survey
+and creating the review task remains the final user acceptance check.
+
+An initial revision failed to boot because PowerShell combined two environment
+arguments into one invalid boolean. Quoting the combined argument corrected it;
+the successful revision above is the active one. No secrets were changed.
+
+AI generation remains deferred, no AI worker was started, and no lecture content
+was uploaded. Holiday and term-date exclusions are still not implemented.
+
 ## Survey and review tasks — 2026-10-05
 
 Owner selected both task types: new scheduled prompts create one survey task;
