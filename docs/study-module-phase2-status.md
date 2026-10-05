@@ -1,5 +1,17 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Browser monitoring permission and ordering — 2026-10-05
+
+Current extension inspection confirms manual popup observation only: no
+background worker or alarms permission. Background scheduling permission has
+been requested from the owner and is not yet assumed granted. Therefore the
+08/12/18/22 monitoring requirement is still incomplete.
+
+Local assignment observation writes now serialize timestamp comparison with
+the write. Older observations and conflicting same-time observations cannot
+replace newer metadata; identical retries remain accepted. This protects the
+handoff boundary but does not itself implement cloud ingestion or monitoring.
+
 ## Course-specific calendar confirmation — 2026-10-05
 
 Added `/classday YYYY-MM-DD course-key class|off|auto`: the owner's explicit

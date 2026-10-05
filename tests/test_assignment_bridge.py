@@ -1,5 +1,5 @@
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytest
 from chronos.assignment_bridge import validate_assignment_observation
 from chronos.assignment_bridge import AssignmentObservationStore
@@ -72,6 +72,18 @@ def test_observation_persists_without_creating_task_and_reopens(tmp_path):
     assert saved["observed_at"] == NOW.isoformat()
     assert store.put({"status": "unknown", "assignment": None}, NOW)["saved"] is False
     assert len(store.snapshots()) == 1  # failed reads never erase evidence
+
+
+def test_out_of_order_and_same_time_conflicts_preserve_latest(tmp_path):
+    store = AssignmentObservationStore(tmp_path / 'ordered.sqlite3', {'123'})
+    newer = deepcopy(PAYLOAD)
+    newer['assignment']['deadline'] = '2026-10-09T23:59:00+08:00'
+    assert store.put(newer, NOW)['saved']
+    assert not store.put(PAYLOAD, NOW - timedelta(minutes=1))['saved']
+    assert not store.put(PAYLOAD, NOW)['saved']
+    assert store.snapshots()[0]['assignment']['deadline'] == newer['assignment']['deadline']
+    assert store.put(PAYLOAD, NOW + timedelta(minutes=1))['saved']
+    assert store.snapshots()[0]['assignment']['deadline'] == PAYLOAD['assignment']['deadline']
 
 
 def test_http_assignment_handoff_checks_origin_and_persists(tmp_path):

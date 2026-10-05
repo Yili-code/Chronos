@@ -27,7 +27,14 @@ class AssignmentObservationStore:
                 "attachments": result["attachments"]}
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(self.path) as connection:
+            connection.execute("BEGIN IMMEDIATE")
             connection.execute("CREATE TABLE IF NOT EXISTS assignment_observations (source_key TEXT PRIMARY KEY, record_json TEXT NOT NULL)")
+            previous = connection.execute("SELECT record_json FROM assignment_observations WHERE source_key=?", (item.key,)).fetchone()
+            if previous:
+                old = json.loads(previous[0])
+                old_time = datetime.fromisoformat(old['observed_at'])
+                if old_time > observed_at or (old_time == observed_at and old != data):
+                    return {'status': 'observed', 'saved': False, 'reason': 'stale_or_conflicting_observation'}
             connection.execute("INSERT INTO assignment_observations VALUES (?, ?) ON CONFLICT(source_key) DO UPDATE SET record_json=excluded.record_json",
                                (item.key, json.dumps(data)))
         return {"status": "observed", "saved": True}
