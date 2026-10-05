@@ -1,5 +1,22 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Study integration deployment — 2026-10-05
+
+Deployed exact source commit `d4845ef3ada0658806dc7de627a7c746e9ca7c1f`
+using a Git archive containing only Dockerfile, pyproject.toml, chronos and
+.gcloudignore. Cloud Run revision `chronos-00023-m4s` serves 100 percent of
+traffic. No environment, AI budget, browser permission or scheduler setting was
+changed. Public `/health` returned `status: ok`; read-only verification confirmed
+the new revision and HTTP 200 for both calendar snapshot and sync records,
+retaining the previously verified 103 events and content hash.
+
+The full Python regression run completed with 523 passing tests; the subsequent
+failure-label change separately passed nine focused tests. All 42 extension
+Node tests passed. These are offline checks, not live bulletin/AI acceptance.
+No real bulletin import, Telegram bulletin send or generation was triggered by
+the release procedure. Automatic collection and owner end-to-end acceptance
+remain outstanding. Installed extension code is not updated by Cloud Run.
+
 ## Actionable delivery failure notices — 2026-10-05
 
 Persistent delivery failures now identify the affected feature (announcements,
