@@ -57,6 +57,13 @@ ingestion, source updates, `/prepare`, and production acceptance remain open.
 Generic task rescheduling still requires review so it cannot diverge from the
 assignment deadline; the explicit `/deadline` path is the integrated path.
 
+Deadline consistency follow-up: ordinary task postponement and editing now
+update the linked assignment deadline transactionally on both backends. Removing
+a deadline restores `deadline_pending`; changing it advances the reminder
+revision, while an unchanged date does not. Personal task titles do not overwrite
+upstream assignment metadata. Forty-three focused tests pass. This supersedes
+the generic-rescheduling gap above; production and browser ingestion remain open.
+
 ## Owner-approved deferral — 2026-10-05
 
 YiLi explicitly paused automatic lecture key-point generation and delivery.

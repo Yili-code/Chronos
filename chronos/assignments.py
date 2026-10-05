@@ -81,6 +81,15 @@ def complete(assignment: Assignment, now: datetime) -> Assignment:
     return assignment if assignment.completed_at is not None else replace(assignment, completed_at=now)
 
 
+def owner_deadline_edit(assignment: Assignment, deadline: datetime | None) -> Assignment:
+    if deadline is not None:
+        return set_deadline(assignment, deadline, origin="owner")
+    if assignment.completed_at is not None:
+        raise ValueError("completed assignments cannot be rescheduled")
+    return replace(assignment, deadline=None, deadline_origin=None,
+                   deadline_revision=assignment.deadline_revision + int(assignment.deadline is not None))
+
+
 def due_reminder(assignment: Assignment, now: datetime, *, sent_keys: set[str]) -> str | None:
     """Return the current reminder window only, avoiding catch-up message bursts.
 

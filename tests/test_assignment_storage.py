@@ -61,6 +61,23 @@ def test_unknown_identity_returns_none(db):
     assert db.get_assignment("missing") is None
 
 
+def test_ordinary_reschedule_and_edit_sync_assignment_deadline(db):
+    item = sample()
+    task_id = db.create_assignment(item)["task_id"]
+    later = item.deadline + timedelta(days=2)
+    assert db.postpone_task(task_id, later)
+    saved = db.get_assignment(item.key)["assignment"]
+    assert saved.deadline == later and saved.deadline_revision == 1
+    assert saved.deadline_origin == "owner"
+    assert db.edit_task(task_id, "Personal title", later, "Personal project")
+    assert db.get_assignment(item.key)["assignment"].deadline_revision == 1
+    assert db.edit_task(task_id, "Personal title", None, "Personal project")
+    saved = db.get_assignment(item.key)["assignment"]
+    assert saved.status == "deadline_pending" and saved.deadline_revision == 2
+    assert saved.title == item.title  # original source metadata is preserved
+    assert due_reminder(saved, item.discovered_at, sent_keys=set()) is None
+
+
 def test_deadline_command_is_atomic_and_receipt_deduplicated(db):
     item = replace(sample(), deadline=None, deadline_origin=None)
     task_id = db.create_assignment(item)["task_id"]

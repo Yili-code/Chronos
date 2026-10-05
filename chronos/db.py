@@ -12,7 +12,7 @@ from .course_tracking import ProgressSession, accept_reply, mark_missed_at_day_e
 from .course_tracking import progress_followup
 from .course_tracking_store import session_from_firestore, session_to_firestore
 from .note_record import NoteRecord
-from .assignments import Assignment, to_record, from_record, set_deadline
+from .assignments import Assignment, to_record, from_record, set_deadline, owner_deadline_edit
 
 
 SCHEMA = """
@@ -266,19 +266,32 @@ class Database:
             return True
 
     def postpone_task(self, task_id: int, due_at: datetime) -> bool:
-        with self.connect() as connection:
+        scope = self.connect() if self._transaction.get() is not None else self.transaction()
+        with scope as connection:
             cursor = connection.execute(
                 "UPDATE tasks SET due_at = ? WHERE id = ? AND status = 'open'", (due_at.isoformat(), task_id)
             )
+            if cursor.rowcount == 1:
+                self._sync_assignment_deadline(connection, task_id, due_at)
         return cursor.rowcount == 1
 
     def edit_task(self, task_id: int, title: str, due_at: datetime | None, project: str | None) -> bool:
-        with self.connect() as connection:
+        scope = self.connect() if self._transaction.get() is not None else self.transaction()
+        with scope as connection:
             cursor = connection.execute(
                 "UPDATE tasks SET title = ?, due_at = ?, project = ? WHERE id = ? AND status = 'open'",
                 (title, due_at.isoformat() if due_at else None, project, task_id),
             )
+            if cursor.rowcount == 1:
+                self._sync_assignment_deadline(connection, task_id, due_at)
         return cursor.rowcount == 1
+
+    def _sync_assignment_deadline(self, connection, task_id, deadline):
+        row = connection.execute("SELECT record_json FROM assignments WHERE task_id=?", (task_id,)).fetchone()
+        if row is not None:
+            updated = owner_deadline_edit(from_record(json.loads(row[0])), deadline)
+            connection.execute("UPDATE assignments SET record_json=? WHERE task_id=?",
+                               (json.dumps(to_record(updated)), task_id))
 
     def clear_tasks(self) -> int:
         with self.connect() as connection:

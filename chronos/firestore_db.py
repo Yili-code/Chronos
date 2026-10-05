@@ -13,7 +13,7 @@ from .course_tracking import ProgressSession, accept_reply, mark_missed_at_day_e
 from .course_tracking import progress_followup
 from .course_tracking_store import session_from_firestore, session_to_firestore
 from .note_record import NoteRecord
-from .assignments import Assignment, to_record, from_record, set_deadline
+from .assignments import Assignment, to_record, from_record, set_deadline, owner_deadline_edit
 
 
 class FirestoreDatabase:
@@ -197,13 +197,20 @@ class FirestoreDatabase:
             if not snapshot.exists or snapshot.get("status") != "open":
                 return False
             linked = []
-            if "completed_at" in values:
+            if "completed_at" in values or "due_at" in values:
                 linked = list(self.assignments.where(filter=FieldFilter("task_id", "==", task_id)).stream(transaction=transaction))
-            transaction.update(reference, values)
+            updates = []
             for assignment in linked:
                 data = assignment.to_dict()
-                data["record"]["completed_at"] = values["completed_at"]
-                transaction.update(assignment.reference, data)
+                if "completed_at" in values:
+                    data["record"]["completed_at"] = values["completed_at"]
+                if "due_at" in values:
+                    deadline = datetime.fromisoformat(values["due_at"]) if values["due_at"] else None
+                    data["record"] = to_record(owner_deadline_edit(from_record(data["record"]), deadline))
+                updates.append((assignment.reference, data))
+            transaction.update(reference, values)
+            for assignment_ref, data in updates:
+                transaction.update(assignment_ref, data)
             return True
 
         active = self._transaction.get()
