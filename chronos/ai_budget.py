@@ -25,7 +25,8 @@ class DailyAIBudget:
                     state['estimated_tokens'] + estimated_tokens > self.token_limit):
                 raise BudgetExceeded('configured daily AI budget exhausted or disabled')
             return {'requests': state['requests'] + 1,
-                    'estimated_tokens': state['estimated_tokens'] + estimated_tokens}
+                    'estimated_tokens': state['estimated_tokens'] + estimated_tokens,
+                    'request_limit': self.request_limit, 'token_limit': self.token_limit}
         state = self.db.mutate_ai_budget(day, transition)
         return {**state, 'day': day, 'near_limit':
                 state['requests'] * 5 >= self.request_limit * 4 or
@@ -52,3 +53,16 @@ async def notify_budget(db, telegram, chat_id, status, now):
         return
     message_id, rejected = delivery_outcome(response)
     ledger.finish(key, claim, now, message_id=message_id, definitely_rejected=rejected)
+
+
+def budget_report(db, now):
+    if now.utcoffset() is None:
+        raise ValueError('aware clock required')
+    day = now.astimezone(TAIPEI).date().isoformat()
+    state = db.get_ai_budget(day)
+    if state is None:
+        return f'{day} Study AI：尚無額度保留紀錄。工作程式的實際設定尚未由今日紀錄確認。'
+    return (f"{day} Study AI（台北日界）\n"
+            f"已保留請求：{state['requests']}；估算用量：{state['estimated_tokens']}\n"
+            f"最近保留時的上限：請求 {state.get('request_limit', '未知')}／估算用量 {state.get('token_limit', '未知')}\n"
+            '包含失敗或結果不明的請求保留，不等於成功生成次數。估算不是供應商實際 token 或帳單；不包含其他 Gemini 客戶端。')

@@ -1,5 +1,15 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Read-only Study budget inspection — 2026-10-05
+
+`/study_budget` now reports today's persisted reservations and the limits used
+by the most recent reservation, rather than pretending the bot's configuration
+necessarily matches the separate local worker. No-record output explicitly
+means worker limits have not been observed. Query tests prove no state is created
+or changed. Near-limit delivery deduplication is tested on both backends. Example
+configuration and worker preflight expose the new disabled-by-default limits.
+69 focused budget, worker and system tests passed; these changes are undeployed.
+
 ## Gemini request budget enforcement — 2026-10-05
 
 The local Study companion now passes a durable budget into Gemini. Every draft

@@ -215,6 +215,10 @@ class FirestoreDatabase:
             return state
         return self._run_transaction(mutate)
 
+    def get_ai_budget(self, day):
+        value = self.ai_daily_budget.document(day).get()
+        return value.to_dict() if value.exists else None
+
     def save_course_day_decision(self, key, decision):
         if decision not in {'class', 'off', 'auto'}:
             raise ValueError('invalid course-day decision')

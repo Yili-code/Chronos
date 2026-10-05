@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 import pytest
 from chronos.ai_budget import DailyAIBudget, BudgetExceeded
+from chronos.ai_budget import budget_report, notify_budget
 from chronos.course_tracking import TAIPEI
 from chronos.db import Database
 from test_firestore import database as firestore_fake
@@ -49,3 +50,22 @@ def test_concurrent_sqlite_workers_cannot_overspend(tmp_path):
             return False
     with ThreadPoolExecutor(max_workers=8) as pool:
         assert sum(pool.map(reserve, range(20))) == 5
+
+
+def test_budget_query_does_not_create_or_change_state(db):
+    assert '尚無額度保留紀錄' in budget_report(db, NOW)
+    assert db.get_ai_budget('2026-10-05') is None
+    DailyAIBudget(db, request_limit=5, token_limit=100).reserve(NOW, 10)
+    before = db.get_ai_budget('2026-10-05')
+    assert '已保留請求：1' in budget_report(db, NOW)
+    assert db.get_ai_budget('2026-10-05') == before
+
+
+def test_budget_notice_sent_only_once(db):
+    import asyncio
+    from unittest.mock import AsyncMock
+    bot = AsyncMock()
+    bot.send_message.return_value = {'ok': True, 'result': {'message_id': 42}}
+    for _ in range(3):
+        asyncio.run(notify_budget(db, bot, 123, 'near_limit', NOW))
+    assert bot.send_message.await_count == 1

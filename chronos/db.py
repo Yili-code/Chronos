@@ -264,6 +264,11 @@ class Database:
             connection.execute("INSERT INTO ai_daily_budget VALUES(?, ?) ON CONFLICT(day) DO UPDATE SET record_json=excluded.record_json", (day, json.dumps(state)))
             return state
 
+    def get_ai_budget(self, day):
+        with self.connect() as connection:
+            row = connection.execute("SELECT record_json FROM ai_daily_budget WHERE day=?", (day,)).fetchone()
+        return json.loads(row[0]) if row else None
+
     def save_course_day_decision(self, key, decision):
         if decision not in {'class', 'off', 'auto'}:
             raise ValueError('invalid course-day decision')

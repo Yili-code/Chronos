@@ -63,6 +63,7 @@ def preflight(config, args):
         "pdf_directory_exists": args.pdf_directory.is_dir(),
         "course_mapping_supplied": bool(args.course_map),
         "free_tier_confirmed": args.free_tier_confirmed,
+        "daily_budget_configured": config.study_daily_request_limit > 0 and config.study_daily_token_limit > 0,
         "remote_readiness": "not_checked",
     }
 
