@@ -1,5 +1,15 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Explicit preparation queue — 2026-10-05
+
+`/prepare assignment-ID` now stores a deduplicated source snapshot in a durable
+preparation queue within the Telegram update transaction. Discovery does not
+enqueue or generate. Missing instructions, unknown IDs and completed assignments
+are rejected without generation. The fixed-ID convention is stated in usage.
+51 focused queue and system tests passed across SQLite/Firestore. The worker,
+draft persistence and delivery are still to be connected; command acknowledgment
+does not claim a completed draft. Not deployed.
+
 ## Assignment drafting provider foundation — 2026-10-05
 
 Added report/code output contracts, required review/verification sections,

@@ -34,6 +34,7 @@ class FirestoreDatabase:
         self.material_selections = self.client.collection(f"{collection_prefix}_material_selections")
         self.assignments = self.client.collection(f"{collection_prefix}_assignments")
         self.exams = self.client.collection(f"{collection_prefix}_exams")
+        self.preparation_jobs = self.client.collection(f"{collection_prefix}_preparation_jobs")
         self.ai_daily_budget = self.client.collection(f"{collection_prefix}_ai_daily_budget")
         self.course_day_decisions = self.client.collection(f"{collection_prefix}_course_day_decisions")
         self.exam_notice_plans = self.client.collection(f"{collection_prefix}_exam_notice_plans")
@@ -205,6 +206,19 @@ class FirestoreDatabase:
             transaction.set(self.exams.document(exam_key(record)), record)
             return record
         return self._run_transaction(save)
+
+    def mutate_preparation(self, key, transition):
+        def mutate(transaction):
+            ref = self.preparation_jobs.document(key)
+            previous = ref.get(transaction=transaction)
+            state = transition(previous.to_dict() if previous.exists else None)
+            transaction.set(ref, state)
+            return state
+        active = self._transaction.get()
+        return mutate(active) if active is not None else self._run_transaction(mutate)
+
+    def list_preparations(self):
+        return [(snapshot.id, snapshot.to_dict()) for snapshot in self.preparation_jobs.stream()]
 
     def mutate_ai_budget(self, day, transition):
         def mutate(transaction):

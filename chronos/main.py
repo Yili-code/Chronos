@@ -45,6 +45,7 @@ HELP_TEXT = (
     "/exams [page] — List saved exam details\n"
     "/classday — Confirm a course-specific instruction day\n"
     "/study_budget — Inspect recorded Study AI usage without generating\n"
+    "/prepare assignment-ID — Request an editable assignment draft\n"
     "/reschedule 1 tomorrow at 10:00 — Change task 1's due time\n"
     "/edit 1 move it to Friday and rename it — Edit task 1\n"
     "/clear — Delete all tasks after confirmation\n"
@@ -323,6 +324,9 @@ async def prepare_message(text: str) -> Callable[[], str]:
     """Resolve external input first; the returned action performs no async work."""
     normalized = text.strip()
     command = normalized[1:].strip() if normalized.startswith("/") else None
+    if command is not None and (command == 'prepare' or command.startswith('prepare ')):
+        from .preparation_commands import prepare_action
+        return prepare_action(db, command, datetime.now(settings.tz))
     if command == 'study_budget':
         from .ai_budget import budget_report
         return lambda: budget_report(db, datetime.now(settings.tz))
