@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS study_notes (
 );
 CREATE TABLE IF NOT EXISTS summary_jobs (fingerprint TEXT PRIMARY KEY, state_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS assignments (source_key TEXT PRIMARY KEY, task_id INTEGER NOT NULL UNIQUE, record_json TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS calendar_snapshot (id INTEGER PRIMARY KEY CHECK(id=1), record_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS material_selections (selection_key TEXT PRIMARY KEY, state_json TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_study_notes_recent ON study_notes(created_epoch DESC, fingerprint DESC);
 CREATE INDEX IF NOT EXISTS idx_study_notes_course ON study_notes(course, created_epoch DESC, fingerprint DESC);
@@ -238,6 +239,21 @@ class Database:
     def list_assignment_keys(self) -> list[str]:
         with self.connect() as connection:
             return [row[0] for row in connection.execute("SELECT source_key FROM assignments ORDER BY source_key")]
+
+    def get_calendar_snapshot(self):
+        with self.connect() as connection:
+            row = connection.execute("SELECT record_json FROM calendar_snapshot WHERE id=1").fetchone()
+        return json.loads(row[0]) if row else None
+
+    def save_calendar_snapshot(self, snapshot):
+        from .calendar_snapshot import validate_snapshot
+        snapshot = validate_snapshot(snapshot)
+        with self.transaction() as connection:
+            current = self.get_calendar_snapshot()
+            if current and datetime.fromisoformat(current["fetched_at"]) > datetime.fromisoformat(snapshot["fetched_at"]):
+                return current
+            connection.execute("INSERT INTO calendar_snapshot VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET record_json=excluded.record_json", (json.dumps(snapshot),))
+        return snapshot
 
     def complete_task(self, task_id: int, completed_at: datetime) -> bool:
         with self.connect() as connection:

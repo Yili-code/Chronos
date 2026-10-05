@@ -190,6 +190,22 @@ class FirestoreDatabase:
     def list_assignment_keys(self) -> list[str]:
         return sorted(snapshot.id for snapshot in self.assignments.stream())
 
+    def get_calendar_snapshot(self):
+        snapshot = self.meta.document("academic_calendar").get()
+        return snapshot.to_dict() if snapshot.exists else None
+
+    def save_calendar_snapshot(self, snapshot):
+        from .calendar_snapshot import validate_snapshot
+        snapshot = validate_snapshot(snapshot)
+        def save(transaction):
+            ref = self.meta.document("academic_calendar")
+            previous = ref.get(transaction=transaction)
+            if previous.exists and datetime.fromisoformat(previous.get("fetched_at")) > datetime.fromisoformat(snapshot["fetched_at"]):
+                return previous.to_dict()
+            transaction.set(ref, snapshot)
+            return snapshot
+        return self._run_transaction(save)
+
     def _update_open_task(self, task_id: int, values: dict) -> bool:
         def update(transaction):
             reference = self.tasks.document(str(task_id))

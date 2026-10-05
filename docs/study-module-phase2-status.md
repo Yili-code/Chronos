@@ -116,6 +116,12 @@ Source: https://academic.ntou.edu.tw/p/405-1005-123146,c834.php?Lang=zh-tw .
 Daily snapshot persistence, synchronization, notifications and production
 suppression are still not connected. Do not call this calendar integration complete.
 
+Calendar snapshot storage is now implemented on SQLite and Firestore. Snapshots
+carry the exact official source URL, retrieval timestamp, HTML fingerprint and
+validated events. Older responses cannot replace newer snapshots; next-day and
+future-dated snapshots are not current. Six snapshot/policy tests pass. Network
+synchronization, notification timing and production suppression remain pending.
+
 ## Owner-approved deferral — 2026-10-05
 
 YiLi explicitly paused automatic lecture key-point generation and delivery.
