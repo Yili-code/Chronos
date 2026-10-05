@@ -1,5 +1,20 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Announcement import and Study tick integration — 2026-10-05
+
+`python -m chronos.run_announcement_sync` is disabled unless `--enable` is
+explicitly supplied. Enabled runs import up to 20 validated saved versions into
+the configured database and deliver up to 10 message parts; `--watch` repeats
+every 30 seconds. It never opens Chrome or invokes AI. Saved older observations
+are retained as historical announcements with their publication date, not
+discarded merely because the local process was offline. Future observations
+and invalid fingerprints are rejected. Canonical repeat imports are no-ops.
+
+The protected Study tick now resumes canonical announcement delivery using the
+same durable ledger as the local worker. Seven import/delivery tests and 49
+system tests passed. This wiring is not yet deployed or live verified. It does
+not implement the PRD's automatic TronClass collection schedule.
+
 ## Canonical announcement records and delivery worker — 2026-10-05
 
 SQLite and Firestore now expose first-writer-wins announcement persistence,
