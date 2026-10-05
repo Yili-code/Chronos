@@ -16,7 +16,11 @@ async def tick_assignments(db, telegram, chat_id, now):
         notice_key = f"assignment:{source_key}:discovered"
         notice = db.get_study_delivery(notice_key)
         initial = not notice or notice["status"] != "sent"
-        key = notice_key if initial else due_reminder(item, now, sent_keys=set())
+        def current_key(value):
+            if value.status == "deadline_pending" and value.deadline_revision > 0:
+                return f"assignment:{source_key}:deadline:{value.deadline_revision}:pending"
+            return due_reminder(value, now, sent_keys=set())
+        key = notice_key if initial else current_key(item)
         if key is None:
             continue
         claim = ledger.claim(key, now)
@@ -26,7 +30,7 @@ async def tick_assignments(db, telegram, chat_id, now):
         if not current or not current["task_exists"] or current["assignment"].status == "done":
             continue
         item = current["assignment"]
-        if not initial and due_reminder(item, now, sent_keys=set()) != key:
+        if not initial and current_key(item) != key:
             continue  # a concurrently changed deadline invalidates this claim
         deadline = (f"截止：{item.deadline:%Y-%m-%d %H:%M}（台北時間）" if item.deadline
                     else f"截止時間尚未提供。請用 /deadline {task_id} YYYY-MM-DD HH:MM 確認。")

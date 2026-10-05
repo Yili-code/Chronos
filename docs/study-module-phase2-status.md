@@ -89,6 +89,13 @@ content to AI or submit homework. Installed-extension reload and live end-to-end
 handoff remain unverified; background monitoring and production ingestion remain
 unfinished. This local observation stage is not a substitute for the full PRD.
 
+Reliability follow-up: removing a previously known deadline now creates one
+deduplicated confirmation notice for the new deadline revision. Ordinary done,
+reschedule and edit replies render the known transaction result without querying
+Firestore after writes. Fifty-six command/scheduler/system tests and thirteen
+Firestore-fake tests pass; the latter exercise the real prepared command actions
+inside update-receipt transactions. Live production verification remains pending.
+
 ## Owner-approved deferral — 2026-10-05
 
 YiLi explicitly paused automatic lecture key-point generation and delivery.

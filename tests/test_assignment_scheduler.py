@@ -45,3 +45,13 @@ def test_unknown_delivery_never_blindly_resends(tmp_path):
     for hours in (0, 1, 2):
         asyncio.run(tick_assignments(db, bot, 123, now + timedelta(hours=hours)))
     assert bot.send_message.await_count == 1
+
+
+def test_removed_deadline_gets_one_new_confirmation_question(tmp_path):
+    db, now, task, bot = setup(tmp_path)
+    asyncio.run(tick_assignments(db, bot, 123, now))
+    db.edit_task(task["task_id"], "Report", None, "course")
+    for _ in range(3):
+        asyncio.run(tick_assignments(db, bot, 123, now))
+    assert bot.send_message.await_count == 2
+    assert "截止時間尚未提供" in bot.send_message.call_args.args[1]

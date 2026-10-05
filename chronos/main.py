@@ -330,10 +330,12 @@ async def prepare_message(text: str) -> Callable[[], str]:
     if completed:
         def complete() -> str:
             position = int(completed.group(1))
+            before = tasks.list_open()
             task = tasks.complete_position(position)
             if task is None:
                 return f"Task {position} not found.\n\n{format_tasks(tasks.list_open(), settings.tz)}"
-            return f"Completed: {task['title']}\n\n{format_tasks(tasks.list_open(), settings.tz)}"
+            remaining = [item for item in before if item["id"] != task["id"]]
+            return f"Completed: {task['title']}\n\n{format_tasks(remaining, settings.tz)}"
         return complete
     rescheduled = re.fullmatch(r"reschedule\s+(\d+)\s+(.+)", command or "", re.IGNORECASE)
     if rescheduled:
@@ -347,10 +349,11 @@ async def prepare_message(text: str) -> Callable[[], str]:
         if not parsed.due_at:
             return lambda: "Please include a date or time."
         def reschedule() -> str:
+            before = tasks.list_open()
             task = tasks.reschedule_position(position, parsed.due_at)
             if task is None:
                 return f"Task {position} not found.\n\n{format_tasks(tasks.list_open(), settings.tz)}"
-            return f"Rescheduled: {format_task(task, settings.tz)}\n\n{format_tasks(tasks.list_open(), settings.tz)}"
+            return f"Rescheduled: {format_task(task, settings.tz)}\n\n{format_updated_tasks(before, task)}"
         return reschedule
     edited = re.fullmatch(r"edit\s+(\d+)\s+(.+)", command or "", re.IGNORECASE)
     if edited:
@@ -364,10 +367,11 @@ async def prepare_message(text: str) -> Callable[[], str]:
             return lambda reply=str(error): reply
         task_id = current["id"]
         def edit() -> str:
+            before = tasks.list_open()
             task = tasks.edit(task_id, parsed.title, parsed.due_at, parsed.project)
             if task is None:
                 return f"Task {position} is no longer open.\n\n{format_tasks(tasks.list_open(), settings.tz)}"
-            return f"Updated: {format_task(task, settings.tz)}\n\n{format_tasks(tasks.list_open(), settings.tz)}"
+            return f"Updated: {format_task(task, settings.tz)}\n\n{format_updated_tasks(before, task)}"
         return edit
     if command is not None or re.fullmatch(r"(?:代辦|清單|完成\s*#?\d+|延期\s*#?\d+.*)", normalized):
         return lambda: "Unknown command. Use /help to see available commands."
@@ -379,3 +383,10 @@ async def prepare_message(text: str) -> Callable[[], str]:
         task = tasks.create(parsed.title, parsed.due_at, parsed.project)
         return f"Created: {format_task(task, settings.tz)}"
     return create
+
+
+def format_updated_tasks(before: list[dict], updated: dict) -> str:
+    """Render the known transaction outcome without a Firestore read-after-write."""
+    after = [{**item, **updated} if item["id"] == updated["id"] else item for item in before]
+    after.sort(key=lambda item: (item.get("due_at") is None, item.get("due_at") or "", item["id"]))
+    return format_tasks(after, settings.tz)
