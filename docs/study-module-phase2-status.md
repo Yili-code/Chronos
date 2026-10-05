@@ -1,5 +1,19 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Observation-to-assignment importer — 2026-10-05
+
+Added an AI-independent local worker: `python -m chronos.run_assignment_sync`
+is disabled by default; `--enable` imports validated observations and sends due
+assignment notices, while `--watch` repeats every 30 seconds. It uses the selected
+database configuration, including Firestore when explicitly configured. It does
+not open Chrome or poll TronClass. Source collection is still a separate gap.
+
+The importer accepts only tracked courses and observations within 24 hours,
+creates each new source once and preserves existing owner edits, completions
+and cleared-task history. Existing-source updates are deliberately left for a
+conflict-aware update path rather than silently overwriting owner state.
+7 import/scheduler tests passed across both backends; no live import was run.
+
 ## Assignment evidence retained in canonical records — 2026-10-05
 
 Assignment records now preserve observed submission status and safe PDF
