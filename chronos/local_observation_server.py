@@ -87,6 +87,9 @@ class _ObservationHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_POST(self) -> None:  # noqa: N802
+        if self.path == '/v1/cloud-session':
+            self._import_session()
+            return
         if self.path not in {"/v1/browser-observation", "/v1/browser-materials", "/v1/browser-pdf", "/v1/browser-native-pdf", "/v1/browser-assignment", "/v1/browser-announcements"}:
             self._send_json(404, {"error": "not_found"})
             return
@@ -139,16 +142,53 @@ class _ObservationHandler(BaseHTTPRequestHandler):
         origin = self.headers.get("Origin")
         return origin is None or origin == self.server.extension_origin
 
+    def _import_session(self):
+        # Unlike observations, secret imports reject originless requests.
+        if (not self.server.session_publisher or not self.server.extension_origin
+                or self.headers.get('Origin') != self.server.extension_origin
+                or self.headers.get('X-Chronos-Bridge') != '1'):
+            self._send_json(403, {'status': 'import_disabled_or_forbidden'})
+            return
+        from .cloud_session import validate_cloud_session
+        try:
+            length = int(self.headers.get('Content-Length', '-1'))
+            if not 1 <= length <= 65536:
+                raise ValueError()
+            self.connection.settimeout(10)
+            raw = self.rfile.read(length)
+            validate_cloud_session(raw)
+        except (ValueError, OSError):
+            self._send_json(400, {'status': 'invalid_session'})
+            return
+        with self.server.session_import_lock:
+            if self.server.session_import_used:
+                self._send_json(409, {'status': 'import_already_attempted'})
+                return
+            # Consume before writing: an uncertain result must not be retried.
+            self.server.session_import_used = True
+        try:
+            version = self.server.session_publisher(raw)
+            if not isinstance(version, str) or not re.fullmatch(r'[1-9][0-9]*', version):
+                raise ValueError()
+        except Exception:
+            self._send_json(503, {'status': 'import_uncertain_do_not_retry'})
+            return
+        self._send_json(202, {'status': 'session_imported', 'version': version})
+
 
 class LocalObservationServer(ThreadingHTTPServer):
     """A loopback-only HTTP server for explicit popup handoffs."""
 
     def __init__(self, port: int = 8765, pdf_directory: Path | None = None, catalog_path: Path | None = None,
-                 extension_id: str | None = None, native_download_root: Path | None = None) -> None:
+                 extension_id: str | None = None, native_download_root: Path | None = None,
+                 session_publisher=None) -> None:
         if extension_id is not None and not re.fullmatch(r"[a-p]{32}", extension_id):
             raise ValueError("invalid Chrome extension ID")
         self.extension_origin = f"chrome-extension://{extension_id}" if extension_id else None
         self.native_download_root = native_download_root
+        self.session_publisher = session_publisher
+        self.session_import_lock = Lock()
+        self.session_import_used = False
         super().__init__(("127.0.0.1", port), _ObservationHandler)
         self.observation_store = ObservationStore()
         self.material_store = MaterialObservationStore(catalog_path)
@@ -165,9 +205,19 @@ def main() -> None:
     parser.add_argument("--catalog-path", type=Path, default=Path(".study-data/catalog.sqlite3"))
     parser.add_argument("--extension-id", required=True, help="Exact installed Chronos extension ID, not a secret")
     parser.add_argument("--native-download-root", type=Path, help="Only the Chronos subdirectory of Chrome Downloads")
+    parser.add_argument('--session-import-gcloud', type=Path,
+                        help='Explicitly enable one session import using this gcloud executable')
     args = parser.parse_args()
+    publisher = None
+    if args.session_import_gcloud:
+        import httpx
+        from .cloud_session_publish import operator_token, publish_session
+        def publisher(raw):
+            token = operator_token(args.session_import_gcloud)
+            with httpx.Client(trust_env=False) as client:
+                return publish_session(raw, token, client=client)
     server = LocalObservationServer(args.port, catalog_path=args.catalog_path, extension_id=args.extension_id,
-        native_download_root=args.native_download_root)
+        native_download_root=args.native_download_root, session_publisher=publisher)
     print(f"Chronos local observation receiver listening on 127.0.0.1:{args.port}")
     try:
         server.serve_forever()

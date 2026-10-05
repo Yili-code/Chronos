@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "description": "Expose redacted, read-only TronClass page observations to Chronos.",
   "permissions": ["activeTab", "downloads", "alarms"],
+  "optional_permissions": ["cookies"],
   "background": {"service_worker": "background.js"},
   "action": {
     "default_title": "Chronos read-only observation",

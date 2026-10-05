@@ -1987,3 +1987,28 @@ canonical project number are accepted, never arbitrary projects. Implementation
 reference: https://docs.cloud.google.com/secret-manager/docs/add-secret-version.
 The publisher is not yet connected to an extension handoff endpoint. Actual
 session export, rotation/revocation and cloud login remain unverified.
+
+### Explicit extension import handoff
+
+The popup now offers a separate cloud-session import button. Cookie access is
+an optional Chrome permission requested only by that click and removed in its
+finally handler. Only secure, unpartitioned cookies with the exact TronClass
+domain are transferred; parent-domain and CAS cookies are excluded. No password,
+localStorage, cookie values or raw errors are displayed. Closing the popup during
+upload can leave an uncertain outcome; inspect the cloud version metadata before
+another attempt rather than assuming nothing was saved.
+
+The local `/v1/cloud-session` endpoint is disabled unless the receiver starts with
+`--session-import-gcloud <gcloud executable>`. Unlike the ordinary observation
+endpoints, it requires the exact configured extension Origin, rejects originless
+requests, validates a bounded payload, and consumes its one-attempt allowance
+before calling Secret Manager. Failure or lost acknowledgement never triggers an
+automatic retry. Origin checking is a browser boundary, not authentication of
+malicious software already running locally. This importer is a temporary setup
+tool, not a dependency of subsequent cloud collection.
+
+Local HTTP tests cover wrong/missing origins, invalid payloads, one-shot behavior,
+sanitized failures and no catalog writes. User must reload the extension, open
+TronClass, click the import button and approve Chrome's optional cookie permission.
+Real upload and cloud authentication remain pending; an import receipt alone does
+not establish authentication or activate scheduling.
