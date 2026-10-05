@@ -265,7 +265,8 @@ class FirestoreDatabase:
             ref = self.study_poll_jobs.document(key)
             previous = ref.get(transaction=transaction)
             state = transition(previous.to_dict() if previous.exists else None)
-            transaction.set(ref,state)
+            if not previous.exists or state != previous.to_dict():
+                transaction.set(ref,state)
             return state
         return self._run_transaction(mutate)
 

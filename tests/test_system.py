@@ -80,6 +80,7 @@ def test_study_scheduler_endpoint_requires_secret_and_is_disabled_by_default(sys
     response = client.post('/internal/study', headers={'X-Chronos-Scheduler-Secret': 'test-scheduler'})
     assert response.status_code == 200
     assert response.json() == {'enabled': False}
+    assert main.db.list_study_polls() == []
     bot.send_message.assert_not_awaited()
 
 
@@ -107,6 +108,12 @@ def test_study_endpoint_refreshes_calendar_before_course_policy(system, monkeypa
     assert response.json()['calendar_sync'] == 'updated'
     assert response.json()['course_prompts_suppressed'] is True
     assert response.json()['holiday_notices_sent'] == 1
+    assert response.json()['collection_slots_ensured'] == 7
+    assert len(main.db.list_study_polls()) == 7
+    assert all(state['status']=='queued' for _,state in main.db.list_study_polls())
+    repeated = client.post('/internal/study', headers={'X-Chronos-Scheduler-Secret': 'test-scheduler'})
+    assert repeated.status_code == 200
+    assert len(main.db.list_study_polls()) == 7
     assert main.db.get_course_session('security:2026-10-05') is None
     assert bot.send_message.await_count == 1
 

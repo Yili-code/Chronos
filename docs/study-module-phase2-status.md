@@ -1,5 +1,15 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Fixed-slot queue integration — 2026-10-05
+
+Enabled Study ticks now ensure the latest due fixed-slot requests for all seven
+tracked courses. Disabled ticks create no jobs. Repeated ticks preserve the same
+keys and states; unchanged queue transitions skip writes on both backends.
+The response reports `collection_slots_ensured`, not successful collections.
+Sixty-two system/queue/worker tests passed, including repeated protected ticks
+and holiday-day collection (holidays suppress surveys, not content monitoring).
+No Chrome worker is enabled and this integration is not yet deployed.
+
 ## Bounded collection orchestration — 2026-10-05
 
 A disabled-by-default one-job worker now connects queue claims, the existing

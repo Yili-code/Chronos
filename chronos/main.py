@@ -113,6 +113,8 @@ async def run_study_tick() -> dict:
     if not settings.telegram_chat_id or not telegram.enabled:
         raise HTTPException(status_code=503, detail="Study delivery is not configured")
     now = datetime.now(settings.tz)
+    from .study_poll_queue import enqueue_scheduled_polls
+    collection_slots = enqueue_scheduled_polls(db, now)
     from .calendar_sync import sync_calendar
     from .calendar_scheduler import tick_calendar
     calendar_sync_result = await sync_calendar(db, now)
@@ -126,7 +128,8 @@ async def run_study_tick() -> dict:
     from .exam_scheduler import tick_exams
     exam_result = await tick_exams(db, telegram, settings.telegram_chat_id, now)
     notices = await notify_study_failures(db, telegram, settings.telegram_chat_id, now)
-    return {**result, **assignment_result, **announcement_result, **notices, **calendar_sync_result, **calendar_result, **exam_result}
+    return {**result, **assignment_result, **announcement_result, **notices, **calendar_sync_result, **calendar_result, **exam_result,
+            'collection_slots_ensured': collection_slots}
 
 
 @app.post("/internal/study")

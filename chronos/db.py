@@ -308,7 +308,10 @@ class Database:
         active = self._transaction.get()
         with (nullcontext(active) if active is not None else self.transaction()) as connection:
             row = connection.execute('SELECT record_json FROM study_poll_jobs WHERE source_key=?',(key,)).fetchone()
-            state = transition(json.loads(row[0]) if row else None)
+            previous = json.loads(row[0]) if row else None
+            state = transition(previous)
+            if row and state == previous:
+                return state
             connection.execute('INSERT INTO study_poll_jobs VALUES (?, ?) ON CONFLICT(source_key) DO UPDATE SET record_json=excluded.record_json',(key,json.dumps(state)))
             return state
 
