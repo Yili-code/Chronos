@@ -1,5 +1,14 @@
 # Phase 2 — development resumed, acceptance incomplete
 
+## Actionable delivery failure notices — 2026-10-05
+
+Persistent delivery failures now identify the affected feature (announcements,
+assignments, calendar, exams, preparation or AI budget) and suggest its relevant
+lookup route. Unknown categories use a generic Study notice instead of falsely
+claiming every failure concerns a post-class question. Internal source keys are
+never echoed. Nine focused tests passed, including notification deduplication
+and recursion prevention. Not yet deployed.
+
 ## Announcement import and Study tick integration — 2026-10-05
 
 `python -m chronos.run_announcement_sync` is disabled unless `--enable` is

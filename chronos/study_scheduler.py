@@ -117,10 +117,19 @@ async def notify_study_failures(db, telegram, chat_id: int, now: datetime) -> di
         key = "notice:" + source_key
         claim = ledger.claim(key, now)
         if claim:
+            category = source_key.split(':', 1)[0]
+            label, guidance = {
+                'announcement': ('課程公告通知', '請到 TronClass 公告頁確認內容。'),
+                'assignment': ('作業通知', '請用 /tasks 檢查作業，並到 TronClass 確認截止時間。'),
+                'calendar': ('校曆通知', '請確認官方校曆與老師的上課安排。'),
+                'exam': ('考試通知', '請用 /exams 查看已確認的考試資料。'),
+                'preparation': ('作業草稿通知', '請用 /draft 作業固定ID 查閱已保存草稿。'),
+                'ai-budget': ('AI 額度通知', '請用 /study_budget 查看已記錄的用量。'),
+            }.get(category, ('Study 通知', '請檢查課後問題及 /tasks 中的待辦。'))
             try:
                 result = await telegram.send_message(chat_id,
-                    "一則課後通知無法確認送達，或已達重試上限。"
-                    "Chronos 已停止自動重送該則訊息；請檢查今天的課後問題。")
+                    f"一則{label}無法確認送達，或已達重試上限。"
+                    f"Chronos 已停止自動重送該則訊息；{guidance}")
             except TelegramError:
                 ledger.finish(key, claim, now)
             else:
