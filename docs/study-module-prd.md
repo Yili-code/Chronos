@@ -190,8 +190,11 @@ MVP 處理：
 
 ### 5.3 Authentication
 
-- 採 Phase 0 後已選定的 Chrome browser-session／local companion 路徑；不以不可靠的 CAS REST 密碼登入作為正式路徑。
-- 密碼與 session cookie 留在登入瀏覽器，不匯出至雲端、Git、Firestore、log 或 Telegram。
+- 2026-10-05 YiLi 已確認改採 Cloud Run 雲端收集，允許必要登入 session 安全保存於雲端，以便個人電腦關機後仍可監測。Chrome extension／local companion 保留為手動驗證路徑，不再是正式自動監測的必要常駐依賴。不以不可靠的 CAS REST 密碼登入作為正式路徑。
+- 雲端收集採獨立 Cloud Run Job，以 Cloud Scheduler 固定觸發，並由已授權服務在進度回覆後觸發；與 Telegram webhook service 分離，不依靠 HTTP response 結束後的背景執行緒。
+- 不保存 CAS 密碼。僅搬移經確認必要的 session，保存在 Secret Manager，使用專用 service account 與單一 secret 範圍的最小存取權限；Telegram webhook service 不得因此取得 session 讀取權限。
+- 不將 cookie、session 或完整瀏覽器 profile 寫入 Git、Firestore、一般 log、Telegram、容器映像或部署參數。Cloud Run 暫存檔不是持久儲存；session 失效或撤銷後不可用舊版本自動回退。
+- 初次導入、輪替與撤銷 session 必須有不顯示內容的受控流程。雲端登入是否受 IP／裝置綁定影響仍需真實驗證，授權搬移不等於已證明可用。
 - Session 失效時回報 `reauth_required`，由 YiLi 在瀏覽器重新登入；cold start 不得宣稱已登入。
 - 重新登入後重新觀察並驗證 session，不重用過期的就緒狀態。
 - 不反覆嘗試密碼登入；不可取得的附件明確標記 `deferred_attachment`，不得冒充已保存。
@@ -336,6 +339,8 @@ AI provider:
 Cost controls:
 
 - Cloud Run `min-instances=0`
+- 收集 Job 採單 task、parallelism=1、明確 timeout 與預設零自動重試；跨 execution 仍須使用資料庫 claim 避免重疊。Job 完成後退出，不維持常駐瀏覽器。
+- 雲端 session 與收集授權不等於接受額外費用。Cloud Run、Secret Manager、Scheduler、映像儲存與流量成本均需列入估算；不自動開通新付費方案，不保證免費。
 - 限制最大 instance 數量
 - 只在明確任務下呼叫 Gemini
 - 以檔案 fingerprint 快取摘要
