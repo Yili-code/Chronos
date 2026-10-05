@@ -1,5 +1,22 @@
 # Phase 1 status
 
+## Unknown-progress follow-up fix — 2026-10-05
+
+The owner's Telegram screenshot demonstrated the real reply-to-task loop, but
+also exposed an unusable review scope from an explicit unknown-progress reply.
+Source commit `9bfb75a` now uses conservative whole-reply rules: clear uncertainty
+creates a scope-confirmation task, while uncertainty embedded in a known chapter
+or page range remains a review task. The original answer and answered state are
+preserved; no AI classification is involved.
+
+Verification: 21 focused tests and 354 full offline tests passed (525 dependency
+warnings in the full run). Revision `chronos-00021-chw` serves 100% of traffic;
+health is OK, the course scheduler remains enabled, and a Study request on the
+new revision returned HTTP 200 at 06:34:01Z. The reported incorrect task was
+corrected in place only after a transactional exact-title/open-status check;
+no task was duplicated or marked complete. New-rule inbound reply behavior is
+covered offline, not by a fabricated owner webhook. AI generation stays deferred.
+
 ## Tracking-only production activation — 2026-10-05
 
 Owner explicitly authorized deployment and scheduling. Source commit `e636b64`
