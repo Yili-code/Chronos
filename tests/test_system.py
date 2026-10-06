@@ -39,10 +39,9 @@ def system(tmp_path, monkeypatch):
 
 
 def test_course_reply_is_correlated_and_receipt_deduplicated(system):
-    from datetime import date
     from chronos.course_tracking import COURSE_SCHEDULE, new_session
     client, service, bot, config = system
-    session = new_session(COURSE_SCHEDULE[0], date(2026, 10, 5), 501)
+    session = new_session(COURSE_SCHEDULE[0], datetime.now(config.tz).date(), 501)
     main.db.create_course_session(session)
     payload = {'update_id': 900, 'message': {'message_id': 502,
                'chat': {'id': 123}, 'text': 'Chapter 4',
@@ -71,6 +70,25 @@ def test_unknown_reply_never_creates_task(system):
     assert response.status_code == 200
     main.ai.parse.assert_not_awaited()
     assert service.list_open() == []
+
+
+def test_course_reply_preserves_evidence_and_stores_english_review_label(system, monkeypatch):
+    from chronos.course_tracking import COURSE_SCHEDULE, new_session
+    client, service, bot, config = system
+    today = datetime.now(config.tz).date()
+    session = new_session(COURSE_SCHEDULE[1], today, 601)
+    main.db.create_course_session(session, create_tasks=True)
+    summary = AsyncMock(return_value='Chapter 2 to around page 43')
+    monkeypatch.setattr(main.ai, 'summarize_progress', summary)
+    payload = {'update_id': 902, 'message': {'message_id': 602,
+               'chat': {'id': 123}, 'text': '第二章到43頁左右',
+               'reply_to_message': {'message_id': 601}}}
+    headers = {'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}
+    assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 200
+    review, = service.list_open()
+    assert review['title'] == f'複習計算機結構 {today:%m/%d}：Chapter 2 to around page 43'
+    assert main.db.get_course_session(session.session_id).reported_progress == '第二章到43頁左右'
+    summary.assert_awaited_once_with('第二章到43頁左右')
 
 
 def test_study_scheduler_endpoint_requires_secret_and_is_disabled_by_default(system):
@@ -168,15 +186,29 @@ def test_webhook_auth_and_commands(system):
     assert send('/start').status_code == 200
     help_text = bot.send_message.call_args.args[1]
     assert help_text == main.HELP_TEXT
-    assert help_text.startswith('<b>Chronos</b>\nSend a task in Chinese or English')
-    assert '(Dates, times, and tags are optional.)' in help_text
-    assert '/help — Show this guide' in help_text
-    assert '/tasks — List open tasks' in help_text
-    assert '/done 1 — Complete position 1 in the current /tasks list' in help_text
-    assert '/reschedule 1 tomorrow at 10:00' in help_text
-    assert '/edit 1 move it to Friday and rename it' in help_text
-    assert '/clear — Delete all tasks after confirmation' in help_text
+    assert help_text == (
+        '<b>Commands</b>\n'
+        '\n<b>Tasks</b>\n'
+        '/tasks — list open tasks\n'
+        '/done x — complete task\n'
+        '/edit x ... — edit task\n'
+        '/clear — delete all tasks\n'
+        '\n<b>Study</b>\n'
+        '/classday ... — confirm a course-specific instruction day\n'
+        '/study_budget — inspect recorded Study AI usage without generating\n'
+        '\n<b>Assignments</b>\n'
+        '/prepare y — request an editable assignment draft\n'
+        '/draft y [page] — read a saved draft without generating\n'
+        '\n<b>Notes</b>\n'
+        '/notes {course} — list saved study notes\n'
+        '/note x {page} — read a saved note\n'
+        '/export x — download canonical Markdown'
+    )
+    assert '/reschedule' not in help_text
     assert '/postpone' not in help_text
+    assert '/deadline' not in help_text
+    assert '/exam' not in help_text
+    assert '/assignment' not in help_text
     assert bot.send_message.call_args.kwargs == {'parse_mode': 'HTML'}
     assert send('/help').status_code == 200
     assert bot.send_message.call_args.args[1] == help_text
@@ -188,11 +220,13 @@ def test_webhook_auth_and_commands(system):
     assert send('新增工作').status_code == 200
     assert bot.send_message.call_args.args[1] == 'Created: Test task'
     assert send('/tasks').status_code == 200
-    assert bot.send_message.call_args.args[1] == 'Open tasks:\n1. Test task'
-    main.ai.parse.return_value = ParsedTask('Reschedule task', datetime(2026, 9, 20, 10, tzinfo=config.tz))
-    assert send('/reschedule 1 週日').status_code == 200
+    assert bot.send_message.call_args.args[1] == '<b>Tasks</b>\n1. Test task'
+    assert bot.send_message.call_args.kwargs == {'parse_mode': 'HTML'}
+    main.ai.edit = AsyncMock(return_value=ParsedTask(
+        'Test task', datetime(2026, 9, 20, 10, tzinfo=config.tz)))
+    assert send('/edit 1 改到週日').status_code == 200
     assert service.list_open()[0]['due_at'].startswith('2026-09-20T10:00')
-    assert bot.send_message.call_args.args[1].startswith('Rescheduled: Test task | 09/20 10:00\n\nOpen tasks:')
+    assert bot.send_message.call_args.args[1].startswith('Updated: Test task 09/20 10:00\n\n<b>Tasks</b>')
     assert send('/done 1').status_code == 200
     assert bot.send_message.call_args.args[1] == 'Completed: Test task\n\nNo open tasks.'
     assert service.list_open() == []
@@ -200,15 +234,15 @@ def test_webhook_auth_and_commands(system):
     assert bot.send_message.call_args.args[1] == 'Task 3 not found.\n\nNo open tasks.'
     parse_count = main.ai.parse.await_count
     assert send('/reschedule 4 tomorrow').status_code == 200
-    assert bot.send_message.call_args.args[1] == 'Task 4 not found.\n\nNo open tasks.'
+    assert bot.send_message.call_args.args[1] == 'Unknown command. Use /help to see available commands.'
     assert main.ai.parse.await_count == parse_count
     service.create('Draft roadmap')
     main.ai.edit = AsyncMock(return_value=ParsedTask(
         'Finalize roadmap', datetime(2026, 10, 3, 18, tzinfo=config.tz), 'Chronos'))
     assert send('/edit 1 改成完成 roadmap 並移到 10/03 18:00').status_code == 200
     assert bot.send_message.call_args.args[1] == (
-        'Updated: Finalize roadmap | 10/03 18:00 | #Chronos\n\n'
-        'Open tasks:\n1. Finalize roadmap | 10/03 18:00 | #Chronos')
+        'Updated: Finalize roadmap 10/03 18:00 #Chronos\n\n'
+        '<b>Tasks</b>\n1. Finalize roadmap 10/03 18:00 #Chronos')
 
 
 def test_daily_reminder_schedule(system):
@@ -220,6 +254,7 @@ def test_daily_reminder_schedule(system):
     asyncio.run(main.send_daily_tasks())
     assert bot.send_message.call_args.args[0] == 123
     assert '每日提醒測試' in bot.send_message.call_args.args[1]
+    assert bot.send_message.call_args.kwargs == {'parse_mode': 'HTML'}
     bot.send_message.reset_mock()
     config.telegram_chat_id = None
     asyncio.run(main.send_daily_tasks())
@@ -259,7 +294,7 @@ def test_persistence_order_and_reschedule(tmp_path):
     reopened = TaskService(Database(db.path), tz)
     assert [x['id'] for x in reopened.list_open()] == [earlier['id'], later['id'], no_due['id']]
     formatted = format_tasks(reopened.list_open(), tz)
-    assert formatted.startswith('Open tasks:\n1. 較早 | 09/19 10:00')
+    assert formatted.startswith('<b>Tasks</b>\n1. 較早 09/19 10:00')
     assert '#Chronos' in formatted
     assert reopened.complete(earlier['id'])
     assert not reopened.postpone(earlier['id'], datetime.now(tz))
@@ -394,18 +429,15 @@ def test_concurrent_duplicate_updates(system, monkeypatch):
     assert len(service.list_open()) == 1
 
 
-@pytest.mark.parametrize('command', ['done', 'reschedule', 'edit'])
+@pytest.mark.parametrize('command', ['done', 'edit'])
 def test_duplicate_other_mutations(system, monkeypatch, command):
     client, service, bot, config = system
     service.create('Original task')
-    main.ai.parse.return_value = ParsedTask('Reschedule task', datetime(2026, 9, 20, 10, tzinfo=config.tz))
-    method = {'done': 'complete_position', 'reschedule': 'reschedule_position', 'edit': 'edit'}[command]
+    method = {'done': 'complete_position', 'edit': 'edit'}[command]
     action = Mock(wraps=getattr(service, method))
     monkeypatch.setattr(service, method, action)
     if command == 'done':
         text = '/done 1'
-    elif command == 'reschedule':
-        text = '/reschedule 1 明天'
     else:
         text = '/edit 1 rename it'
         main.ai.edit = AsyncMock(return_value=ParsedTask('Renamed task'))

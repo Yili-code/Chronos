@@ -30,14 +30,17 @@ def test_scheduler_creates_one_survey_and_reply_creates_one_review(db):
         asyncio.run(tick_study(db, bot, 123, now))
     assert bot.send_message.await_count == 1
     survey, = db.list_open_tasks()
-    assert survey["title"] == "填寫資訊安全實務與管理進度（2026-10-05）"
-    action = lambda: db.record_course_reply(501, 502, "講義 A 第 10–12 頁", local_date=now.date())
+    assert survey["title"] == "填寫資訊安全實務與管理進度（10/05）"
+    action = lambda: db.record_course_reply(
+        501, 502, "講義 A 第 10–12 頁", local_date=now.date(),
+        review_summary="Handout A, pages 10–12",
+    )
     first = db.process_update(1, action)
     assert db.process_update(1, action) == first
     db.process_update(2, action)  # a different update replying to the same prompt
     review, = db.list_open_tasks()
     assert review["id"] != survey["id"]
-    assert review["title"] == "複習資訊安全實務與管理（2026-10-05）：講義 A 第 10–12 頁"
+    assert review["title"] == "複習資訊安全實務與管理 10/05：Handout A, pages 10–12"
     assert review["due_at"] is None
     assert '/done 清單順位' in first['reply']
     assert f"/done {review['id']}" not in first['reply']
@@ -92,7 +95,7 @@ def test_unknown_reply_creates_confirmation_task_once(db):
     receipt = db.process_update(30, action)
     db.process_update(31, action)
     task, = db.list_open_tasks()
-    assert task["title"] == "確認資訊安全實務與管理今日上課範圍（2026-10-05）"
+    assert task["title"] == "確認資訊安全實務與管理 10/05 上課範圍"
     assert "新增確認範圍代辦" in receipt["reply"]
     assert "複習後" not in receipt["reply"]
     saved = db.get_course_session(session.session_id)

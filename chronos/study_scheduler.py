@@ -122,7 +122,6 @@ async def notify_study_failures(db, telegram, chat_id: int, now: datetime) -> di
                 'announcement': ('課程公告通知', '請用 /announcements 查閱已保存版本，或到 TronClass 確認最新內容。'),
                 'assignment': ('作業通知', '請用 /tasks 檢查作業，並到 TronClass 確認截止時間。'),
                 'calendar': ('校曆通知', '請確認官方校曆與老師的上課安排。'),
-                'exam': ('考試通知', '請用 /exams 查看已確認的考試資料。'),
                 'preparation': ('作業草稿通知', '請用 /draft 作業固定ID 查閱已保存草稿。'),
                 'ai-budget': ('AI 額度通知', '請用 /study_budget 查看已記錄的用量。'),
             }.get(category, ('Study 通知', '請檢查課後問題及 /tasks 中的待辦。'))

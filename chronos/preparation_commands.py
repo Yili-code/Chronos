@@ -1,5 +1,6 @@
 """Explicit, idempotent preparation requests; no generation in webhook transactions."""
 from hashlib import sha256
+from datetime import datetime
 import json
 import re
 
@@ -33,7 +34,8 @@ def draft_query(db, command):
     page = int(match[2] or 1)
     if page > len(pages):
         return f'目前共 {len(pages)} 頁。'
-    footer = f"\n\n第 {page}/{len(pages)} 頁；請求時間：{state['requested_at']}"
+    requested_at = datetime.fromisoformat(state['requested_at'])
+    footer = f"\n\n第 {page}/{len(pages)} 頁；請求時間：{requested_at:%m/%d %H:%M}"
     if page < len(pages):
         footer += f'\n下一頁：/draft {match[1]} {page + 1}'
     return pages[page - 1] + footer

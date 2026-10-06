@@ -68,16 +68,37 @@ CHRONOS_PUBLIC_BASE_URL=https://你的公開網址
 明天 17:00 完成報告 #Chronos
 /tasks
 /done 1
-/reschedule 1 週五 10:00
-/edit 1 改成週五交 final report 並移除專案
+/edit 1 改成週五 10:00 交 final report 並移除專案
 /clear
 ```
 
 除了 slash commands 外，直接傳送中英文自然語言就會新增一筆代辦。Telegram 與 Web 的互動文字統一使用英文。
-`/tasks` 依「期限最早、無期限最後、同期限較早建立者優先」排序，並將目前未完成代辦動態編為 `1..n`；永久 database ID 不會顯示。`/done`、`/reschedule` 與 `/edit` 使用這個當下位置，操作後會回覆結果及更新後清單。不存在的位置會顯示錯誤及最新清單。每天 08:00 的清單使用同一格式。
-`/reschedule` 可提前或延後期限，時間文字可使用中文或英文。舊的中文 commands 與 `/postpone` 不再支援；`/start` 與 `/help` 都會顯示英文使用說明。
-`/edit <position> <instruction>` 接受中文或英文自然語言，可同時修改標題、期限與分類，也能明確移除期限或分類；未提及的欄位會保留，儲存標題仍為精簡英文 action phrase。
+`/tasks` 依「期限最早、無期限最後、同期限較早建立者優先」排序，並將目前未完成代辦動態編為 `1..n`；永久 database ID 不會顯示。`/done` 與 `/edit` 使用這個當下位置，操作後會回覆結果及更新後清單。不存在的位置會顯示錯誤及最新清單。每天 08:00 的清單使用同一格式。
+`/edit <position> <instruction>` 接受中文或英文自然語言，可同時修改標題、期限與分類，也能明確移除期限或分類；未提及的欄位會保留，儲存標題仍為精簡英文 action phrase。任務改期與作業截止日期都統一使用 `/edit`；`/reschedule` 與 `/deadline` 不再支援。
+舊的中文 commands 與 `/postpone` 不再支援；`/start` 與 `/help` 都會顯示英文使用說明。
 `/clear` 先顯示確認訊息；只有按下 **Delete all tasks** 才會刪除所有 open 與 completed task records，按 **Cancel** 不會變更資料。Telegram update receipts 與內部 ID counter 不在清除範圍內，以維持 webhook idempotency 與 ID 唯一性。
+
+### Study 指令範例
+
+作業固定 ID 會直接出現在作業通知，例如 `新作業 #27`。這個 `27` 只供 `/prepare` 與 `/draft` 使用；修改截止日期時，先用 `/tasks` 找到當下順位，再用 `/edit`。`/assignment`、`/exam` 與 `/exams` 不再支援。
+
+`/classday` 接受中文或英文自然語言，用於確認特定課程在某天是否上課：
+
+```text
+/classday 10/07 軟體工程不上課
+```
+
+筆記範例以「作業系統」課程為例。先列出該課程已保存的 notes，再複製回覆中的完整 64 字元 note ID：
+
+```text
+/notes 作業系統
+/note <從上一個回覆取得的完整 note ID>
+/export <同一個完整 note ID>
+```
+
+`/note` 讀取內容，`/export` 則傳送同一份 canonical note 的 Markdown 文件。Repository 不提供固定示範 ID，因為 note ID 是由實際內容計算，寫死的 ID 可能指向不存在或不同的筆記。
+
+`/tasks` 與每日清單使用粗體 `Tasks` 標題，以空格分隔欄位。課程日期顯示為 `MM/DD`；課後回覆原文仍保存作為教材與摘要依據，但新建立的複習代辦會另外使用一次 Gemini 產生簡短英文 label，並在 Telegram 中以粗體顯示。若翻譯暫時失敗，進度仍會保存，複習代辦回退顯示原文。
 
 設定 `CHRONOS_TELEGRAM_CHAT_ID` 後，其他 chat 無法操作 bot。
 

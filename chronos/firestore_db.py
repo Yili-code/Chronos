@@ -424,7 +424,7 @@ class FirestoreDatabase:
             stored = session
             if create_tasks:
                 task = self.create_task(
-                    f"填寫{session.course_name}進度（{session.class_date}）", None,
+                    f"填寫{session.course_name}進度（{session.class_date:%m/%d}）", None,
                     session.course_name, datetime.now().astimezone())
                 stored = replace(session, survey_task_id=task["id"])
             transaction.create(reference, session_to_firestore(stored))
@@ -432,7 +432,14 @@ class FirestoreDatabase:
 
         return self._run_transaction(create)
 
-    def record_course_reply(self, prompt_id: int, message_id: int, text: str, *, local_date=None, update_id=None, received_at=None) -> str:
+    def get_course_session_by_prompt(self, prompt_id: int) -> ProgressSession | None:
+        snapshots = list(self.course_sessions.where(
+            filter=FieldFilter("prompt_message_id", "==", prompt_id)
+        ).stream())
+        return session_from_firestore(snapshots[0].to_dict()) if len(snapshots) == 1 else None
+
+    def record_course_reply(self, prompt_id: int, message_id: int, text: str, *, local_date=None,
+                            update_id=None, received_at=None, review_summary=None) -> str:
         """Read state and write progress inside the webhook receipt transaction."""
         def record(transaction):
             query = self.course_sessions.where(filter=FieldFilter("prompt_message_id", "==", prompt_id))
@@ -460,7 +467,7 @@ class FirestoreDatabase:
                 if not existing.exists:
                     poll = (ref, initial_poll_state(request))
             review = None
-            title, kind, completion = progress_followup(answered)
+            title, kind, completion = progress_followup(answered, review_summary)
             if session.survey_task_id is not None:
                 # Read the linked task before create_task writes its counter.
                 task_ref = self.tasks.document(str(session.survey_task_id))
@@ -478,7 +485,7 @@ class FirestoreDatabase:
                 return (f"已記錄{session.course_name}的進度，填寫進度代辦已完成。\n"
                         f"新增{kind}代辦。\n"
                         f"{completion}先用 /tasks 查看目前清單，再輸入 /done 清單順位 完成。")
-            return f"已記錄{session.course_name}（{session.class_date}）的進度。"
+            return f"已記錄{session.course_name}（{session.class_date:%m/%d}）的進度。"
 
         active = self._transaction.get()
         return record(active) if active is not None else self._run_transaction(record)

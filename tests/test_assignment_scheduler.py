@@ -36,7 +36,10 @@ def test_missing_deadline_asks_once_without_timed_reminders(tmp_path):
     for hours in (0, 1, 24):
         asyncio.run(tick_assignments(db, bot, 123, now + timedelta(hours=hours)))
     assert bot.send_message.await_count == 1
-    assert f"/deadline {task['task_id']}" in bot.send_message.call_args.args[1]
+    text = bot.send_message.call_args.args[1]
+    assert '/edit 清單順位' in text
+    assert '/deadline' not in text
+    assert '/assignment' not in text
 
 
 def test_unknown_delivery_never_blindly_resends(tmp_path):

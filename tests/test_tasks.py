@@ -46,15 +46,29 @@ def test_dynamic_positions_hide_permanent_ids(tmp_path):
 
     assert [task["id"] for task in tasks.list_open()] == [earlier["id"], later["id"], no_due["id"]]
     assert format_tasks(tasks.list_open(), TZ) == (
-        "Open tasks:\n"
-        "1. Earlier | 09/19 10:00 | #Chronos\n"
-        "2. Later | 09/20 10:00\n"
+        "<b>Tasks</b>\n"
+        "1. Earlier 09/19 10:00 #Chronos\n"
+        "2. Later 09/20 10:00\n"
         "3. No due date"
     )
     assert tasks.complete_position(1)["id"] == earlier["id"]
     assert tasks.reschedule_position(2, datetime(2026, 9, 18, 8, tzinfo=TZ))["id"] == no_due["id"]
     assert tasks.get_open_by_position(0) is None
     assert tasks.get_open_by_position(3) is None
+
+
+def test_course_tasks_use_short_dates_bold_progress_and_html_escaping():
+    rendered = format_tasks([
+        {"title": "確認資訊安全實務與管理今日上課範圍（2026-10-05）",
+         "due_at": None, "project": "資訊安全實務與管理"},
+        {"title": "複習計算機結構 10/06：Chapter 2 to around page 43 & examples",
+         "due_at": None, "project": "計算機結構"},
+    ], TZ)
+    assert rendered == (
+        "<b>Tasks</b>\n"
+        "1. 確認資訊安全實務與管理 10/05 上課範圍 #資訊安全實務與管理\n"
+        "2. 複習計算機結構 10/06：<b>Chapter 2 to around page 43 &amp; examples</b> #計算機結構"
+    )
 
 
 def test_edit_updates_all_fields_and_requires_open_task(tmp_path):

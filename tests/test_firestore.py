@@ -136,11 +136,10 @@ def test_real_command_actions_do_not_read_after_firestore_writes(monkeypatch):
     monkeypatch.setattr(main, "db", db)
     monkeypatch.setattr(main, "tasks", TaskService(db, TZ))
     fake_ai = AsyncMock()
-    fake_ai.parse.return_value = ParsedTask("Task", datetime(2026, 10, 20, 12, tzinfo=TZ))
     fake_ai.edit.return_value = ParsedTask("Changed", datetime(2026, 10, 21, 12, tzinfo=TZ))
     monkeypatch.setattr(main, "ai", fake_ai)
     db.create_task("Task", None, None, datetime(2026, 10, 5, 12, tzinfo=TZ))
-    for update, command in enumerate(("/reschedule 1 tomorrow", "/edit 1 rename", "/done 1"), start=1):
+    for update, command in enumerate(("/edit 1 rename and move it to tomorrow", "/done 1"), start=1):
         action = asyncio.run(main.prepare_message(command))
         result = db.process_update(update, action)
         assert result["reply"]

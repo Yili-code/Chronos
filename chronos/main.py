@@ -1,4 +1,5 @@
 import base64
+from html import escape
 import hmac
 import json
 import logging
@@ -30,31 +31,22 @@ telegram = TelegramClient(settings.telegram_bot_token)
 scheduler = AsyncIOScheduler(timezone=settings.tz)
 
 HELP_TEXT = (
-    "<b>Chronos</b>\n"
-    "Send a task in Chinese or English. I will store a concise English version:\n"
-    "• Finish the report tomorrow at 17:00\n"
-    "• Attend Friday's meeting at 10:00 #Chronos\n"
-    "• Buy milk\n"
-    "(Dates, times, and tags are optional.)\n\n"
-    "Commands:\n"
-    "/help — Show this guide\n"
-    "/tasks — List open tasks\n"
-    "/done 1 — Complete position 1 in the current /tasks list\n"
-    "/deadline assignment-ID YYYY-MM-DD HH:MM — Confirm assignment deadline (Taipei)\n"
-    "/exam — Save confirmed exam details; unknown fields use ?\n"
-    "/exams [page] — List saved exam details\n"
-    "/announcements [page] — Browse saved bulletin versions\n"
-    "/classday — Confirm a course-specific instruction day\n"
-    "/study_budget — Inspect recorded Study AI usage without generating\n"
-    "/prepare assignment-ID — Request an editable assignment draft\n"
-    "/assignment assignment-ID [page] — Read saved assignment requirements\n"
-    "/draft assignment-ID [page] — Read a saved draft without generating\n"
-    "/reschedule 1 tomorrow at 10:00 — Change task 1's due time\n"
-    "/edit 1 move it to Friday and rename it — Edit task 1\n"
-    "/clear — Delete all tasks after confirmation\n"
-    "/notes [course] — List saved study notes\n"
-    "/note id [page] — Read a saved note\n"
-    "/export id — Download canonical Markdown"
+    "<b>Commands</b>\n"
+    "\n<b>Tasks</b>\n"
+    "/tasks — list open tasks\n"
+    "/done x — complete task\n"
+    "/edit x ... — edit task\n"
+    "/clear — delete all tasks\n"
+    "\n<b>Study</b>\n"
+    "/classday ... — confirm a course-specific instruction day\n"
+    "/study_budget — inspect recorded Study AI usage without generating\n"
+    "\n<b>Assignments</b>\n"
+    "/prepare y — request an editable assignment draft\n"
+    "/draft y [page] — read a saved draft without generating\n"
+    "\n<b>Notes</b>\n"
+    "/notes {course} — list saved study notes\n"
+    "/note x {page} — read a saved note\n"
+    "/export x — download canonical Markdown"
 )
 
 CLEAR_CONFIRM_TEXT = "Delete all tasks? This cannot be undone."
@@ -77,7 +69,9 @@ def clear_tasks_reply() -> str:
 
 async def send_daily_tasks() -> None:
     if settings.telegram_chat_id and telegram.enabled:
-        result = await telegram.send_message(settings.telegram_chat_id, format_tasks(tasks.list_open(), settings.tz))
+        result = await telegram.send_message(
+            settings.telegram_chat_id, format_tasks(tasks.list_open(), settings.tz), parse_mode="HTML"
+        )
         if not result.get("ok"):
             code = result.get("error_code", "unknown")
             raise RuntimeError(f"Telegram daily delivery failed with code {code}")
@@ -125,10 +119,8 @@ async def run_study_tick() -> dict:
     assignment_result = await tick_assignments(db, telegram, settings.telegram_chat_id, now)
     from .announcement_scheduler import tick_announcements
     announcement_result = await tick_announcements(db, telegram, settings.telegram_chat_id, now)
-    from .exam_scheduler import tick_exams
-    exam_result = await tick_exams(db, telegram, settings.telegram_chat_id, now)
     notices = await notify_study_failures(db, telegram, settings.telegram_chat_id, now)
-    return {**result, **assignment_result, **announcement_result, **notices, **calendar_sync_result, **calendar_result, **exam_result,
+    return {**result, **assignment_result, **announcement_result, **notices, **calendar_sync_result, **calendar_result,
             'collection_slots_ensured': collection_slots}
 
 
@@ -301,15 +293,28 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                     raise HTTPException(status_code=422, detail="Reply message id is required")
                 received_at = datetime.now(settings.tz)
                 received_date = received_at.date()
+                review_summary = None
+                session = db.get_course_session_by_prompt(source_message.reply_to_message.message_id)
+                if (session is not None and session.class_date == received_date
+                        and session.survey_task_id is not None
+                        and session.status.value not in {"answered", "missed"}):
+                    from .course_tracking import progress_is_unknown
+                    if not progress_is_unknown(text):
+                        try:
+                            review_summary = await ai.summarize_progress(text)
+                        except (AIError, ValueError):
+                            pass
                 action = lambda: db.record_course_reply(
                     source_message.reply_to_message.message_id, source_message.message_id, text,
                     local_date=received_date, update_id=update_id, received_at=received_at,
+                    review_summary=review_summary,
                 )
             else:
                 action = await prepare_message(text)
             receipt = db.process_update(update_id, action)
     if not receipt["delivered"]:
-        parse_mode = "HTML" if receipt["reply"] == HELP_TEXT else None
+        parse_mode = "HTML" if (receipt["reply"] == HELP_TEXT or "<b>Tasks</b>" in receipt["reply"]
+                                     or receipt["reply"].startswith("Completed:")) else None
         reply_markup = CLEAR_KEYBOARD if receipt["reply"] == CLEAR_CONFIRM_TEXT else None
         send_options = {"parse_mode": parse_mode}
         if reply_markup:
@@ -339,9 +344,6 @@ async def prepare_message(text: str) -> Callable[[], str]:
     if command is not None and (command == 'announcement' or command.startswith('announcement ')):
         from .announcement_commands import announcement_query
         return lambda: announcement_query(db, command)
-    if command is not None and (command == 'assignment' or command.startswith('assignment ')):
-        from .assignment_commands import assignment_query
-        return lambda: assignment_query(db, command)
     if command is not None and (command == 'draft' or command.startswith('draft ')):
         from .preparation_commands import draft_query
         return lambda: draft_query(db, command)
@@ -352,17 +354,15 @@ async def prepare_message(text: str) -> Callable[[], str]:
         from .ai_budget import budget_report
         return lambda: budget_report(db, datetime.now(settings.tz))
     if command is not None and (command == 'classday' or command.startswith('classday ')):
-        from .course_day_commands import classday_action
-        return classday_action(db, command)
-    if command is not None and (command == 'exams' or command.startswith('exams ')):
-        from .exams import exams_query
-        return lambda: exams_query(db, command)
-    if command is not None and (command == 'exam' or command.startswith('exam ')):
-        from .exams import exam_action
-        return exam_action(db, command)
-    if command is not None and (command == "deadline" or command.startswith("deadline ")):
-        from .assignment_commands import deadline_action
-        return deadline_action(db, command)
+        from .course_day_commands import classday_action, save_classday_action
+        parts = command.split()
+        if command == 'classday' or (len(parts) == 4 and parts[-1] in {'class', 'off', 'auto'}):
+            return classday_action(db, command)
+        try:
+            record = await ai.parse_classday(command.removeprefix('classday').strip(), datetime.now(settings.tz))
+        except (AIError, ValueError) as error:
+            return lambda reply=str(error): reply
+        return save_classday_action(db, record)
     if command == "export" or (command is not None and command.startswith("export ")):
         return lambda: "找不到可匯出的筆記，或編號格式不正確。用法：/export 完整編號；請先用 /notes 取得編號。"
     if command is not None and (command == "notes" or command.startswith("notes ") or command == "note" or command.startswith("note ")):
@@ -383,26 +383,8 @@ async def prepare_message(text: str) -> Callable[[], str]:
             if task is None:
                 return f"Task {position} not found.\n\n{format_tasks(tasks.list_open(), settings.tz)}"
             remaining = [item for item in before if item["id"] != task["id"]]
-            return f"Completed: {task['title']}\n\n{format_tasks(remaining, settings.tz)}"
+            return f"Completed: {escape(task['title'])}\n\n{format_tasks(remaining, settings.tz)}"
         return complete
-    rescheduled = re.fullmatch(r"reschedule\s+(\d+)\s+(.+)", command or "", re.IGNORECASE)
-    if rescheduled:
-        position = int(rescheduled.group(1))
-        if tasks.get_open_by_position(position) is None:
-            return lambda: f"Task {position} not found.\n\n{format_tasks(tasks.list_open(), settings.tz)}"
-        try:
-            parsed = await ai.parse(f"Reschedule to {rescheduled.group(2)}")
-        except (AIError, ValueError) as error:
-            return lambda reply=str(error): reply
-        if not parsed.due_at:
-            return lambda: "Please include a date or time."
-        def reschedule() -> str:
-            before = tasks.list_open()
-            task = tasks.reschedule_position(position, parsed.due_at)
-            if task is None:
-                return f"Task {position} not found.\n\n{format_tasks(tasks.list_open(), settings.tz)}"
-            return f"Rescheduled: {format_task(task, settings.tz)}\n\n{format_updated_tasks(before, task)}"
-        return reschedule
     edited = re.fullmatch(r"edit\s+(\d+)\s+(.+)", command or "", re.IGNORECASE)
     if edited:
         position = int(edited.group(1))
@@ -419,7 +401,7 @@ async def prepare_message(text: str) -> Callable[[], str]:
             task = tasks.edit(task_id, parsed.title, parsed.due_at, parsed.project)
             if task is None:
                 return f"Task {position} is no longer open.\n\n{format_tasks(tasks.list_open(), settings.tz)}"
-            return f"Updated: {format_task(task, settings.tz)}\n\n{format_updated_tasks(before, task)}"
+            return f"Updated: {format_task(task, settings.tz, html=True)}\n\n{format_updated_tasks(before, task)}"
         return edit
     if command is not None or re.fullmatch(r"(?:代辦|清單|完成\s*#?\d+|延期\s*#?\d+.*)", normalized):
         return lambda: "Unknown command. Use /help to see available commands."

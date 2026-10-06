@@ -19,7 +19,9 @@ async def test_commands_use_note_repository_without_ai(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "db", db)
     assert "尚無" in await main.handle_message("/notes")
     db.save_study_note(note(markdown="甲" * 4000))
-    assert "a" * 64 in await main.handle_message("/notes OS")
+    listing = await main.handle_message("/notes OS")
+    assert "a" * 64 in listing
+    assert "2026-" not in listing
     assert "尚無" in await main.handle_message("/notes other")
     first = await main.handle_message("/note " + "a" * 64)
     second = await main.handle_message("/note " + "a" * 64 + " 2")

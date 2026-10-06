@@ -447,7 +447,7 @@ class Database:
                 return existing
             if create_tasks:
                 task = self.create_task(
-                    f"填寫{session.course_name}進度（{session.class_date}）", None,
+                    f"填寫{session.course_name}進度（{session.class_date:%m/%d}）", None,
                     session.course_name, datetime.now().astimezone())
                 session = replace(session, survey_task_id=task["id"])
             data = session_to_firestore(session)
@@ -464,7 +464,15 @@ class Database:
             )
         return self.get_course_session(session.session_id) or session
 
-    def record_course_reply(self, prompt_id: int, message_id: int, text: str, *, local_date=None, update_id=None, received_at=None) -> str:
+    def get_course_session_by_prompt(self, prompt_id: int) -> ProgressSession | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM course_sessions WHERE prompt_message_id = ?", (prompt_id,)
+            ).fetchone()
+        return session_from_firestore(dict(row)) if row else None
+
+    def record_course_reply(self, prompt_id: int, message_id: int, text: str, *, local_date=None,
+                            update_id=None, received_at=None, review_summary=None) -> str:
         """Called inside process_update, sharing the webhook receipt transaction."""
         with self.connect() as connection:
             row = connection.execute(
@@ -489,7 +497,7 @@ class Database:
                 connection.execute('INSERT OR IGNORE INTO study_poll_jobs VALUES (?, ?)',
                                    (request.key,json.dumps(initial_poll_state(request))))
             review = None
-            title, kind, completion = progress_followup(answered)
+            title, kind, completion = progress_followup(answered, review_summary)
             if session.survey_task_id is not None:
                 now = datetime.now().astimezone()
                 self.complete_task(session.survey_task_id, now)
@@ -501,7 +509,7 @@ class Database:
                 return (f"已記錄{session.course_name}的進度，填寫進度代辦已完成。\n"
                         f"新增{kind}代辦。\n"
                         f"{completion}先用 /tasks 查看目前清單，再輸入 /done 清單順位 完成。")
-            return f"已記錄{session.course_name}（{session.class_date}）的進度。"
+            return f"已記錄{session.course_name}（{session.class_date:%m/%d}）的進度。"
 
     def get_course_session(self, session_id: str) -> ProgressSession | None:
         with self.connect() as connection:

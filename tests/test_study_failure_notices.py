@@ -42,7 +42,7 @@ def test_failed_notice_does_not_create_recursive_notifications(tmp_path):
 
 @pytest.mark.parametrize('category,expected', [
     ('announcement','課程公告'), ('assignment','作業通知'), ('calendar','校曆'),
-    ('exam','考試'), ('preparation','作業草稿'), ('ai-budget','AI 額度'),
+    ('preparation','作業草稿'), ('ai-budget','AI 額度'),
     ('unrecognized','Study 通知')])
 def test_failure_notice_identifies_feature_without_echoing_keys(tmp_path, category, expected):
     db = Database(tmp_path / 'notice.db')

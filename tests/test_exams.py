@@ -1,5 +1,7 @@
+import asyncio
 import pytest
 
+from chronos import main
 from chronos.db import Database
 from chronos.exams import exam_action, format_exams, exam_pages, exams_query, exam_key
 from test_firestore import database as firestore_fake
@@ -35,6 +37,15 @@ def test_exam_save_inside_telegram_receipt_transaction(db):
     db.process_update(99001, action)
     db.process_update(99001, action)
     assert len(db.list_exams()) == 1
+
+
+def test_exam_commands_are_no_longer_owner_facing(db, monkeypatch):
+    monkeypatch.setattr(main, 'db', db)
+    for command in ('/exam 作業系統期中考', '/exams', '/exams 2',
+                    '/deadline 1 2026-10-20 12:00', '/assignment 1', '/assignment 1 2'):
+        action = asyncio.run(main.prepare_message(command))
+        assert action() == 'Unknown command. Use /help to see available commands.'
+    assert db.list_exams() == []
 
 
 def test_pagination_is_lossless_stable_and_unicode_bounded(db):

@@ -51,6 +51,20 @@ def exam_action(db, command):
     return save
 
 
+def save_exam_action(db, record):
+    """Persist an already parsed exam inside the Telegram update transaction."""
+    try:
+        record = validate_exam(record)
+    except (TypeError, ValueError):
+        return lambda: "無法確認考試資料，未保存。請補充科目與考試名稱後重試。"
+    return lambda: _save_exam(db, record)
+
+
+def _save_exam(db, record):
+    db.save_exam(record)
+    return "已保存考試紀錄。用 /exams 查閱；未提供的資料保持未知，不會推測考試安排。"
+
+
 def format_exams(records):
     if not records:
         return '尚未提供考試資料。用 /exam 保存已確認的安排。'

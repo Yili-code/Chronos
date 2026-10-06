@@ -20,7 +20,9 @@ def test_saved_lookup_preserves_text_and_state(backend,tmp_path,monkeypatch):
     store.put(data,datetime.now(TAIPEI))
     key = db.save_announcement(store.snapshots()[0])
     before = db.list_announcements()
-    assert key in announcements_query(db,'announcements')
+    listing = announcements_query(db,'announcements')
+    assert key in listing
+    assert '2026-' not in listing
     chunks=[]
     page=1
     while True:

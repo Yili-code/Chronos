@@ -28,10 +28,11 @@ def test_web_and_telegram_use_external_ai(task_service, monkeypatch):
     assert asyncio.run(main.handle_message("新增 工作")) == "Created: Review external analysis"
     assert parse.await_count == 2
     due = datetime(2026, 9, 20, 12, tzinfo=main.settings.tz)
-    parse.return_value = ParsedTask("Reschedule task", due)
-    reply = asyncio.run(main.handle_message("/reschedule 1 週日中午"))
-    assert "Rescheduled: Review external analysis | 09/20 12:00" in reply
-    assert "Open tasks:" in reply
+    edit = AsyncMock(return_value=ParsedTask("Review external analysis", due))
+    monkeypatch.setattr(main.ai, "edit", edit)
+    reply = asyncio.run(main.handle_message("/edit 1 改到週日中午"))
+    assert "Updated: Review external analysis 09/20 12:00" in reply
+    assert "<b>Tasks</b>" in reply
     assert task_service.list_open()[0]["due_at"] == due.isoformat()
 
 
@@ -39,11 +40,13 @@ def test_failure_does_not_change_tasks(task_service, monkeypatch):
     task_service.create("Original task")
     before = task_service.list_open()
     monkeypatch.setattr(main.ai, "parse", AsyncMock(side_effect=AIError("External AI failed")))
+    monkeypatch.setattr(main.ai, "edit", AsyncMock(side_effect=AIError("External AI failed")))
     with pytest.raises(HTTPException) as error:
         asyncio.run(main.create_natural_task(main.NaturalTask(text="工作")))
     assert error.value.status_code == 503
     assert "External AI failed" in asyncio.run(main.handle_message("新增 工作"))
-    assert "External AI failed" in asyncio.run(main.handle_message("/reschedule 1 明天"))
+    assert "External AI failed" in asyncio.run(main.handle_message("/edit 1 改到明天"))
+    assert asyncio.run(main.handle_message("/reschedule 1 明天")) == "Unknown command. Use /help to see available commands."
     assert task_service.list_open() == before
     assert "Original task" in asyncio.run(main.handle_message("/tasks"))
     assert asyncio.run(main.handle_message("/done 1")) == "Completed: Original task\n\nNo open tasks."
@@ -58,8 +61,8 @@ def test_edit_uses_natural_language_and_returns_latest_list(task_service, monkey
     edit.assert_awaited_once()
     assert edit.call_args.args[0]["id"] == original["id"]
     assert reply == (
-        "Updated: Finalize launch plan | 10/03 18:00\n\n"
-        "Open tasks:\n1. Finalize launch plan | 10/03 18:00"
+        "Updated: Finalize launch plan 10/03 18:00\n\n"
+        "<b>Tasks</b>\n1. Finalize launch plan 10/03 18:00"
     )
     stored = task_service.list_open()[0]
     assert stored["title"] == "Finalize launch plan"

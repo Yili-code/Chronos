@@ -37,11 +37,13 @@ def progress_is_unknown(text: str) -> bool:
     ) is not None
 
 
-def progress_followup(session: "ProgressSession") -> tuple[str, str, str]:
+def progress_followup(session: "ProgressSession", review_summary: str | None = None) -> tuple[str, str, str]:
+    short_date = session.class_date.strftime("%m/%d")
     if progress_is_unknown(session.reported_progress or ""):
-        return (f"確認{session.course_name}今日上課範圍（{session.class_date}）",
+        return (f"確認{session.course_name} {short_date} 上課範圍",
                 "確認範圍", "確認範圍後")
-    return (f"複習{session.course_name}（{session.class_date}）：{session.reported_progress}",
+    detail = (review_summary or session.reported_progress or "").strip()
+    return (f"複習{session.course_name} {short_date}：{detail}",
             "複習", "複習後")
 
 

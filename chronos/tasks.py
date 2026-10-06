@@ -1,6 +1,7 @@
 import re
 from dataclasses import asdict, dataclass
 from datetime import datetime, time, timedelta
+from html import escape
 
 from .db import Database
 
@@ -119,18 +120,48 @@ class TaskService:
 def format_tasks(tasks: list[dict], tz) -> str:
     if not tasks:
         return "No open tasks."
-    lines = ["Open tasks:"]
+    lines = ["<b>Tasks</b>"]
     for position, task in enumerate(tasks, start=1):
-        lines.append(f"{position}. {format_task(task, tz)}")
+        lines.append(f"{position}. {format_task(task, tz, html=True)}")
     return "\n".join(lines)
 
 
-def format_task(task: dict, tz) -> str:
-    parts = [task["title"]]
+def format_task(task: dict, tz, *, html: bool = False) -> str:
+    title = _format_course_task_title(task["title"], html=html)
+    if title is None:
+        title = escape(task["title"]) if html else task["title"]
+    parts = [title]
     if task.get("due_at"):
         value = datetime.fromisoformat(task["due_at"]).astimezone(tz)
         parts.append(f"{value:%m/%d %H:%M}")
     if task.get("project"):
-        parts.append(f"#{task['project']}")
-    return " | ".join(parts)
+        project = escape(str(task["project"])) if html else str(task["project"])
+        parts.append(f"#{project}")
+    return " ".join(parts)
+
+
+def _format_course_task_title(title: str, *, html: bool) -> str | None:
+    confirmation = re.fullmatch(
+        r"確認(?P<course>.+?)(?:今日上課範圍（(?P<legacy>\d{4}-\d{2}-\d{2})）| (?P<short>\d{2}/\d{2}) 上課範圍)",
+        title,
+    )
+    if confirmation:
+        day = _short_date(confirmation.group("legacy") or confirmation.group("short"))
+        course = escape(confirmation.group("course")) if html else confirmation.group("course")
+        return f"確認{course} {day} 上課範圍"
+    review = re.fullmatch(
+        r"複習(?P<course>.+?)(?:（(?P<legacy>\d{4}-\d{2}-\d{2})）| (?P<short>\d{2}/\d{2}))[:：](?P<detail>.+)",
+        title,
+    )
+    if not review:
+        return None
+    day = _short_date(review.group("legacy") or review.group("short"))
+    course = escape(review.group("course")) if html else review.group("course")
+    detail = escape(review.group("detail")) if html else review.group("detail")
+    detail = f"<b>{detail}</b>" if html else detail
+    return f"複習{course} {day}：{detail}"
+
+
+def _short_date(value: str) -> str:
+    return value[5:].replace("-", "/") if len(value) == 10 else value
 
