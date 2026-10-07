@@ -31,3 +31,23 @@ jobs:
 
       - name: Run tests
         run: python -m pytest -q
+
+      - name: Verify local demo isolation and task lifecycle
+        run: python scripts/check_demo.py
+
+      - name: Check local documentation links
+        run: python scripts/check_docs.py
+
+  extension:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Run Chrome extension tests
+        run: node --test chrome-extension/*.test.cjs chrome-extension/*.test.js chrome-extension/test/*.test.js

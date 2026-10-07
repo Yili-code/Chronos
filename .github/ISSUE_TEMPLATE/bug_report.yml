@@ -1,0 +1,32 @@
+name: Bug or installation problem
+description: Report a reproducible failure or a blocked setup step.
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: "Use synthetic data. Remove tokens, API keys, cookies, chat IDs, personal tasks and course materials. Do not attach .env or database files."
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python version, commit/version, SQLite or Firestore, and the setup guide used.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include the exact setup step or commands with credentials removed.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Sanitized error or screenshot
+      description: Optional; review for private data before submitting.

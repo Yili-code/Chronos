@@ -1,178 +1,82 @@
-# Chronos
+# Chronos — Telegram Task Assistant
 
-以 Telegram 為主、Web 為輔的個人代辦助理。
+**把中英文訊息變成代辦，在自己的 Telegram bot 管理期限與完成狀態，每天收到未完成清單。**
 
-## 功能
+A self-hosted, single-user Telegram task assistant with Gemini-powered natural-language input, a Web dashboard, and a daily task digest.
 
-- 透過 Telegram 自然語言新增、查詢、完成及改期代辦
-- 每天 `Asia/Taipei` 08:00 傳送未完成代辦
-- Web 儀表板提供代辦概覽
-- 本機使用 SQLite；Cloud Run 使用 Firestore
+[English setup and usage](README.en.md)
 
-## 啟動
+[![CI](https://github.com/Yili-code/Chronos/actions/workflows/ci.yml/badge.svg)](https://github.com/Yili-code/Chronos/actions/workflows/ci.yml)
 
-需要 Python 3.11 以上版本。
+[本機 Demo](docs/demo.md) · [本機啟動](docs/getting-started.md) · [指令與設定](docs/usage.md) · [雲端部署](docs/deployment.md) · [問題回報](https://github.com/Yili-code/Chronos/issues) · [貢獻指南](CONTRIBUTING.md)
 
-在專案根目錄使用 Windows PowerShell：
+## 適合誰
 
-```powershell
-# 僅在尚未建立 .env 時複製，避免覆寫已填好的設定。
-if (!(Test-Path .env)) { Copy-Item .env.example .env }
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
-.\.venv\Scripts\python.exe -m uvicorn chronos.main:app --reload --host 127.0.0.1 --port 8000
-```
+適合習慣用 Telegram、願意設定自己的 bot 與 Gemini key，並希望自行部署個人代辦工具的人。以 SQLite 在本機保存資料，也可選用 Cloud Run + Firestore。互動介面與儲存的代辦標題以英文為主，輸入接受中文與英文。
 
-開啟 `http://127.0.0.1:8000`。
+目前版本 `0.1.0`，仍在開發；Repository 尚未提供 License，也尚未發布 GitHub Release。請先釐清授權再採用於再散布或程式碼貢獻。沒有公開共用 bot 或線上 Demo；可先跑 [不用 API key 的本機 Web 示範](docs/demo.md)，其中任務為合成資料，僅展示清單與完成操作。
 
-先編輯 `.env`。Telegram 設定可先留空，以啟動本機 Web 功能。
-專案包含 `tzdata` 依賴，供 Windows 使用 `Asia/Taipei` 時區。
+## 現在能做什麼
 
-## Gemini 設定
+| 功能 | 條件與範圍 |
+| --- | --- |
+| 自然語言新增、語意編輯代辦 | 需要可用的 Gemini API key；外部 AI 失敗時不新增或更動代辦。 |
+| `/tasks`、`/done`、明確移除期限或分類 | 查詢與完成不需要 AI；Telegram 需要自己的 bot、chat ID 與 HTTPS webhook。 |
+| 每日未完成清單 | 預設 `Asia/Taipei` 08:00；需要持續運行的服務或外部 scheduler，不是逐筆到期提醒。 |
+| Web 儀表板 | 查看、新增及完成代辦；沒有 Gemini key 時可先看空白介面。 |
+| SQLite / Firestore | 本機預設 SQLite；Firestore 是選用的雲端設定。 |
+| Study 模組 | 預設關閉；包含特定 NTOU / TronClass 課表、教材、作業與筆記流程，需額外設定，尚非跨校即用功能。 |
 
-Web 與 Telegram 的自然語言新增、Telegram 改期共用 Gemini API，不啟動本地模型。程式呼叫 Gemini 原生 `generateContent` endpoint，要求 JSON response 並再次驗證輸出 schema。
+這是個人用途，沒有多使用者帳號隔離。`#Chronos` 是代辦分類標籤，不會追蹤 Git repository。AI 文字會送到 Gemini；詳細資料流及失敗行為見 [指令參考](docs/usage.md)。
 
-在既有 `.env` 加入以下設定（不要覆蓋原有內容）：
+## 本機介面預覽
 
-```dotenv
-CHRONOS_GEMINI_API_BASE=https://generativelanguage.googleapis.com/v1beta
-CHRONOS_GEMINI_API_KEY=你的Gemini API金鑰
-CHRONOS_GEMINI_MODEL=gemini-3.8-flash
-CHRONOS_AI_TIMEOUT=30
-```
+![Chronos Web task dashboard with two synthetic tasks, a due date, a project tag and Complete buttons](docs/images/web-demo.png)
 
-API key 可由 Google AI Studio 建立。若模型名稱在帳號或地區不可用，更新 `CHRONOS_GEMINI_MODEL` 後重啟即可。
+實際 Web 畫面，使用合成任務；不是使用者資料，也不是 AI 解析或 Telegram 投遞證據。[執行相同的本機示範](docs/demo.md)。
 
-自然語言文字與目前時間會送至 Gemini；不會附帶整份代辦清單。輸入可使用中文或英文，儲存時會正規化成自然、精簡的英文 action phrase；一般分類標籤轉成英文 lowercase kebab-case，品牌、正式專案名與技術術語保留原名。原始中文不另行保存。未設定、逾時或格式錯誤時會顯示錯誤且不寫入代辦，不會退回規則解析。代辦查詢、完成與每日提醒仍可獨立使用。API 費用與限制依 Gemini 帳號方案計算。
+## 從一筆代辦開始
 
-Gemini 遇到 `429`、`5xx`、timeout 或 transport failure 時，會在同一個總 timeout 內最多嘗試 3 次，退避 1 秒、2 秒。`401/403`（金鑰或權限）、`404`（模型）、`429`（請求限制或額度）、`5xx`（服務暫時繁忙）與網路錯誤會回覆不同訊息；所有失敗都維持 no-write，不會建立或修改代辦。
-
-## Telegram 設定
-
-1. 在 Telegram 對 `@BotFather` 執行 `/newbot`，取得 bot token。
-2. 先傳訊息給新 bot，再以 `getUpdates` 取得自己的 `chat.id`。
-3. 將以下內容填入 `.env`：
-
-```dotenv
-CHRONOS_TELEGRAM_BOT_TOKEN=...
-CHRONOS_TELEGRAM_CHAT_ID=...
-CHRONOS_TELEGRAM_WEBHOOK_SECRET=一組足夠長的隨機字串
-CHRONOS_PUBLIC_BASE_URL=https://你的公開網址
-```
-
-啟動時會自動將 webhook 設為 `CHRONOS_PUBLIC_BASE_URL/telegram/webhook`。公開網址必須使用 HTTPS。
-
-支援的訊息：
+配置完成後，在**自己的 bot** 依序輸入：
 
 ```text
 明天 17:00 完成報告 #Chronos
 /tasks
+/edit 1 移除期限
+/tasks
 /done 1
-/edit 1 改成週五 10:00 交 final report 並移除專案
-/clear
 ```
 
-除了 slash commands 外，直接傳送中英文自然語言就會新增一筆代辦。Telegram 與 Web 的互動文字統一使用英文。
-`/tasks` 依「期限最早、無期限最後、同期限較早建立者優先」排序，並將目前未完成代辦動態編為 `1..n`；永久 database ID 不會顯示。`/done` 與 `/edit` 接受當下位置，但 mutation 會在 receipt transaction 內綁定永久 ID，因此清單重新排序不會讓已保存的 retry 改到另一筆 task。不存在的位置會顯示英文錯誤及最新清單。每天 08:00 的清單使用同一格式。
-`/edit <position> <instruction>` 接受中文或英文自然語言，可同時修改標題、期限與分類，也能明確移除期限或分類；未提及的欄位會保留，儲存標題仍為精簡英文 action phrase。移除日期、移除分類與保存 tag abbreviation 等明確操作會走 deterministic path；其他語意改寫才呼叫 AI。任務改期與作業截止日期都統一使用 `/edit`；`/reschedule` 與 `/deadline` 不再支援。
-AI update service 暫時不可用時，task 不會變更，原始 command 會持久保存，Telegram 會提供 **Retry editing Task n** 與 **Cancel saved edit for Task n**。Retry 依永久 task ID 執行；如果目標已完成或刪除，會 fail closed。成功更新分成兩則訊息：第一則只列出 changed fields，第二則才顯示更新後清單。兩則訊息分別保存 delivery progress，第二則失敗時不會主動重送已確認成功的第一則。
-舊的中文 commands 與 `/postpone` 不再支援；`/start` 與 `/help` 都會顯示英文使用說明。
-`/clear` 先顯示確認訊息；只有按下 **Delete all tasks** 才會刪除所有 open 與 completed task records，按 **Cancel** 不會變更資料。Telegram update receipts 與內部 ID counter 不在清除範圍內，以維持 webhook idempotency 與 ID 唯一性。
+這是輸入示例，AI 產生的英文標題與相對日期依當時環境而定。先用 `/tasks` 確認任務的位置，編輯後再查一次；清單按期限排序，`1` 是當下位置。完整的 Retry、清除確認與 Study 指令見 [使用說明](docs/usage.md)。
 
-### Study 指令範例
+## 快速啟動：Windows PowerShell
 
-作業固定 ID 會直接出現在作業通知，例如 `新作業 #27`。這個 `27` 只供 `/prepare` 與 `/draft` 使用；修改截止日期時，先用 `/tasks` 找到當下順位，再用 `/edit`。`/assignment`、`/exam` 與 `/exams` 不再支援。
-
-`/classday` 接受中文或英文自然語言，用於確認特定課程在某天是否上課：
-
-```text
-/classday 10/07 軟體工程不上課
-```
-
-筆記範例以「作業系統」課程為例。先列出該課程已保存的 notes，再複製回覆中的完整 64 字元 note ID：
-
-```text
-/notes 作業系統
-/note <從上一個回覆取得的完整 note ID>
-/export <同一個完整 note ID>
-```
-
-`/note` 讀取內容，`/export` 則傳送同一份 canonical note 的 Markdown 文件。Repository 不提供固定示範 ID，因為 note ID 是由實際內容計算，寫死的 ID 可能指向不存在或不同的筆記。
-
-`/tasks` 與每日清單使用粗體 `Tasks` 標題。每筆 task 的 title、完整 `YYYY-MM-DD HH:MM` due time 與 tag 各自位於不同文字層級，避免把 metadata 混入標題。過長的多字 tag 只在顯示層縮寫，例如 canonical `computer-architecture` 顯示為 `#CA`；canonical value 仍保留供搜尋與資料關聯。Owner 也能透過 `/edit` 保存自己的 tag display preference。課後回覆原文仍保存作為教材與摘要依據，但新建立的複習代辦會另外使用一次 AI 產生簡短英文 label；若翻譯暫時失敗，進度仍會保存，複習代辦回退顯示原文。
-
-設定 `CHRONOS_TELEGRAM_CHAT_ID` 後，其他 chat 無法操作 bot。
-
-Webhook 會驗證 JSON 結構與整數 `update_id`，合法的非文字更新會略過。每筆 message 或 callback 的代辦變更與處理紀錄會一起儲存在 SQLite 或 Firestore；動態位置會在同一 transaction 內解析成永久 ID，重送同一 update 不會重複新增、完成、修改、改期或清除，重啟後仍有效。多訊息回覆會逐則保存 delivery progress，後續 webhook retry 從第一則未確認訊息繼續。若 Telegram 已收到某則訊息而程式尚未記錄送達就中斷，該則文字仍可能重複，但代辦不會重複變更。去重與 pending-edit 紀錄目前不會自動清除；完成或取消 retry 會刪除對應 pending edit。
-
-## Docker
-
-```bash
-docker compose up -d --build
-```
-
-Docker Desktop 需使用 Linux containers。SQLite 資料保存在 named volume `chronos-data`。
-
-## Cloud Run + Firestore 部署
-
-Cloud Run 使用 Firestore 保存代辦與 Telegram update receipts，不依賴 container 的暫存檔案系統。Gemini API key、Telegram bot token、Telegram chat ID、webhook secret、Web password 與 scheduler secret 由 Secret Manager 注入；secret 不會寫入 image 或 repository。
-
-先安裝 Google Cloud CLI 並登入：
+需要 Git 與 Python 3.11 以上。在尚未下載專案時執行：
 
 ```powershell
-gcloud auth login
-gcloud auth application-default login
+git clone https://github.com/Yili-code/Chronos.git
+cd Chronos
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+if (!(Test-Path .env)) { Copy-Item .env.example .env }
+.\.venv\Scripts\python.exe -m uvicorn chronos.main:app --host 127.0.0.1 --port 8000
 ```
 
-`.env` 需要本機保存以下兩項，部署腳本只會讀取值並送往 Secret Manager，不會 commit：
+開啟 <http://127.0.0.1:8000>。新環境應顯示 **No open tasks.**；<http://127.0.0.1:8000/health> 應回傳 `{"status":"ok"}`。Telegram 設定可以先留空；**自然語言新增仍需要在 `.env` 填入 Gemini key 並重啟**。
 
-```dotenv
-CHRONOS_TELEGRAM_BOT_TOKEN=...
-CHRONOS_TELEGRAM_CHAT_ID=...
-```
+下一步依 [完整啟動指南](docs/getting-started.md) 建立第一筆任務、接上 Telegram；同頁提供 macOS / Linux、Docker 與常見問題。公開 Web 前設定自己的密碼並使用 HTTPS。
 
-若 `.env` 已有 `CHRONOS_GEMINI_API_KEY`，部署會使用該 key；否則腳本會在目標 GCP project 建立一把只允許 Gemini API 的 dedicated key，再將 key string 寫入 Secret Manager，全程不輸出 key。
+## 文件與驗證
 
-執行：
+- [本機 Web 示範](docs/demo.md)：合成資料、暫存 SQLite，不呼叫外部服務。
+- [本機啟動與第一筆代辦](docs/getting-started.md)：安裝、預期畫面、設定與故障排除。
+- [Gemini 與 Telegram 指令參考](docs/usage.md)：自然語言、動態位置、編輯重試及資料保存。
+- [Cloud Run + Firestore](docs/deployment.md)：選用部署，需要自己的 GCP project，可能產生費用。
+- [Study 文件入口](docs/README.md)：區分目前入口、歷史設計與驗證紀錄。
+- [驗證報告](TEST_REPORT.md)：既有測試與 production 證據，並列有尚未部署項目；CI 通過不代表雲端已更新。
 
-```powershell
-pwsh -File .\scripts\deploy_cloud_run.ps1 -ProjectId YOUR_PROJECT_ID
-```
+程式在 `chronos/`，Python 測試在 `tests/`，Study Chrome extension 在 `chrome-extension/`，部署及驗證工具在 `scripts/`。部分 Study 工具含維護者專用設定，閱讀後再執行。
 
-部署腳本需要 PowerShell 7。重跑時會沿用既有的 Web password、webhook secret 與 scheduler secret；重新部署不等於旋轉憑證。
+## 回饋與參與
 
-腳本會：
-
-1. 啟用 Cloud Run、Cloud Build、Firestore、Secret Manager、API Keys、Gemini 與 Cloud Scheduler APIs。
-2. 建立最小權限的 `chronos-runtime` service account。
-3. 建立 Firestore Native `(default)` database，並啟用 delete protection。
-4. 建立或取得 Chronos 專用 Gemini API key，再建立 Secret Manager secrets 與版本，授權 runtime identity 讀取。
-5. 由目前 source build 並部署 Cloud Run。
-6. 將 Cloud Run URL 設成 Telegram webhook。
-7. 建立每天 `Asia/Taipei` 08:00 的 Cloud Scheduler job。
-8. 驗證 `/health` 與 Telegram `getWebhookInfo`。
-
-### 目前 production
-
-- GCP project：`yili-chronos-prod`
-- Cloud Run：<https://chronos-w42vzvnetq-de.a.run.app>
-- Web username：`chronos`
-- Telegram bot：`@Chronos_assistant_yili001_bot`
-
-Web password 只保存在 Secret Manager。需要登入時讀取目前版本：
-
-```powershell
-gcloud secrets versions access latest --secret chronos-web-password --project yili-chronos-prod
-```
-
-若 Telegram 顯示 bot 已封鎖，請先在 bot 對話解除封鎖並按 **Start**。這是 Telegram account-side permission，解除後不需重新部署。
-
-## Web 安全
-
-設定 `CHRONOS_WEB_PASSWORD` 後，Web 與 API 會啟用 Basic Auth。若公開部署，必須設定此值，並只允許 HTTPS。Telegram webhook 另以 secret header 驗證。
-
-## 測試
-
-```powershell
-.\.venv\Scripts\python.exe -m pytest
-```
+安裝卡住或代辦行為不符預期，請[回報可重現問題](https://github.com/Yili-code/Chronos/issues/new/choose)，附環境、步驟與清除憑證後的錯誤。文件更正與真實使用情境也很有幫助；程式碼貢獻先讀 [CONTRIBUTING](CONTRIBUTING.md) 的授權狀態。若專案對你有用，可以 Star 以便日後找到；關注版本更新可在 GitHub 使用 Watch 的 Releases 選項，首個 Release 仍待發布。

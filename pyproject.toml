@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "chronos-assistant"
 version = "0.1.0"
-description = "Telegram-first project and task assistant"
+description = "Single-user Telegram task assistant with natural-language input and a Web dashboard"
 requires-python = ">=3.11"
 dependencies = [
   "pypdf>=6.19,<7",
@@ -21,6 +21,11 @@ dependencies = [
 [project.optional-dependencies]
 collector = ["playwright==1.63.0"]
 dev = ["pytest>=8,<9", "pytest-asyncio>=0.24,<1"]
+
+[project.urls]
+Repository = "https://github.com/Yili-code/Chronos"
+Documentation = "https://github.com/Yili-code/Chronos/blob/main/README.md"
+Issues = "https://github.com/Yili-code/Chronos/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["chronos"]

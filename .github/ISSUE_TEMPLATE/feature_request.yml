@@ -1,0 +1,17 @@
+name: Use case or improvement
+description: Describe a real task-management need or documentation improvement.
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: Use case and current obstacle
+      description: What are you trying to do? Avoid including personal or school data.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Smallest useful improvement
+      description: Include alternatives or a documentation-only solution if possible.
+    validations:
+      required: true
