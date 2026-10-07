@@ -294,6 +294,22 @@ else {
         --headers "X-Chronos-Scheduler-Secret=$schedulerSecret" --max-retry-attempts 3 --attempt-deadline 1800s --quiet | Out-Null
 }
 
+if ($EnableGmail) {
+    $mailJobName = "$Service-daily-mail"
+    $mailUri = "$serviceUrl/internal/mail/daily"
+    & $gcloudCommand scheduler jobs describe $mailJobName --location $Region --project $ProjectId --quiet 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        Invoke-Gcloud scheduler jobs update http $mailJobName --location $Region --project $ProjectId `
+            --schedule "0 7 * * *" --time-zone "Asia/Taipei" --uri $mailUri --http-method POST `
+            --update-headers "X-Chronos-Scheduler-Secret=$schedulerSecret" --max-retry-attempts 3 --attempt-deadline 1800s --quiet | Out-Null
+    }
+    else {
+        Invoke-Gcloud scheduler jobs create http $mailJobName --location $Region --project $ProjectId `
+            --schedule "0 7 * * *" --time-zone "Asia/Taipei" --uri $mailUri --http-method POST `
+            --headers "X-Chronos-Scheduler-Secret=$schedulerSecret" --max-retry-attempts 3 --attempt-deadline 1800s --quiet | Out-Null
+    }
+}
+
 $health = Invoke-RestMethod -Uri "$serviceUrl/health" -Method Get -TimeoutSec 30
 if ($health.status -ne "ok") { throw "Cloud Run health check failed" }
 $webhook = Invoke-RestMethod -Uri "https://api.telegram.org/bot$telegramBotToken/getWebhookInfo" `

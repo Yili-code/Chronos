@@ -5,7 +5,7 @@ import json
 import re
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from email.utils import parseaddr
 from html import escape
 from urllib.parse import quote
@@ -176,7 +176,6 @@ class MailWorkflow:
 
     async def daily(self, now=None, *, backlog=False, request_key=None):
         self.require_config()
-        backlog = backlog or bool((self.get("backlog") or {}).get("enabled"))
         # Leave ample time for the last in-flight message before Cloud Run's
         # request deadline. A scheduler retry resumes the persisted snapshot.
         deadline = time.monotonic() + 1200
@@ -196,7 +195,7 @@ class MailWorkflow:
                     raise GmailError("Mail digest lease was lost; retry later")
                 return {"owner": owner, "until": time.time() + 180}
             self.db.mutate_mail_state(self.key("daily-lock"), transition)
-        day = "day:" + now.date().isoformat()
+        day = "daily:" + now.date().isoformat()
         try:
             if backlog:
                 progress = self.get("backlog") or {}
@@ -238,18 +237,25 @@ class MailWorkflow:
                         skip=lambda identifier: bool((self.get("message:" + identifier) or {}).get("read")), on_page=renew)
                     state = self.patch(day, ids=ids, more=more)
             else:
-                active = self.get("active-day") or {}
+                active = self.get("daily-active") or {}
                 previous = self.get(active["day"]) if active.get("day") else None
                 if active.get("day") and not (previous or {}).get("complete"):
                     day = active["day"]
-                self.patch("active-day", day=day)
+                self.patch("daily-active", day=day)
                 state = self.get(day)
                 if state and state.get("complete"):
                     return {"already_complete": True}
                 if not state:
-                    ids, more = await self.gmail.unread_ids(self.settings.gmail_max_messages,
-                                                           skip=self.already_reported, on_page=renew)
-                    state = self.patch(day, ids=ids, more=more)
+                    cursor = self.get("daily-cursor")
+                    if not cursor:
+                        # Bootstrap only the preceding day, never the historic inbox.
+                        cursor = self.patch("daily-cursor", since=int((now - timedelta(days=1)).timestamp()))
+                    start, end = cursor["since"], int(now.timestamp())
+                    ids, more = await self.gmail.message_ids(
+                        self.settings.gmail_max_messages,
+                        f"-in:trash -in:spam -in:sent -in:drafts after:{start - 1} before:{end}",
+                        skip=self.already_reported, on_page=renew)
+                    state = self.patch(day, ids=ids, more=more, window_start=start, window_end=end)
             for identifier in state["ids"]:
                 if time.monotonic() >= deadline:
                     raise GmailError("Mail digest batch paused at its time limit; retry to continue")
@@ -272,7 +278,7 @@ class MailWorkflow:
                 # A journal survives a crash between the Gmail write and Telegram report.
                 pending = item.get("trash_pending", False)
                 reason = item.get("reason") if pending else filter_reason(mail, self.settings.gmail_keep_senders, self.settings.gmail_discard_account_security_after)
-                if not pending and (("INBOX" if backlog else "UNREAD") not in mail["labels"] or set(mail["labels"]) & {"TRASH", "SPAM"}):
+                if not pending and ((backlog and "INBOX" not in mail["labels"]) or set(mail["labels"]) & {"TRASH", "SPAM"}):
                     self.patch(item_key, skipped=True)
                     continue
                 if saved.get("keep"):
@@ -295,7 +301,7 @@ class MailWorkflow:
                 self.patch("message:" + identifier, last_delivery=item_key)
                 text = format_mail_card(mail, summary, self.settings.gmail_account)
                 await self.deliver(item_key, text, identifier)
-            suffix = "（達本次上限，其餘未讀信留待後續整理）" if state["more"] else ""
+            suffix = "（達本次上限，其餘新信留待後續整理）" if state["more"] else ""
             if backlog:
                 text = (f"歷史郵件第 {progress['number']} 批 · {len(state['ids'])} 封\n"
                         "請選 Trash、Archive 或 Read，完成後傳 /mail_next。Read 保留於收件匣但不再列入整理。")
@@ -304,8 +310,10 @@ class MailWorkflow:
                 await self.deliver(day + ":end", text)
                 if not state["ids"]:
                     self.patch("backlog", enabled=False)
-            else:
-                await self.deliver(day + ":end", f"郵件整理完成 · {day[4:]}\n本次檢查 {len(state['ids'])} 封尚未播報的未讀信{suffix}。\n保留的信維持未讀且不重複播報；新增任務須由你操作。")
+            elif state["ids"]:
+                await self.deliver(day + ":end", f"郵件整理完成 · {day[6:]}\n本次檢查 {len(state['ids'])} 封新增郵件{suffix}。\n不重複播報；新增任務須由你操作。")
+            if not backlog and not state["more"]:
+                self.patch("daily-cursor", since=state["window_end"])
             self.patch(day, complete=True)
             return {"processed": len(state["ids"]), "more": state["more"]}
         finally:

@@ -63,7 +63,7 @@ def test_editing_mail_instruction_does_not_replay_and_send_never_executes(system
     assert not tasks.list_open()
 
 
-def test_existing_daily_endpoint_runs_mail_when_enabled(system, monkeypatch):
+def test_task_daily_endpoint_does_not_run_mail(system, monkeypatch):
     client, tasks, bot, config = system
     mail = AsyncMock(return_value={"processed": 0})
     monkeypatch.setattr(main, "send_daily_mail", mail)
@@ -71,7 +71,7 @@ def test_existing_daily_endpoint_runs_mail_when_enabled(system, monkeypatch):
     mail.assert_not_awaited()
     response = client.post("/internal/daily", headers={"X-Chronos-Scheduler-Secret": "test-scheduler"})
     assert response.status_code == 200
-    mail.assert_awaited_once()
+    mail.assert_not_awaited()
 
 
 def test_mail_status_is_authenticated_and_read_only(system, monkeypatch):
@@ -179,3 +179,20 @@ def test_task_confirmation_buttons_and_edit_reply(system, monkeypatch):
         assert post(client, 9203, callback=yes, card=702).status_code == 200
     assert len(tasks.list_open()) == 1
     assert tasks.list_open()[0]["title"] == "Investigate failed deployment"
+
+
+def test_daily_mail_endpoint_auth_and_separation(system, monkeypatch):
+    client, tasks, bot, config = system
+    mail = AsyncMock(return_value={"processed": 0, "more": False})
+    daily_tasks = AsyncMock()
+    monkeypatch.setattr(main, "send_daily_mail", mail)
+    monkeypatch.setattr(main, "send_daily_tasks", daily_tasks)
+    assert client.post('/internal/mail/daily').status_code == 403
+    mail.assert_not_awaited()
+    headers = {'X-Chronos-Scheduler-Secret': 'test-scheduler'}
+    assert client.post('/internal/mail/daily', headers=headers).status_code == 200
+    mail.assert_awaited_once()
+    daily_tasks.assert_not_awaited()
+    assert client.post('/internal/daily', headers=headers).status_code == 200
+    daily_tasks.assert_awaited_once()
+    mail.assert_awaited_once()

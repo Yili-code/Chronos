@@ -51,7 +51,7 @@ def workflow(request, tmp_path, monkeypatch):
                       gmail_client_id="client", gmail_client_secret="secret", gmail_refresh_token="refresh",
                       telegram_chat_id=123, telegram_bot_token="token", telegram_webhook_secret="hook")
     gmail = AsyncMock()
-    gmail.unread_ids.return_value = (["ab12", "ab13"], False)
+    gmail.message_ids.return_value = (["ab12", "ab13"], False)
     mails = {"ab12": message(), "ab13": message("ab13", subject="Homework", body="Please finish the report")}
     gmail.read.side_effect = lambda identifier: copy.deepcopy(mails[identifier])
     async def trash(identifier):
@@ -96,7 +96,7 @@ async def test_gmail_failure_keeps_journal_and_resumes_next_day(workflow):
     # It sees TRASH on recovery, reports the success and does not repeat the write.
     assert workflow.gmail.trash.await_count == 1
     assert "已移到垃圾桶" in workflow.telegram.send_message.call_args_list[0].args[1]
-    assert workflow.get("day:2026-10-07")["complete"]
+    assert workflow.get("daily:2026-10-07")["complete"]
 
 
 @pytest.mark.asyncio
@@ -173,7 +173,7 @@ async def test_concurrent_daily_run_is_rejected(workflow):
     workflow.patch("daily-lock", owner="another-worker", until=time.time() + 60)
     with pytest.raises(GmailError, match="Another"):
         await workflow.daily()
-    workflow.gmail.unread_ids.assert_not_awaited()
+    workflow.gmail.message_ids.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -267,3 +267,64 @@ async def test_task_button_requires_yes_and_supports_edit_cancel(workflow):
     assert "No duplicate" in (await workflow.prepare_action("ab12", "confirm_" + token))()
     assert len(workflow.db.list_open_tasks()) == 1
     workflow.ai.parse.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_daily_window_is_independent_of_backlog_and_includes_read_mail(workflow):
+    now = datetime(2026, 10, 8, 7, tzinfo=workflow.settings.tz)
+    start = int((now - timedelta(days=1)).timestamp())
+    workflow.patch("daily-cursor", since=start)
+    workflow.patch("backlog", enabled=True, day="batch:1", cutoff=start)
+    workflow.gmail.message_ids.return_value = (["ab13"], False)
+    workflow.gmail.read.side_effect = lambda _: message("ab13", labels=[], subject="New report")
+    await workflow.daily(now)
+    query = workflow.gmail.message_ids.call_args.args[1]
+    assert f"after:{start - 1} before:{int(now.timestamp())}" in query
+    assert "is:unread" not in query
+    assert workflow.already_reported("ab13")
+    assert workflow.get("backlog")["day"] == "batch:1"
+    assert workflow.get("daily-cursor")["since"] == int(now.timestamp())
+    workflow.gmail.trash.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_daily_overflow_keeps_cursor_and_skips_reported_mail(workflow):
+    now = datetime(2026, 10, 8, 7, tzinfo=workflow.settings.tz)
+    start = int((now - timedelta(days=1)).timestamp())
+    workflow.patch("daily-cursor", since=start)
+    workflow.gmail.message_ids.return_value = (["ab13"], True)
+    await workflow.daily(now)
+    assert workflow.get("daily-cursor")["since"] == start
+    workflow.gmail.message_ids.return_value = ([], False)
+    await workflow.daily(now + timedelta(days=1))
+    assert f"after:{start - 1}" in workflow.gmail.message_ids.call_args.args[1]
+    assert workflow.gmail.message_ids.call_args.kwargs["skip"]("ab13")
+    assert workflow.get("daily-cursor")["since"] == int((now + timedelta(days=1)).timestamp())
+
+
+@pytest.mark.asyncio
+async def test_daily_failure_retries_original_window_before_advancing(workflow):
+    now = datetime(2026, 10, 8, 7, tzinfo=workflow.settings.tz)
+    start = int((now - timedelta(days=1)).timestamp())
+    workflow.patch("daily-cursor", since=start)
+    workflow.gmail.message_ids.return_value = (["ab13"], False)
+    success = workflow.telegram.send_message.side_effect
+    workflow.telegram.send_message.side_effect = lambda *a, **kw: {"ok": False, "error_code": 429}
+    with pytest.raises(GmailError):
+        await workflow.daily(now)
+    assert workflow.get("daily-cursor")["since"] == start
+    workflow.telegram.send_message.side_effect = success
+    await workflow.daily(now + timedelta(days=1))
+    workflow.gmail.message_ids.assert_awaited_once()
+    assert workflow.get("daily-cursor")["since"] == int(now.timestamp())
+
+
+@pytest.mark.asyncio
+async def test_daily_no_new_mail_is_quiet_and_bootstraps_one_day(workflow):
+    now = datetime(2026, 10, 8, 7, tzinfo=workflow.settings.tz)
+    workflow.gmail.message_ids.return_value = ([], False)
+    await workflow.daily(now)
+    start = int((now - timedelta(days=1)).timestamp())
+    assert f"after:{start - 1}" in workflow.gmail.message_ids.call_args.args[1]
+    workflow.telegram.send_message.assert_not_awaited()
+    assert workflow.get("daily-cursor")["since"] == int(now.timestamp())

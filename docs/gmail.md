@@ -4,7 +4,7 @@
 
 ## 已實作的行為
 
-- 每天 **Asia/Taipei（UTC+8）08:00**，檢查未讀信（包含收件匣外的未讀信，不含垃圾桶／垃圾郵件）。每封成功播報一次，仍維持未讀；之後可從原卡片操作，不每天重複洗版。每次預設最多 100 封，剩餘信件於後續執行處理；Gmail 分頁會略過已播報項目。
+- 每天 **Asia/Taipei（UTC+8）07:00**，通知上次成功掃描後新增的郵件，含已讀與未讀，但排除寄件備份、草稿、垃圾桶與垃圾郵件。使用 Gmail 秒數時間範圍查詢（[官方說明](https://developers.google.com/workspace/gmail/api/guides/filtering)），每封成功播報一次。首次沒有時間紀錄時，只取前 24 小時的新信；歷史郵件仍由 `/mail_next` 整理。每次預設最多 100 封，達上限時保留原起點，後續執行跳過已播報項目並接續處理。只有完整批次成功後才推進掃描時間；不會更動保留郵件的已讀狀態。沒有新信時不傳通知。
 - 僅同時符合 Gmail `CATEGORY_PROMOTIONS`、`List-Unsubscribe` 與明確促銷詞的信移到垃圾桶。帳單、交易、登入、安全、作業／工作等關鍵字、往返信、星號、重要郵件、私人分類、白名單，以及內容過長而無法完整檢查的信保留。這是保守啟發式，不是完美分類；可先檢視預覽、加入白名單。
 - Telegram 逐封簡短回報移到垃圾桶的主旨、寄件者及原因；其他信提供繁體中文摘要、建議下一步與 Gmail 連結。摘要使用既有 Gemini，失敗時顯示原文摘錄。不會開啟郵件內連結或讀取附件。
 - 直接按郵件卡片按鈕或回覆 `刪除`、`保留`、`已讀`、`新增任務：要做的事`。使用現有 Telegram webhook 立即處理，不等隔天。
@@ -46,7 +46,7 @@ CHRONOS_GMAIL_MAX_MESSAGES=100
 CHRONOS_ENABLE_GMAIL=true
 ```
 
-重啟 Chronos。啟用內建 scheduler 時，服務必須在 08:00 持續運行；排程以 Asia/Taipei 固定。若 08:00 未運行，當日不會自行補跑。
+重啟 Chronos。啟用內建 scheduler 時，服務必須在 07:00 持續運行；排程以 Asia/Taipei 固定。若 07:00 未運行，當日不會自行補跑。
 
 ## Cloud Run
 
@@ -56,7 +56,7 @@ CHRONOS_ENABLE_GMAIL=true
 pwsh -File .\scripts\deploy_cloud_run.ps1 -ProjectId YOUR_PROJECT_ID -EnableGmail
 ```
 
-Gmail 憑證由 Secret Manager 注入，不放進 image。使用既有每天 08:00、Asia/Taipei 的 `/internal/daily` Cloud Scheduler job；該 endpoint 會先發 tasks 再整理信。內建 scheduler 在 Cloud Run 保持關閉。每次需要啟用 Gmail 的部署都要帶 `-EnableGmail`；省略會關閉功能。部署是獨立步驟，新增程式碼或通過本機測試不代表 production 已更新。
+Gmail 憑證由 Secret Manager 注入，不放進 image。郵件使用獨立的每天 07:00、Asia/Taipei `/internal/mail/daily` Cloud Scheduler job；待辦仍使用 08:00 的 `/internal/daily`，不再觸發郵件通知。內建 scheduler 在 Cloud Run 保持關閉。每次需要啟用 Gmail 的部署都要帶 `-EnableGmail`；省略會關閉功能。部署是獨立步驟，新增程式碼或通過本機測試不代表 production 已更新。
 
 ## 資料與失敗處理
 
@@ -75,7 +75,7 @@ Telegram 傳送前也保存紀錄。遇到 timeout 或服務錯誤而無法確�
 每批最多五封，涵蓋啟動當時收件匣內已讀及未讀郵件，依 Gmail 列表順序整理，不把批次冒充實際日期。
 保守自動過濾仍僅適用未讀促銷；已讀信交由使用者決定。卡片「保留（封存）」或回覆「封存」只移除 INBOX，原信可在所有郵件找到。
 新增任務或標為已讀不會封存。Read 會結束該信的整理並移除 Telegram 卡片，信仍留在收件匣且不再列入後續批次。當本批郵件全數處理後，傳 `/mail_next` 取得下一批；未處理完會提示剩餘數量。
-歷史整理期間每日排程也遵守五封及待處理關卡，清理完成後恢復原有未讀整理。新進郵件保留到歷史整理結束。
+歷史整理的每批五封與待處理關卡只適用 `/mail_next`；每日新信通知獨立執行，不會被歷史整理阻擋。
 批次、截止範圍及指令識別保存在資料庫；重送同一指令不會多開一批。不寄信、不永久刪除。
 
 ## 帳號安全通知規則

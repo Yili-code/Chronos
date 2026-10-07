@@ -51,9 +51,6 @@ HELP_TEXT = (
     "/edit #id ... — edit a fixed task ID\n"
     "Reply to a task card to edit it. Editing a sent message does not replay commands.\n"
     "/clear — delete all tasks\n"
-    "\n<b>Mail</b>\n"
-    "Reply to a mail card: 刪除 / 保留 / 已讀 / 新增任務：...\n"
-    "Mail is never sent automatically.\n"
     "\n<b>Study</b>\n"
     "/classday ... — confirm a course-specific instruction day\n"
     "/study_budget — inspect recorded Study AI usage without generating\n"
@@ -192,7 +189,7 @@ async def lifespan(_: FastAPI):
     if settings.enable_internal_scheduler:
         scheduler.add_job(send_daily_tasks, "cron", hour=8, minute=0, id="daily_tasks", replace_existing=True)
         if settings.enable_gmail:
-            scheduler.add_job(send_daily_mail, "cron", hour=8, minute=0, timezone="Asia/Taipei",
+            scheduler.add_job(send_daily_mail, "cron", hour=7, minute=0, timezone="Asia/Taipei",
                               id="daily_mail", replace_existing=True)
         if settings.enable_study_tracking:
             scheduler.add_job(run_study_tick, "cron", second=0, id="study_tracking", replace_existing=True)
@@ -337,6 +334,15 @@ async def trigger_mail_backlog(x_chronos_scheduler_secret: str | None = Header(d
         raise HTTPException(status_code=503, detail=str(error)) from None
 
 
+@app.post("/internal/mail/daily")
+async def trigger_daily_mail(x_chronos_scheduler_secret: str | None = Header(default=None)) -> dict:
+    if not settings.scheduler_secret:
+        raise HTTPException(status_code=503, detail="Scheduler endpoint is not configured")
+    if not hmac.compare_digest(x_chronos_scheduler_secret or "", settings.scheduler_secret):
+        raise HTTPException(status_code=403, detail="Invalid scheduler credential")
+    return await send_daily_mail()
+
+
 @app.post("/internal/daily")
 async def trigger_daily_tasks(x_chronos_scheduler_secret: str | None = Header(default=None)) -> dict:
     if not settings.scheduler_secret:
@@ -344,7 +350,6 @@ async def trigger_daily_tasks(x_chronos_scheduler_secret: str | None = Header(de
     if not hmac.compare_digest(x_chronos_scheduler_secret or "", settings.scheduler_secret):
         raise HTTPException(status_code=403, detail="Invalid scheduler credential")
     await send_daily_tasks()
-    await send_daily_mail()
     return {"ok": True}
 
 
