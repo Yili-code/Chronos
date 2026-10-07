@@ -48,9 +48,9 @@ def test_failure_does_not_change_tasks(task_service, monkeypatch):
         asyncio.run(main.create_natural_task(main.NaturalTask(text="工作")))
     assert error.value.status_code == 503
     assert "External AI failed" in asyncio.run(main.handle_message("新增 工作"))
-    assert "update service is temporarily unavailable" in asyncio.run(
-        main.handle_message("/edit 1 改到明天")
-    )
+    edit_failure = asyncio.run(main.handle_message("/edit 1 改到明天"))
+    assert "External AI failed" in edit_failure
+    assert "No changes were made to Task 1" in edit_failure
     assert asyncio.run(main.handle_message("/reschedule 1 明天")) == "Unknown command. Use /help to see available commands."
     assert task_service.list_open() == before
     assert "Original task" in asyncio.run(main.handle_message("/tasks"))

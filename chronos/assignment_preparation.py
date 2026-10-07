@@ -4,6 +4,7 @@ import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from .gemini_keys import configured_keys
 
 
 class PreparationDraft(BaseModel):
@@ -52,7 +53,7 @@ async def generate_preparation(provider, assignment):
     config = provider.settings
     if not provider.free_tier_confirmed:
         raise ValueError('free-tier confirmation required')
-    if (not config.gemini_api_key or config.gemini_api_base != 'https://generativelanguage.googleapis.com/v1beta'
+    if (not configured_keys(config) or config.gemini_api_base != 'https://generativelanguage.googleapis.com/v1beta'
             or not re.fullmatch(r'[A-Za-z0-9._-]+', config.gemini_model)):
         raise ValueError('unsupported preparation configuration')
     if not assignment.description.strip() or len(assignment.description) > 20000:

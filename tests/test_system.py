@@ -191,6 +191,7 @@ def test_webhook_auth_and_commands(system):
         '<b>Commands</b>\n'
         '\n<b>Tasks</b>\n'
         '/tasks — list open tasks\n'
+        '/add title [#tag] — add exact text without AI or a deadline\n'
         '/done x — complete task\n'
         '/edit x ... — edit task\n'
         '/edit #id ... — edit a fixed task ID\n'
@@ -286,7 +287,7 @@ def test_failed_edit_is_saved_and_can_be_retried_by_stable_task_id(system):
     error_message = bot.send_message.await_args_list[-1]
     assert error_message.args[1] == (
         '<b>Update failed · Task 1</b>\n'
-        'The update service is temporarily unavailable. No changes were made to Task 1. '
+        'provider unavailable\nNo changes were made to Task 1. '
         'Your command has been saved; use the button below to retry it.'
     )
     assert error_message.kwargs['parse_mode'] == 'HTML'

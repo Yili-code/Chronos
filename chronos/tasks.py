@@ -22,6 +22,18 @@ class DeterministicEdit:
     tag_alias: tuple[str, str] | None = None
 
 
+def parse_literal_task(text: str) -> ParsedTask:
+    """Explicit /add input is a title, not a natural-language date expression."""
+    title = text.strip()
+    tag = re.search(r"\s+#([A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*)$", title)
+    project = tag.group(1) if tag else None
+    if tag:
+        title = title[:tag.start()].strip()
+    if not title or len(title) > 2000:
+        raise ValueError("Use /add followed by a title of 1–2000 characters and an optional #tag.")
+    return ParsedTask(title=title, project=project)
+
+
 class TaskService:
     def __init__(self, db: Database, tz):
         self.db = db
@@ -154,6 +166,20 @@ def parse_deterministic_edit(current: dict, instruction: str, now: datetime | No
         project=current.get("project"),
         timing=dict(current.get("timing") or {}),
     )
+
+    # A supplied replacement is already the desired text; no AI interpretation
+    # is needed. Anchor the entire instruction so extra changes aren't ignored.
+    replacement = re.fullmatch(
+        r'(?:set the title to|translate the title to|title:)\s*"([^"\r\n]+)"'
+        r'(?:\.?\s*Keep (?:other fields unchanged|the existing due date and tag)\.?)?\.?',
+        instruction.strip(), re.IGNORECASE,
+    )
+    if replacement:
+        title = replacement.group(1).strip()
+        if not title or len(title) > 2000:
+            raise ValueError("Task title must contain 1–2000 characters.")
+        task.title = title
+        return DeterministicEdit(task)
 
     # Handle the screenshot's correction without relying on an external model.
     correction = re.fullmatch(

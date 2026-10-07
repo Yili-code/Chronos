@@ -204,6 +204,31 @@ $secretBindings = @(
     "CHRONOS_SCHEDULER_SECRET=chronos-scheduler-secret:$($secretVersions.scheduler)",
     "CHRONOS_WEB_PASSWORD=chronos-web-password:$($secretVersions.webPassword)"
 )
+$secondaryGeminiKey = Get-OptionalLocalValue "CHRONOS_GEMINI_API_KEY_SECONDARY"
+if (-not [string]::IsNullOrWhiteSpace($secondaryGeminiKey)) {
+    $secondaryVersion = Set-CloudSecret "chronos-gemini-api-key-secondary" $secondaryGeminiKey
+    $secretBindings += "CHRONOS_GEMINI_API_KEY_SECONDARY=chronos-gemini-api-key-secondary:$secondaryVersion"
+}
+else {
+    # Keep an already configured secondary when the local .env omits it.
+    $existingServiceJson = (& $gcloudCommand run services describe $Service --region $Region --project $ProjectId `
+        --format json --quiet 2>$null) -join "`n"
+    if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($existingServiceJson)) {
+        $existingService = $existingServiceJson | ConvertFrom-Json
+        $secondaryBinding = $existingService.spec.template.spec.containers[0].env |
+            Where-Object { $_.name -eq "CHRONOS_GEMINI_API_KEY_SECONDARY" } | Select-Object -First 1
+        $secondaryRef = $secondaryBinding.valueFrom.secretKeyRef
+        if ($secondaryRef -and $secondaryRef.name -and $secondaryRef.key) {
+            $secretBindings += "CHRONOS_GEMINI_API_KEY_SECONDARY=$($secondaryRef.name):$($secondaryRef.key)"
+        }
+    }
+}
+$keyCooldown = Get-OptionalLocalValue "CHRONOS_GEMINI_KEY_COOLDOWN_SECONDS"
+if ([string]::IsNullOrWhiteSpace($keyCooldown)) { $keyCooldown = "60" }
+$parsedKeyCooldown = 0
+if (-not [int]::TryParse($keyCooldown, [ref]$parsedKeyCooldown) -or $parsedKeyCooldown -lt 1 -or $parsedKeyCooldown -gt 86400) {
+    throw "CHRONOS_GEMINI_KEY_COOLDOWN_SECONDS must be an integer between 1 and 86400"
+}
 if ($EnableGmail) {
     # OAuth was completed locally. Only Secret Manager receives the credentials.
     foreach ($suffix in @("CLIENT_ID", "CLIENT_SECRET", "REFRESH_TOKEN", "ACCOUNT")) {
@@ -229,6 +254,7 @@ $environment = @(
     "CHRONOS_FIRESTORE_DATABASE=(default)",
     "CHRONOS_FIRESTORE_COLLECTION_PREFIX=chronos",
     "CHRONOS_GEMINI_MODEL=$GeminiModel",
+    "CHRONOS_GEMINI_KEY_COOLDOWN_SECONDS=$parsedKeyCooldown",
     "CHRONOS_ENABLE_INTERNAL_SCHEDULER=false",
     "CHRONOS_ENABLE_GMAIL=$($EnableGmail.IsPresent.ToString().ToLowerInvariant())",
     "CHRONOS_TIMEZONE=Asia/Taipei",

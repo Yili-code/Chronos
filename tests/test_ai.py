@@ -148,7 +148,7 @@ def test_missing_configuration():
     (401, "configuration error", 1),
     (403, "configuration error", 1),
     (404, "model is unavailable", 1),
-    (429, "temporarily unavailable", 3),
+    (429, "temporarily unavailable", 1),
     (500, "temporarily unavailable", 3),
     (503, "temporarily unavailable", 3),
 ])

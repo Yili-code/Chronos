@@ -32,7 +32,9 @@ class Settings(BaseSettings):
     firestore_database: str = "(default)"
     firestore_collection_prefix: str = "chronos"
     gemini_api_base: str = "https://generativelanguage.googleapis.com/v1beta"
-    gemini_api_key: str = ""
+    gemini_api_key: str = Field(default="", repr=False)
+    gemini_api_key_secondary: str = Field(default="", repr=False)
+    gemini_key_cooldown_seconds: float = Field(default=60, ge=1, le=86400)
     gemini_model: str = "gemini-3.8-flash"
     study_gemini_model: str = "gemini-3.1-flash-lite"
     study_daily_request_limit: int = Field(default=0, ge=0)

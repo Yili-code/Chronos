@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from .tasks import ParsedTask
 from .task_timing import TaskTiming, normalize_timing
+from .gemini_keys import GeminiKeyRouter, GeminiKeysUnavailable, configured_keys
 
 
 logger = logging.getLogger("chronos.ai")
@@ -98,6 +99,7 @@ class ProgressSummaryOutput(BaseModel):
 class ExternalAI:
     def __init__(self, settings):
         self.settings = settings
+        self.key_router = GeminiKeyRouter(settings)
 
     async def parse(self, text: str, now: datetime | None = None) -> ParsedTask:
         if not text.strip():
@@ -160,7 +162,16 @@ class ExternalAI:
         if any(getattr(patch, name).op != "keep" for name in ("due_at", "due_date", "scheduled", "event", "uncertain")):
             timing["source_text"] = instruction[:2000]
         try:
-            result = TaskOutput.model_validate({**values, "timing": timing})
+            # Legacy tasks can carry non-English tags. Validate newly assigned
+            # tags, but don't reject an unchanged stored tag during a title edit.
+            preserved_project = values["project"] if patch.project.op == "keep" else None
+            result = TaskOutput.model_validate({
+                **values,
+                "project": None if patch.project.op == "keep" else values["project"],
+                "timing": timing,
+            })
+            if patch.project.op == "keep":
+                result.project = preserved_project
             return self._parsed_task(result)
         except ValueError:
             raise AIError("The AI service returned an invalid response. No task was changed; rephrase the request.") from None
@@ -260,7 +271,7 @@ class ExternalAI:
             "progress summary": "No progress summary was created",
             "mail summary": "No mail summary was created",
         }[subject]
-        if not config.gemini_api_key:
+        if not configured_keys(config):
             raise AIError("The AI service is not configured. Contact the service owner.")
         url = f"{config.gemini_api_base.rstrip('/')}/models/{config.gemini_model}:generateContent"
         request_body = {
@@ -274,12 +285,14 @@ class ExternalAI:
                     response = await self._post_with_retry(
                         client,
                         url,
-                        headers={"x-goog-api-key": config.gemini_api_key},
                         json=request_body,
                     )
                     response.raise_for_status()
             content = response.json()["candidates"][0]["content"]["parts"][0]["text"]
             parsed = output_model.model_validate(json.loads(content))
+        except GeminiKeysUnavailable:
+            logger.warning("Gemini keys are cooling down; no request sent")
+            raise AIError(f"The AI service is temporarily unavailable. {no_change}; try again later.") from None
         except (TimeoutError, httpx.TimeoutException):
             logger.warning("Gemini request timed out after automatic retries")
             raise AIError(f"The AI service is temporarily unavailable. {no_change}; try again later.") from None
@@ -304,22 +317,4 @@ class ExternalAI:
         return parsed
 
     async def _post_with_retry(self, client: httpx.AsyncClient, url: str, **request: object) -> httpx.Response:
-        for attempt in range(1, MAX_ATTEMPTS + 1):
-            try:
-                response = await client.post(url, **request)
-            except httpx.TransportError as error:
-                if attempt == MAX_ATTEMPTS:
-                    raise
-                logger.warning(
-                    "Gemini transport failure %s; retrying attempt %s/%s",
-                    type(error).__name__, attempt + 1, MAX_ATTEMPTS,
-                )
-            else:
-                if response.status_code not in RETRYABLE_STATUS_CODES or attempt == MAX_ATTEMPTS:
-                    return response
-                logger.warning(
-                    "Gemini HTTP %s; retrying attempt %s/%s",
-                    response.status_code, attempt + 1, MAX_ATTEMPTS,
-                )
-            await asyncio.sleep(2 ** (attempt - 1))
-        raise RuntimeError("unreachable")
+        return await self.key_router.post(client, url, attempts=MAX_ATTEMPTS, **request)

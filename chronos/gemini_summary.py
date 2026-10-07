@@ -8,6 +8,7 @@ from .course_tracking import TAIPEI
 from .ai_budget import BudgetExceeded
 from .study_notes import SummaryDraft
 from .summary_pipeline import GenerationRejected, GenerationUnavailable
+from .gemini_keys import GeminiKeyRouter, GeminiKeysUnavailable, configured_keys
 
 PROMPT_VERSION = "study-segment-v10"
 
@@ -139,12 +140,13 @@ class GeminiSummary:
         self.transport = transport
         self.budget = budget
         self.budget_notice = budget_notice
+        self.key_router = GeminiKeyRouter(settings)
 
     async def generate(self, *, progress, pdfs, model, prompt_version):
         config = self.settings
         if not self.free_tier_confirmed:
             raise ValueError("free-tier eligibility must be confirmed before generation")
-        if not config.gemini_api_key or model != config.gemini_model or not re.fullmatch(r"[A-Za-z0-9._-]+", model):
+        if not configured_keys(config) or model != config.gemini_model or not re.fullmatch(r"[A-Za-z0-9._-]+", model):
             raise ValueError("summary model configuration mismatch")
         if config.gemini_api_base != "https://generativelanguage.googleapis.com/v1beta" or prompt_version != PROMPT_VERSION:
             raise ValueError("unsupported summary endpoint or prompt")
@@ -182,26 +184,28 @@ class GeminiSummary:
     async def _request(self, body, model, *, output_type=SummaryDraft):
         config = self.settings
         body = {**body, 'generationConfig': {**body.get('generationConfig', {}), 'maxOutputTokens': 8192}}
-        if self.budget is None:
-            if not isinstance(self.transport, httpx.MockTransport):
-                raise BudgetExceeded('daily study budget must be configured')
-        else:
-            now = datetime.now(TAIPEI)
-            # Conservative workload estimate, not provider tokenization: includes
-            # encoded PDF bytes and a bounded output allowance.
-            estimate = len(json.dumps(body, ensure_ascii=False).encode('utf-8')) + 8192
-            try:
-                reservation = self.budget.reserve(now, estimate)
-            except BudgetExceeded:
-                if self.budget_notice:
-                    await self.budget_notice('exhausted', now)
-                raise
-            if reservation['near_limit'] and self.budget_notice:
-                await self.budget_notice('near_limit', now)
+        async def reserve_attempt():
+            if self.budget is None:
+                if not isinstance(self.transport, httpx.MockTransport):
+                    raise BudgetExceeded('daily study budget must be configured')
+            else:
+                now = datetime.now(TAIPEI)
+                # Reserve for EVERY provider attempt, including a secondary key.
+                estimate = len(json.dumps(body, ensure_ascii=False).encode('utf-8')) + 8192
+                try:
+                    reservation = self.budget.reserve(now, estimate)
+                except BudgetExceeded:
+                    if self.budget_notice:
+                        await self.budget_notice('exhausted', now)
+                    raise
+                if reservation['near_limit'] and self.budget_notice:
+                    await self.budget_notice('near_limit', now)
         try:
             async with httpx.AsyncClient(timeout=config.ai_timeout, transport=self.transport, follow_redirects=False) as client:
-                response = await client.post(f"{config.gemini_api_base}/models/{model}:generateContent",
-                    headers={"x-goog-api-key": config.gemini_api_key}, json=body)
+                response = await self.key_router.post(client, f"{config.gemini_api_base}/models/{model}:generateContent",
+                    json=body, before_attempt=reserve_attempt, failover_on_transport=False)
+        except GeminiKeysUnavailable:
+            raise GenerationUnavailable("summary provider keys are cooling down") from None
         except httpx.TimeoutException:
             raise ProviderUncertain("timeout") from None
         except httpx.HTTPError:

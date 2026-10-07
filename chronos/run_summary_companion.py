@@ -57,7 +57,7 @@ def preflight(config, args):
         "sqlite_file_exists": config.database_path.is_file() if config.database_backend == "sqlite" else None,
         "firestore_project_explicit": bool(config.firestore_project_id),
         "telegram_configured": bool(config.telegram_chat_id and config.telegram_bot_token),
-        "provider_key_configured": bool(config.gemini_api_key),
+        "provider_key_configured": bool(config.gemini_api_key or getattr(config, 'gemini_api_key_secondary', '')),
         "study_model_is_lite": config.study_gemini_model == "gemini-3.1-flash-lite",
         "catalog_file_exists": args.catalog_path.is_file(),
         "pdf_directory_exists": args.pdf_directory.is_dir(),
@@ -88,7 +88,7 @@ async def run(args):
     from .summary_companion import run_summary_pass
     from .catalog_prompt import prompt_observed_catalogs
     from .material_bridge import MaterialObservationStore
-    if not settings.telegram_chat_id or not settings.telegram_bot_token or not settings.gemini_api_key:
+    if not settings.telegram_chat_id or not settings.telegram_bot_token or not (settings.gemini_api_key or settings.gemini_api_key_secondary):
         print("summary_companion=configuration_required")
         return 2
     db = create_database(settings)

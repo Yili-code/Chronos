@@ -21,6 +21,7 @@ from .tasks import (
     format_task_block,
     format_tasks,
     parse_deterministic_edit,
+    parse_literal_task,
     project_display_name,
 )
 from .telegram import TelegramClient
@@ -44,6 +45,7 @@ HELP_TEXT = (
     "<b>Commands</b>\n"
     "\n<b>Tasks</b>\n"
     "/tasks — list open tasks\n"
+    "/add title [#tag] — add exact text without AI or a deadline\n"
     "/done x — complete task\n"
     "/edit x ... — edit task\n"
     "/edit #id ... — edit a fixed task ID\n"
@@ -241,10 +243,6 @@ async def mail_status(x_chronos_scheduler_secret: str | None = Header(default=No
                 "send_enabled": False, "timezone": "Asia/Taipei"}
     except GmailError as error:
         raise HTTPException(status_code=503, detail=str(error)) from None
-
-
-
-
 
 
 async def run_study_tick() -> dict:
@@ -587,18 +585,22 @@ async def prepare_pending_edit(data: str) -> Callable[[], str | dict]:
     current_position = next(
         index for index, item in enumerate(current_items, start=1) if item["id"] == current["id"]
     )
-    deterministic = parse_deterministic_edit(current, pending["instruction"])
+    try:
+        deterministic = parse_deterministic_edit(current, pending["instruction"])
+    except ValueError as error:
+        return lambda reply=str(error): reply
     tag_alias = deterministic.tag_alias if deterministic else None
     if deterministic:
         parsed = deterministic.task
     else:
         try:
             parsed = await ai.edit(current, pending["instruction"])
-        except AIError:
-            return lambda: message_bundle({
+        except AIError as error:
+            reason = escape(str(error))
+            return lambda reason=reason: message_bundle({
                 "text": (
                     f"<b>Update failed · Task {current_position}</b>\n"
-                    f"The update service is still unavailable. No changes were made to Task {current_position}. "
+                    f"{reason}\nNo changes were made to Task {current_position}. "
                     "Your command is still saved; use the button below to retry it later."
                 ),
                 "parse_mode": "HTML",
@@ -726,17 +728,21 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
         if reference.startswith("#"):
             position = next(i for i, item in enumerate(items, 1) if item["id"] == current["id"])
         instruction = edited.group(2).strip()
-        deterministic = parse_deterministic_edit(current, instruction)
+        try:
+            deterministic = parse_deterministic_edit(current, instruction)
+        except ValueError as error:
+            return lambda reply=str(error): reply
         tag_alias = deterministic.tag_alias if deterministic else None
         if deterministic:
             parsed = deterministic.task
         else:
             try:
                 parsed = await ai.edit(current, instruction)
-            except AIError:
+            except AIError as error:
+                reason = escape(str(error))
                 if update_id is None:
-                    return lambda: (
-                        f"The update service is temporarily unavailable. No changes were made to Task {position}. "
+                    return lambda reason=reason: (
+                        f"{reason}\nNo changes were made to Task {position}. "
                         "Please try again later."
                     )
                 def save_failed_edit() -> dict:
@@ -749,7 +755,7 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
                     )
                     text = (
                         f"<b>Update failed · Task {position}</b>\n"
-                        f"The update service is temporarily unavailable. No changes were made to Task {position}. "
+                        f"{reason}\nNo changes were made to Task {position}. "
                         "Your command has been saved; use the button below to retry it."
                     )
                     return message_bundle({
@@ -795,12 +801,19 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
             "Specify the task and the change: /edit 1 移除期限 or /edit #42 your changes. "
             "Use /tasks to choose a task, or reply to its task card with your changes. No task was changed."
         )
-    if command is not None or re.fullmatch(r"(?:代辦|清單|完成\s*#?\d+|延期\s*#?\d+.*)", normalized):
+    literal = re.fullmatch(r"add(?:\s+(.*))?", command or "", re.IGNORECASE | re.DOTALL)
+    if literal:
+        try:
+            parsed = parse_literal_task(literal.group(1) or "")
+        except ValueError as error:
+            return lambda reply=str(error): reply
+    elif command is not None or re.fullmatch(r"(?:代辦|清單|完成\s*#?\d+|延期\s*#?\d+.*)", normalized):
         return lambda: "Unknown command. Use /help to see available commands."
-    try:
-        parsed = await ai.parse(normalized)
-    except (AIError, ValueError) as error:
-        return lambda reply=str(error): reply
+    else:
+        try:
+            parsed = await ai.parse(normalized)
+        except (AIError, ValueError) as error:
+            return lambda reply=str(error): reply
     aliases = tasks.project_aliases()
     def create() -> dict:
         task = tasks.create(parsed.title, parsed.due_at, parsed.project, parsed.timing)

@@ -78,6 +78,10 @@ def test_catalog_to_confirmed_summary_and_export(system, tmp_path, monkeypatch, 
         asyncio.run(run_summary_pass(main.db, generator, bot, pdf_store, **options))
         assert len(provider_requests) == 1
         options['now'] += timedelta(minutes=2)
+        # Advance the credential cooldown clock along with the simulated job clock.
+        import chronos.gemini_keys as keys_module
+        monotonic = keys_module.time.monotonic
+        monkeypatch.setattr(keys_module, 'time', SimpleNamespace(monotonic=lambda: monotonic() + 120))
         result = asyncio.run(run_summary_pass(main.db, generator, bot, pdf_store, **options))
     assert result["outcomes"] == {key: "sent"}
     assert asyncio.run(run_summary_pass(main.db, generator, bot, pdf_store, **options))["processed"] == 0
