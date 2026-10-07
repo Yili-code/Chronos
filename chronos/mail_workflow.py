@@ -325,23 +325,23 @@ class MailWorkflow:
         task_action = re.fullmatch(r"(confirm|edit|cancel)_([a-f0-9]{8})", action)
         if action == "task" or task_action or (saved.get("draft_edit") and action not in {"trash", "read", "keep", "archive", "封存"}):
             if saved.get("task_id") is not None:
-                return lambda: f"這封信已建立任務 #{saved['task_id']}，不重複新增。"
+                return lambda: f"This email already has task #{saved['task_id']}. No duplicate was added."
             if task_action:
                 kind, token = task_action.groups()
                 def apply_draft():
                     current = self.get("message:" + identifier) or {}
                     if current.get("task_id") is not None:
-                        return f"這封信已建立任務 #{current['task_id']}，不重複新增。"
+                        return f"This email already has task #{current['task_id']}. No duplicate was added."
                     if current.get("draft_token") != token or not current.get("draft_title"):
-                        return "這個確認已失效，請重新按 Task。"
+                        return "This confirmation has expired. Tap Task again."
                     if kind == "cancel":
                         self.patch("message:" + identifier, draft_title=None, draft_token=None, draft_edit=False)
-                        return "已取消，未新增待辦。"
+                        return "Cancelled. No task was added."
                     if kind == "edit":
                         self.patch("message:" + identifier, draft_edit=True)
-                        return "請回覆這則訊息，輸入新的待辦內容。"
+                        return "Reply to this message with the new task title."
                     if current.get("draft_edit"):
-                        return "請先輸入編輯後的待辦內容，再確認。"
+                        return "Enter the edited task title before confirming."
                     title = current["draft_title"]
                     def create_confirmed(old):
                         if old.get("task_id") is not None:
@@ -350,14 +350,14 @@ class MailWorkflow:
                             {"source_text": f"Gmail: https://mail.google.com/mail/u/{self.settings.gmail_account}/#all/{identifier}"})
                         return {**old, "task_id": task["id"], "draft_edit": False, "draft_token": None}
                     state = self.db.mutate_mail_state(self.key("message:" + identifier), create_confirmed)
-                    return f"已新增任務 #{state['task_id']}：{title}"
+                    return f"Added task #{state['task_id']}: {title}"
                 return apply_draft
             title = ("Read email: " + display_text(saved["mail"]["subject"])) if action == "task" else instruction
             title = clean(title, 200)
             token = hashlib.sha256(title.encode()).hexdigest()[:8]
             def propose():
                 self.patch("message:" + identifier, draft_title=title, draft_token=token, draft_edit=False)
-                return "新增待辦？\n\n" + title
+                return "Add this to Tasks?\n\n" + title
             return propose
         if action in {"封存", "archive"} or (action == "keep" and saved.get("backlog")):
             await self.gmail.verify_account()
@@ -384,7 +384,7 @@ class MailWorkflow:
         match = re.fullmatch(r"(?:新增任務|加到\s*tasks|task|todo|/task)\s*[:：]?\s*(.*)", instruction, re.I | re.S)
         if action == "task" or match:
             if saved.get("task_id") is not None:
-                return lambda: f"這封信已建立任務 #{saved['task_id']}，不重複新增。"
+                return lambda: f"This email already has task #{saved['task_id']}. No duplicate was added."
             mail = saved["mail"]
             detail = match.group(1) if match else ""
             source = json.dumps({"owner_request": detail or "Create a follow-up task for this email.",
@@ -404,6 +404,6 @@ class MailWorkflow:
                                                now or datetime.now(self.settings.tz), parsed.timing)
                     return {**old, "task_id": task["id"]}
                 state = self.db.mutate_mail_state(self.key("message:" + identifier), transition)
-                return f"已新增任務 #{state['task_id']}：{parsed.title}"
+                return f"Added task #{state['task_id']}: {parsed.title}"
             return create
         return lambda: "請回覆「刪除」「保留」「已讀」或「新增任務：要做的事」。寄信未啟用，不會自動寄出。"

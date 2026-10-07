@@ -254,16 +254,16 @@ async def test_read_action_finishes_backlog_item_without_archiving(workflow):
 async def test_task_button_requires_yes_and_supports_edit_cancel(workflow):
     workflow.patch("message:ab12", mail=message())
     preview = await workflow.prepare_action("ab12", "task")
-    assert preview().startswith("新增待辦？")
+    assert preview().startswith("Add this to Tasks?")
     assert not workflow.db.list_open_tasks()
     state = workflow.get("message:ab12")
     old = state["draft_token"]
     (await workflow.prepare_action("ab12", "edit_" + old))()
-    assert "先輸入" in (await workflow.prepare_action("ab12", "confirm_" + old))()
+    assert "before confirming" in (await workflow.prepare_action("ab12", "confirm_" + old))()
     (await workflow.prepare_action("ab12", "Review deployment failure"))()
     token = workflow.get("message:ab12")["draft_token"]
-    assert "失效" in (await workflow.prepare_action("ab12", "confirm_" + old))()
-    assert "已新增" in (await workflow.prepare_action("ab12", "confirm_" + token))()
-    assert "不重複" in (await workflow.prepare_action("ab12", "confirm_" + token))()
+    assert "expired" in (await workflow.prepare_action("ab12", "confirm_" + old))()
+    assert "Added task" in (await workflow.prepare_action("ab12", "confirm_" + token))()
+    assert "No duplicate" in (await workflow.prepare_action("ab12", "confirm_" + token))()
     assert len(workflow.db.list_open_tasks()) == 1
     workflow.ai.parse.assert_not_awaited()

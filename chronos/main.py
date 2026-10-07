@@ -453,8 +453,8 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         if not receipt["delivered"]:
             if receipt["reply"] != "已移到垃圾桶。":
                 markup = None
-                is_proposal = receipt["reply"].startswith("新增待辦？\n\n")
-                is_edit = receipt["reply"] == "請回覆這則訊息，輸入新的待辦內容。"
+                is_proposal = receipt["reply"].startswith("Add this to Tasks?\n\n")
+                is_edit = receipt["reply"] == "Reply to this message with the new task title."
                 identifier = (mail.binding(chat_id, source_message.message_id)["mail_id"] if mail_callback else mail_binding["mail_id"])
                 if is_proposal:
                     import hashlib
@@ -463,7 +463,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                     markup = {"inline_keyboard": [[{"text": label, "callback_data": f"mail:{action}_{token}:{identifier}"}
                               for label, action in (("Yes", "confirm"), ("Edit", "edit"), ("Cancel", "cancel"))]]}
                 elif is_edit:
-                    markup = {"force_reply": True, "input_field_placeholder": "輸入待辦內容"}
+                    markup = {"force_reply": True, "input_field_placeholder": "Enter a task title"}
                 result = await telegram.send_message(chat_id, receipt["reply"], reply_markup=markup)
                 if not result.get("ok"):
                     raise HTTPException(status_code=502, detail="Mail action reply pending")
