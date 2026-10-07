@@ -7,6 +7,8 @@ import time
 import uuid
 from datetime import datetime
 from email.utils import parseaddr
+from html import escape
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -45,6 +47,33 @@ def filter_reason(mail, keep_senders=""):
     if PROMOTION.search(text):
         return "促銷分類＋退訂標記＋明確優惠內容"
     return None
+
+
+def display_text(value):
+    """Hide commit suffixes without changing saved mail or task source data."""
+    return re.sub(r"\s*\([0-9a-fA-F]{7,40}\)", "", str(value)).strip()
+
+
+def mail_buttons(identifier, backlog=False):
+    return {"inline_keyboard": [[
+        {"text": "Trash", "callback_data": f"mail:trash:{identifier}"},
+        {"text": "Task", "callback_data": f"mail:task:{identifier}"},
+    ], [
+        {"text": "Archive" if backlog else "Keep", "callback_data": f"mail:keep:{identifier}"},
+        {"text": "Read", "callback_data": f"mail:read:{identifier}"},
+    ]]}
+
+
+def format_mail_card(mail, summary, account):
+    excerpt = summary.startswith(("原文摘錄：", "原文摘錄（摘要暫不可用）："))
+    summary = re.sub(r"^原文摘錄(?:（摘要暫不可用）)?：", "", summary)
+    label = "原文摘要" if excerpt else "摘要"
+    sender = mail["sender"]
+    url = f"https://mail.google.com/mail/u/{quote(account, safe='@')}/#all/{quote(mail['id'], safe='')}"
+    return (f"📬 <b>{escape(display_text(mail['subject']))}</b>\n\n"
+            f"<b>寄件者</b>  {escape(sender)}\n\n"
+            f"<b>{label}</b>\n{escape(display_text(summary))}\n\n"
+            f'<a href="{escape(url, quote=True)}">Open email</a>')
 
 
 class MailSummary(BaseModel):
@@ -99,7 +128,7 @@ class MailWorkflow:
             ), timeout=60)
             return clean(result.summary, 500) + ("\n建議：" + clean(result.next_step, 250) if result.next_step else "")
         except (AIError, ValueError, TimeoutError):
-            return "原文摘錄（摘要暫不可用）：" + clean(mail.get("snippet") or mail.get("body") or mail["subject"], 500)
+            return "原文摘錄：" + clean(mail.get("snippet") or mail.get("body") or mail["subject"], 500)
 
     async def deliver(self, delivery_key, text, mail_id=None):
         """Persist send intent first; an ambiguous send is never automatically replayed."""
@@ -111,15 +140,9 @@ class MailWorkflow:
         self.patch(delivery_key, delivery="sending")
         markup = None
         if mail_id:
-            markup = {"inline_keyboard": [[
-                {"text": "移到垃圾桶", "callback_data": f"mail:trash:{mail_id}"},
-                {"text": "新增任務", "callback_data": f"mail:task:{mail_id}"},
-            ], [
-                {"text": "保留（封存）" if (self.get("message:" + mail_id) or {}).get("backlog") else "保留", "callback_data": f"mail:keep:{mail_id}"},
-                {"text": "標為已讀", "callback_data": f"mail:read:{mail_id}"},
-            ]]}
+            markup = mail_buttons(mail_id, (self.get("message:" + mail_id) or {}).get("backlog", False))
         try:
-            result = await self.telegram.send_message(self.settings.telegram_chat_id, text, reply_markup=markup)
+            result = await self.telegram.send_message(self.settings.telegram_chat_id, text, reply_markup=markup, parse_mode="HTML" if mail_id else None)
         except TelegramError:
             self.patch(delivery_key, delivery="uncertain")
             raise GmailError("Telegram mail delivery outcome is unknown; owner review required") from None
@@ -253,10 +276,7 @@ class MailWorkflow:
                 summary = item.get("summary") or await self.summary(mail)
                 self.patch(item_key, summary=summary, trash_pending=False)
                 self.patch("message:" + identifier, last_delivery=item_key)
-                text = (f"📬 {mail['subject']}\n寄件者：{mail['sender']}\n{summary}\n"
-                        f"https://mail.google.com/mail/u/{self.settings.gmail_account}/#all/{identifier}\n\n"
-                        + ("歷史整理：保留會封存。新增任務後仍請封存或刪除；全部處理完傳 /mail_next。" if backlog else
-                         "可按鈕操作，或回覆「刪除」「保留」「已讀」「新增任務：要做的事」。寄信未啟用。"))
+                text = format_mail_card(mail, summary, self.settings.gmail_account)
                 await self.deliver(item_key, text, identifier)
             suffix = "（達本次上限，其餘未讀信留待後續整理）" if state["more"] else ""
             if backlog:

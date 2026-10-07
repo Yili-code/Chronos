@@ -206,3 +206,17 @@ async def test_backlog_resume_does_not_resend_cards(workflow):
     count = workflow.telegram.send_message.await_count
     await workflow.daily(backlog=True, request_key="one")
     assert workflow.telegram.send_message.await_count == count
+
+
+def test_mail_card_escapes_html_and_hides_display_noise():
+    from chronos.mail_workflow import format_mail_card, mail_buttons
+    mail = message(subject="Run failed (7693d1e) <script>", sender="Yili <notifications@github.com>")
+    text = format_mail_card(mail, "原文摘錄（摘要暫不可用）：A & B <test>", "owner@example.com")
+    assert "7693d1e" not in text and "暫不可用" not in text
+    assert "<b>寄件者</b>  Yili &lt;notifications@github.com&gt;" in text
+    assert "<b>原文摘要</b>\nA &amp; B &lt;test&gt;" in text
+    assert "<script>" not in text
+    assert "Open email</a>" in text
+    assert "7693d1e" in mail["subject"]
+    buttons = mail_buttons("ab12", True)["inline_keyboard"]
+    assert [b["text"] for row in buttons for b in row] == ["Trash", "Task", "Archive", "Read"]
