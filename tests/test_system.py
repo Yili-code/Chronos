@@ -188,18 +188,16 @@ def test_webhook_auth_and_commands(system):
     help_text = bot.send_message.call_args.args[1]
     assert help_text == main.HELP_TEXT
     assert help_text == (
-        '<b>Commands</b>\n'
-        '\n<b>Tasks</b>\n'
+        '<b>Tasks</b>\n'
         '/tasks — list open tasks\n'
         '/add title [#tag] — add exact text without AI or a deadline\n'
-        '/done x — complete task\n'
-        '/edit x ... — edit task\n'
+        '/done x — complete\n'
+        '/edit x ... — edit\n'
         '/edit #id ... — edit a fixed task ID\n'
-        'Reply to a task card to edit it. Editing a sent message does not replay commands.\n'
         '/clear — delete all tasks\n'
         '\n<b>Study</b>\n'
         '/classday ... — confirm a course-specific instruction day\n'
-        '/study_budget — inspect recorded Study AI usage without generating\n'
+        '/study_budget — inspect AI usage\n'
         '\n<b>Assignments</b>\n'
         '/prepare y — request an editable assignment draft\n'
         '/draft y [page] — read a saved draft without generating\n'
