@@ -276,19 +276,20 @@ def format_task_block(
 ) -> list[str]:
     prefix = f"{position}. " if position is not None else ""
     alert = "🚨 " if urgent_deadline(task, tz, now=now) else ""
-    lines = [f"{prefix}{alert}<b>{escape(task['title'])}</b>"]
+    lines = [f"{prefix}{alert}<b>{escape(display_task_title(task['title']))}</b>"]
     for label, value in timing_details(task, tz):
         lines.append(f"<b>{label}:</b> {escape(value)}")
     if task.get("project"):
         project = project_display_name(str(task["project"]), project_aliases)
-        lines.append(f"<b>Tag:</b> #{escape(project)}")
+        lines.append(f"<b>#{escape(project)}</b>")
     return lines
 
 
 def format_task(task: dict, tz, *, html: bool = False, now: datetime | None = None) -> str:
     title = _format_course_task_title(task["title"], html=html)
     if title is None:
-        title = escape(task["title"]) if html else task["title"]
+        title = display_task_title(task["title"])
+        title = escape(title) if html else title
     parts = [("🚨 " if urgent_deadline(task, tz, now=now) else "") + title]
     for label, value in timing_details(task, tz):
         parts.append(f"{label}: {escape(value) if html else value}")
@@ -303,6 +304,8 @@ def project_display_name(project: str, aliases: dict[str, str] | None = None) ->
     configured = (aliases or {}).get(canonical)
     if configured:
         return configured
+    if project == "資訊安全實務與管理":
+        return "ISPM"
     if len(project) <= 16:
         return project
     words = [word for word in re.split(r"[.\-_\s]+", project) if word]
@@ -337,3 +340,14 @@ def _format_course_task_title(title: str, *, html: bool) -> str | None:
 def _short_date(value: str) -> str:
     return value[5:].replace("-", "/") if len(value) == 10 else value
 
+
+
+def display_task_title(title: str) -> str:
+    """Shorten valid ISO dates for display without editing stored task text."""
+    def shorten(match):
+        try:
+            datetime.strptime(match[0], "%Y-%m-%d")
+        except ValueError:
+            return match[0]
+        return match[0][5:]
+    return re.sub(r"(?<![\w-])\d{4}-\d{2}-\d{2}(?![\w-])", shorten, title)

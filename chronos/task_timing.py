@@ -42,8 +42,8 @@ def display_time(value: str | None, tz) -> str:
     if not value:
         return "None"
     if len(value) == 10:
-        return value
-    return datetime.fromisoformat(value).astimezone(tz).strftime("%Y-%m-%d %H:%M")
+        return value[5:]
+    return datetime.fromisoformat(value).astimezone(tz).strftime("%m-%d %H:%M")
 
 
 def timing_details(task: dict, tz) -> list[tuple[str, str]]:

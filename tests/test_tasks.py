@@ -49,10 +49,10 @@ def test_dynamic_positions_hide_permanent_ids(tmp_path):
     assert format_tasks(tasks.list_open(), TZ, now=NOW) == (
         "<b>Tasks</b>\n\n"
         "1. <b>Earlier</b>\n"
-        "<b>Due:</b> 2026-09-19 10:00\n"
-        "<b>Tag:</b> #Chronos\n\n"
+        "<b>Due:</b> 09-19 10:00\n"
+        "<b>#Chronos</b>\n\n"
         "2. <b>Later</b>\n"
-        "<b>Due:</b> 2026-09-20 10:00\n\n"
+        "<b>Due:</b> 09-20 10:00\n\n"
         "3. <b>No due date</b>"
     )
     assert tasks.complete_position(1)["id"] == earlier["id"]
@@ -70,10 +70,10 @@ def test_course_tasks_use_separate_layers_and_html_escaping():
     ], TZ)
     assert rendered == (
         "<b>Tasks</b>\n\n"
-        "1. <b>確認資訊安全實務與管理今日上課範圍（2026-10-05）</b>\n"
-        "<b>Tag:</b> #資訊安全實務與管理\n\n"
+        "1. <b>確認資訊安全實務與管理今日上課範圍（10-05）</b>\n"
+        "<b>#ISPM</b>\n\n"
         "2. <b>複習計算機結構 10/06：Chapter 2 to around page 43 &amp; examples</b>\n"
-        "<b>Tag:</b> #計算機結構"
+        "<b>#計算機結構</b>"
     )
 
 
@@ -81,7 +81,7 @@ def test_long_project_tags_use_short_display_aliases():
     rendered = format_tasks([
         {"title": "Review chapter 2", "due_at": None, "project": "computer-architecture"},
     ], TZ)
-    assert "<b>Tag:</b> #CA" in rendered
+    assert "<b>#CA</b>" in rendered
     assert "computer-architecture" not in rendered
 
 

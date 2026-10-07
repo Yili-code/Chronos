@@ -250,8 +250,8 @@ def test_webhook_auth_and_commands(system):
     assert bot.send_message.await_args_list[-1].args[1] == (
         '<b>Tasks</b>\n\n'
         '1. 🚨 <b>Finalize roadmap</b>\n'
-        '<b>Due:</b> 2026-10-03 18:00\n'
-        '<b>Tag:</b> #Chronos')
+        '<b>Due:</b> 10-03 18:00\n'
+        '<b>#Chronos</b>')
 
 
 def test_daily_reminder_schedule(system):
@@ -319,7 +319,7 @@ def test_deterministic_tag_alias_edit_skips_ai(system):
     assert response.status_code == 200
     main.ai.edit.assert_not_awaited()
     assert service.project_aliases() == {'computer-architecture': 'CA'}
-    assert '<b>Tag:</b> #CA' in bot.send_message.await_args_list[-1].args[1]
+    assert '<b>#CA</b>' in bot.send_message.await_args_list[-1].args[1]
 
 
 def test_second_update_message_retries_without_resending_first(system, monkeypatch):
@@ -376,7 +376,7 @@ def test_persistence_order_and_reschedule(tmp_path):
     reopened = TaskService(Database(db.path), tz)
     assert [x['id'] for x in reopened.list_open()] == [earlier['id'], later['id'], no_due['id']]
     formatted = format_tasks(reopened.list_open(), tz, now=datetime(2026, 9, 14, tzinfo=tz))
-    assert formatted.startswith('<b>Tasks</b>\n\n1. <b>較早</b>\n<b>Due:</b> 2026-09-19 10:00')
+    assert formatted.startswith('<b>Tasks</b>\n\n1. <b>較早</b>\n<b>Due:</b> 09-19 10:00')
     assert '#Chronos' in formatted
     assert reopened.complete(earlier['id'])
     assert not reopened.postpone(earlier['id'], datetime.now(tz))
