@@ -124,6 +124,7 @@ def test_trash_removes_original_telegram_card_after_gmail_succeeds(system, monke
     bot.request.return_value = {"ok": True}
     assert post(client, 9100, callback="mail:trash:ab12").status_code == 200
     gmail.trash.assert_awaited_once_with("ab12")
+    bot.send_message.assert_not_awaited()
     bot.request.assert_awaited_once_with("deleteMessage", {"chat_id": 123, "message_id": 500})
 
 

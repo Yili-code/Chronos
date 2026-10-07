@@ -451,9 +451,10 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             if not result.get("ok") and not missing:
                 raise HTTPException(status_code=502, detail="Mail action completed; Telegram card deletion pending")
         if not receipt["delivered"]:
-            result = await telegram.send_message(chat_id, receipt["reply"])
-            if not result.get("ok"):
-                raise HTTPException(status_code=502, detail="Mail action reply pending")
+            if receipt["reply"] != "已移到垃圾桶。":
+                result = await telegram.send_message(chat_id, receipt["reply"])
+                if not result.get("ok"):
+                    raise HTTPException(status_code=502, detail="Mail action reply pending")
             db.mark_update_delivered(update_id)
         if update.callback_query:
             result = await telegram.answer_callback_query(update.callback_query.id)
