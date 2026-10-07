@@ -1,7 +1,7 @@
 import asyncio
 from datetime import datetime, date, timedelta
 import pytest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, call
 
 from chronos.course_tracking import TAIPEI
 from chronos.db import Database
@@ -37,6 +37,9 @@ def test_every_course_prompts_five_minutes_after_class(tmp_path, slot):
     assert db.get_course_session(f"{slot.key}:{day}") is None
     asyncio.run(tick_study(db, bot, 123, due))
     assert db.get_course_session(f"{slot.key}:{day}").prompt_message_id == 801
+    assert call(
+        123, f"<b>{slot.name}</b> 今天的進度", parse_mode="HTML"
+    ) in bot.send_message.await_args_list
 
 
 def test_prompt_boundary_and_restart_reconciliation(tmp_path):

@@ -22,7 +22,8 @@ def test_schedule_matches_phase_one_tracked_courses():
 def test_session_prompt_and_reply_require_telegram_correlation():
     slot = COURSE_SCHEDULE[2]
     session = new_session(slot, date(2026, 10, 7), prompt_message_id=101)
-    assert "軟體工程剛下課" in prompt_text(slot.name)
+    assert prompt_text(slot.name) == "<b>軟體工程</b> 今天的進度"
+    assert prompt_text("A & <B>") == "<b>A &amp; &lt;B&gt;</b> 今天的進度"
     assert accept_reply(session, reply_to_message_id=999, reply_message_id=202, text="第四章") is None
     answered = accept_reply(session, reply_to_message_id=101, reply_message_id=202, text="  第四章  ")
     assert answered is not None

@@ -50,7 +50,9 @@ async def tick_study(db, telegram, chat_id: int, now: datetime) -> dict:
         claim = ledger.claim(key, now)
         if claim is not None:
             try:
-                result = await telegram.send_message(chat_id, prompt_text(slot.name))
+                result = await telegram.send_message(
+                    chat_id, prompt_text(slot.name), parse_mode="HTML"
+                )
             except TelegramError:
                 ledger.finish(key, claim, now)
                 continue
