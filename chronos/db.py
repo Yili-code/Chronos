@@ -17,6 +17,7 @@ from .task_timing import normalize_timing, task_sort_key
 
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS mail_state (state_key TEXT PRIMARY KEY, state_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL,
@@ -90,7 +91,20 @@ CREATE INDEX IF NOT EXISTS idx_study_notes_course ON study_notes(course, created
 
 
 class Database:
+    def get_mail_state(self, key):
+        with self.connect() as connection:
+            row = connection.execute("SELECT state_json FROM mail_state WHERE state_key=?", (key,)).fetchone()
+        return json.loads(row[0]) if row else None
 
+    def mutate_mail_state(self, key, transition):
+        scope = self.connect() if self._transaction.get() is not None else self.transaction()
+        with scope as connection:
+            state = transition(self.get_mail_state(key))
+            connection.execute(
+                "INSERT INTO mail_state VALUES (?, ?) ON CONFLICT(state_key) DO UPDATE SET state_json=excluded.state_json",
+                (key, json.dumps(state)),
+            )
+            return state
 
     def __init__(self, path: Path):
         self.path = path

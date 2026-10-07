@@ -19,6 +19,13 @@ class Settings(BaseSettings):
     scheduler_secret: str = ""
     enable_internal_scheduler: bool = True
     enable_study_tracking: bool = False
+    enable_gmail: bool = False
+    gmail_client_id: str = ""
+    gmail_client_secret: str = ""
+    gmail_refresh_token: str = ""
+    gmail_account: str = ""
+    gmail_keep_senders: str = ""  # Comma-separated exact addresses or @domains.
+    gmail_max_messages: int = Field(default=100, ge=1, le=500)
     database_path: Path = Path("chronos.db")
     database_backend: Literal["sqlite", "firestore"] = "sqlite"
     firestore_project_id: str = ""

@@ -4,7 +4,8 @@ param(
     [string]$ProjectId,
     [string]$Region = "asia-east1",
     [string]$Service = "chronos",
-    [string]$GeminiModel = "gemini-3.8-flash"
+    [string]$GeminiModel = "gemini-3.8-flash",
+    [switch]$EnableGmail
 )
 
 $ErrorActionPreference = "Stop"
@@ -203,6 +204,25 @@ $secretBindings = @(
     "CHRONOS_SCHEDULER_SECRET=chronos-scheduler-secret:$($secretVersions.scheduler)",
     "CHRONOS_WEB_PASSWORD=chronos-web-password:$($secretVersions.webPassword)"
 )
+if ($EnableGmail) {
+    # OAuth was completed locally. Only Secret Manager receives the credentials.
+    foreach ($suffix in @("CLIENT_ID", "CLIENT_SECRET", "REFRESH_TOKEN", "ACCOUNT")) {
+        $environmentName = "CHRONOS_GMAIL_$suffix"
+        $value = Get-OptionalLocalValue $environmentName
+        if ([string]::IsNullOrWhiteSpace($value)) {
+            throw "$environmentName is missing. Run the Gmail authorization helper before deploying."
+        }
+        $secretName = "chronos-gmail-" + $suffix.ToLowerInvariant().Replace('_', '-')
+        $version = Set-CloudSecret $secretName $value
+        $secretBindings += "${environmentName}=${secretName}:$version"
+    }
+    $keepSenders = Get-OptionalLocalValue "CHRONOS_GMAIL_KEEP_SENDERS"
+    if (-not [string]::IsNullOrWhiteSpace($keepSenders)) {
+        $version = Set-CloudSecret "chronos-gmail-keep-senders" $keepSenders
+        $secretBindings += "CHRONOS_GMAIL_KEEP_SENDERS=chronos-gmail-keep-senders:$version"
+    }
+    Invoke-Gcloud services enable gmail.googleapis.com --project $ProjectId --quiet
+}
 $environment = @(
     "CHRONOS_DATABASE_BACKEND=firestore",
     "CHRONOS_FIRESTORE_PROJECT_ID=$ProjectId",
@@ -210,6 +230,7 @@ $environment = @(
     "CHRONOS_FIRESTORE_COLLECTION_PREFIX=chronos",
     "CHRONOS_GEMINI_MODEL=$GeminiModel",
     "CHRONOS_ENABLE_INTERNAL_SCHEDULER=false",
+    "CHRONOS_ENABLE_GMAIL=$($EnableGmail.IsPresent.ToString().ToLowerInvariant())",
     "CHRONOS_TIMEZONE=Asia/Taipei",
     "CHRONOS_WEB_USERNAME=chronos"
 ) -join ','
@@ -218,7 +239,7 @@ Push-Location $projectRoot
 try {
     Invoke-Gcloud run deploy $Service --source . --region $Region --project $ProjectId `
         --service-account $runtimeAccount --allow-unauthenticated --port 8080 `
-        --memory 512Mi --cpu 1 --concurrency 20 --max-instances 3 `
+        --memory 512Mi --cpu 1 --concurrency 20 --max-instances 3 --timeout 1800 `
         --set-env-vars $environment --set-secrets ($secretBindings -join ',') --quiet
 }
 finally {
@@ -239,12 +260,12 @@ $dailyUri = "$serviceUrl/internal/daily"
 if ($LASTEXITCODE -eq 0) {
     Invoke-Gcloud scheduler jobs update http $jobName --location $Region --project $ProjectId `
         --schedule "0 8 * * *" --time-zone "Asia/Taipei" --uri $dailyUri --http-method POST `
-        --update-headers "X-Chronos-Scheduler-Secret=$schedulerSecret" --max-retry-attempts 3 --quiet | Out-Null
+        --update-headers "X-Chronos-Scheduler-Secret=$schedulerSecret" --max-retry-attempts 3 --attempt-deadline 1800s --quiet | Out-Null
 }
 else {
     Invoke-Gcloud scheduler jobs create http $jobName --location $Region --project $ProjectId `
         --schedule "0 8 * * *" --time-zone "Asia/Taipei" --uri $dailyUri --http-method POST `
-        --headers "X-Chronos-Scheduler-Secret=$schedulerSecret" --max-retry-attempts 3 --quiet | Out-Null
+        --headers "X-Chronos-Scheduler-Secret=$schedulerSecret" --max-retry-attempts 3 --attempt-deadline 1800s --quiet | Out-Null
 }
 
 $health = Invoke-RestMethod -Uri "$serviceUrl/health" -Method Get -TimeoutSec 30

@@ -258,6 +258,7 @@ class ExternalAI:
             "task": "No task was changed",
             "class-day decision": "No class-day decision was saved",
             "progress summary": "No progress summary was created",
+            "mail summary": "No mail summary was created",
         }[subject]
         if not config.gemini_api_key:
             raise AIError("The AI service is not configured. Contact the service owner.")

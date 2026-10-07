@@ -11,5 +11,7 @@ __pycache__/
 .pytest-course-tasks*/
 .venv/
 .env
+.gmail/
+.env.gmail-*
 chronos.db
 .study-data/

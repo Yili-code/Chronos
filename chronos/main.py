@@ -27,6 +27,8 @@ from .telegram import TelegramClient
 from .web import PAGE
 from .task_timing import display_time, task_sort_key, timing_details
 from .study_scheduler import tick_study, notify_study_failures
+from .gmail import GmailClient, GmailError
+from .mail_workflow import MailWorkflow
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("chronos")
@@ -35,6 +37,7 @@ db = create_database(settings)
 tasks = TaskService(db, settings.tz)
 ai = ExternalAI(settings)
 telegram = TelegramClient(settings.telegram_bot_token)
+gmail = GmailClient(settings)
 scheduler = AsyncIOScheduler(timezone=settings.tz)
 
 HELP_TEXT = (
@@ -46,6 +49,9 @@ HELP_TEXT = (
     "/edit #id ... — edit a fixed task ID\n"
     "Reply to a task card to edit it. Editing a sent message does not replay commands.\n"
     "/clear — delete all tasks\n"
+    "\n<b>Mail</b>\n"
+    "Reply to a mail card: 刪除 / 保留 / 已讀 / 新增任務：...\n"
+    "Mail is never sent automatically.\n"
     "\n<b>Study</b>\n"
     "/classday ... — confirm a course-specific instruction day\n"
     "/study_budget — inspect recorded Study AI usage without generating\n"
@@ -179,8 +185,13 @@ async def send_daily_tasks() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     db.initialize()
+    if settings.enable_gmail:
+        mail_workflow().require_config()
     if settings.enable_internal_scheduler:
         scheduler.add_job(send_daily_tasks, "cron", hour=8, minute=0, id="daily_tasks", replace_existing=True)
+        if settings.enable_gmail:
+            scheduler.add_job(send_daily_mail, "cron", hour=8, minute=0, timezone="Asia/Taipei",
+                              id="daily_mail", replace_existing=True)
         if settings.enable_study_tracking:
             scheduler.add_job(run_study_tick, "cron", second=0, id="study_tracking", replace_existing=True)
         scheduler.start()
@@ -198,6 +209,38 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Chronos", lifespan=lifespan)
+
+
+def mail_workflow():
+    return MailWorkflow(db, gmail, telegram, ai, settings)
+
+
+async def send_daily_mail():
+    if not settings.enable_gmail:
+        return {"enabled": False}
+    try:
+        return await mail_workflow().daily()
+    except GmailError as error:
+        logger.warning("Mail digest: %s", error)
+        raise HTTPException(status_code=503, detail=str(error)) from None
+
+
+@app.get("/internal/mail/status")
+async def mail_status(x_chronos_scheduler_secret: str | None = Header(default=None)) -> dict:
+    if not settings.scheduler_secret:
+        raise HTTPException(status_code=503, detail="Scheduler endpoint is not configured")
+    if not hmac.compare_digest(x_chronos_scheduler_secret or "", settings.scheduler_secret):
+        raise HTTPException(status_code=403, detail="Invalid scheduler credential")
+    try:
+        mail_workflow().require_config()
+        account = await gmail.verify_account()
+        chat = await telegram.request("getChat", {"chat_id": settings.telegram_chat_id})
+        if not chat.get("ok") or chat.get("result", {}).get("id") != settings.telegram_chat_id:
+            raise GmailError("Telegram owner chat could not be verified")
+        return {"enabled": True, "gmail_account": account, "telegram_connected": True,
+                "send_enabled": False, "timezone": "Asia/Taipei"}
+    except GmailError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from None
 
 
 
@@ -293,6 +336,7 @@ async def trigger_daily_tasks(x_chronos_scheduler_secret: str | None = Header(de
     if not hmac.compare_digest(x_chronos_scheduler_secret or "", settings.scheduler_secret):
         raise HTTPException(status_code=403, detail="Invalid scheduler credential")
     await send_daily_tasks()
+    await send_daily_mail()
     return {"ok": True}
 
 
@@ -348,6 +392,44 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
     if settings.telegram_chat_id and chat_id != settings.telegram_chat_id:
         raise HTTPException(status_code=403, detail="Unauthorized chat")
     update_id = update.update_id
+    # Route mail cards before generic task/study replies. Bind callbacks to the
+    # actual delivered card so arbitrary mail IDs cannot be supplied by a client.
+    mail = mail_workflow() if settings.enable_gmail else None
+    mail_binding = (mail.binding(chat_id, source_message.reply_to_message.message_id)
+                    if mail and source_message.reply_to_message else None)
+    mail_callback = bool(update.callback_query and (update.callback_query.data or "").startswith("mail:"))
+    if mail_callback or mail_binding:
+        if mail is None:
+            raise HTTPException(status_code=503, detail="Mail integration is disabled")
+        receipt = db.get_update(update_id)
+        if receipt is None:
+            if update.edited_message is not None:
+                action = lambda: "編輯舊訊息不會重新執行郵件動作，請傳送新指令。"
+            elif mail_callback:
+                match = re.fullmatch(r"mail:(trash|task|keep|read):([A-Za-z0-9_-]{1,32})", update.callback_query.data or "")
+                binding = mail.binding(chat_id, source_message.message_id)
+                if not match or not binding or binding["mail_id"] != match.group(2):
+                    raise HTTPException(status_code=403, detail="Mail callback is not bound to this card")
+                try:
+                    action = await mail.prepare_action(match.group(2), match.group(1))
+                except GmailError as error:
+                    raise HTTPException(status_code=503, detail=str(error)) from None
+            else:
+                try:
+                    action = await mail.prepare_action(mail_binding["mail_id"], source_message.text or "")
+                except GmailError as error:
+                    raise HTTPException(status_code=503, detail=str(error)) from None
+            receipt = db.process_update(update_id, action)
+        if not receipt["delivered"]:
+            result = await telegram.send_message(chat_id, receipt["reply"])
+            if not result.get("ok"):
+                raise HTTPException(status_code=502, detail="Mail action reply pending")
+            db.mark_update_delivered(update_id)
+        if update.callback_query:
+            result = await telegram.answer_callback_query(update.callback_query.id)
+            if not result.get("ok"):
+                raise HTTPException(status_code=502, detail="Mail callback acknowledgement pending")
+        return {"ok": True}
     if update.callback_query and (update.callback_query.data or "").startswith("pdf:"):
         from .selection_buttons import apply_callback
         try:

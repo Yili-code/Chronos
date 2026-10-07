@@ -30,6 +30,7 @@ class FirestoreDatabase:
         self.task_messages = self.client.collection(f"{collection_prefix}_telegram_task_messages")
         self.pending_task_edits = self.client.collection(f"{collection_prefix}_pending_task_edits")
         self.meta = self.client.collection(f"{collection_prefix}_meta")
+        self.mail_state = self.client.collection(f"{collection_prefix}_mail_state")
         self.course_sessions = self.client.collection(f"{collection_prefix}_course_sessions")
         self.study_deliveries = self.client.collection(f"{collection_prefix}_study_deliveries")
         self.study_notes = self.client.collection(f"{collection_prefix}_study_notes")
@@ -51,7 +52,18 @@ class FirestoreDatabase:
         # Firestore collections are created on their first write.
         return None
 
+    def get_mail_state(self, key):
+        snapshot = self.mail_state.document(key).get(transaction=self._transaction.get())
+        return snapshot.to_dict() if snapshot.exists else None
 
+    def mutate_mail_state(self, key, transition):
+        def mutate(transaction):
+            reference = self.mail_state.document(key)
+            snapshot = reference.get(transaction=transaction)
+            state = transition(snapshot.to_dict() if snapshot.exists else None)
+            transaction.set(reference, state)
+            return state
+        return self._run_transaction(mutate)
 
     def save_study_note(self, note: NoteRecord) -> NoteRecord:
         """First completed result wins; retries never overwrite canonical content."""
