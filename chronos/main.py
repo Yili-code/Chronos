@@ -744,8 +744,7 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
     if command == "tasks":
         def list_tasks() -> dict:
             items = tasks.list_open()
-            return message_bundle({"text": task_list_text(items), "parse_mode": "HTML",
-                                   "reply_markup": task_edit_keyboard(items)})
+            return message_bundle({"text": task_list_text(items), "parse_mode": "HTML"})
         return list_tasks
     if command == "clear":
         return lambda: CLEAR_CONFIRM_TEXT
