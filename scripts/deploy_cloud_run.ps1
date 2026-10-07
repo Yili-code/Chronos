@@ -5,10 +5,15 @@ param(
     [string]$Region = "asia-east1",
     [string]$Service = "chronos",
     [string]$GeminiModel = "gemini-3.8-flash",
-    [switch]$EnableGmail
+    [switch]$EnableGmail,
+    [switch]$EnableStudyTracking,
+    [switch]$DisableStudyTracking
 )
 
 $ErrorActionPreference = "Stop"
+if ($EnableStudyTracking -and $DisableStudyTracking) {
+    throw "EnableStudyTracking and DisableStudyTracking cannot be used together"
+}
 if ($PSVersionTable.PSVersion.Major -lt 7) {
     throw "PowerShell 7 or later is required. Run this script with pwsh -File."
 }
@@ -204,6 +209,12 @@ $secretBindings = @(
     "CHRONOS_SCHEDULER_SECRET=chronos-scheduler-secret:$($secretVersions.scheduler)",
     "CHRONOS_WEB_PASSWORD=chronos-web-password:$($secretVersions.webPassword)"
 )
+$existingService = $null
+$existingServiceJson = (& $gcloudCommand run services describe $Service --region $Region --project $ProjectId `
+    --format json --quiet 2>$null) -join "`n"
+if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($existingServiceJson)) {
+    $existingService = $existingServiceJson | ConvertFrom-Json
+}
 $secondaryGeminiKey = Get-OptionalLocalValue "CHRONOS_GEMINI_API_KEY_SECONDARY"
 if (-not [string]::IsNullOrWhiteSpace($secondaryGeminiKey)) {
     $secondaryVersion = Set-CloudSecret "chronos-gemini-api-key-secondary" $secondaryGeminiKey
@@ -211,16 +222,26 @@ if (-not [string]::IsNullOrWhiteSpace($secondaryGeminiKey)) {
 }
 else {
     # Keep an already configured secondary when the local .env omits it.
-    $existingServiceJson = (& $gcloudCommand run services describe $Service --region $Region --project $ProjectId `
-        --format json --quiet 2>$null) -join "`n"
-    if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($existingServiceJson)) {
-        $existingService = $existingServiceJson | ConvertFrom-Json
+    if ($null -ne $existingService) {
         $secondaryBinding = $existingService.spec.template.spec.containers[0].env |
             Where-Object { $_.name -eq "CHRONOS_GEMINI_API_KEY_SECONDARY" } | Select-Object -First 1
         $secondaryRef = $secondaryBinding.valueFrom.secretKeyRef
         if ($secondaryRef -and $secondaryRef.name -and $secondaryRef.key) {
             $secretBindings += "CHRONOS_GEMINI_API_KEY_SECONDARY=$($secondaryRef.name):$($secondaryRef.key)"
         }
+    }
+}
+$studyTrackingValue = "false"
+if ($EnableStudyTracking) {
+    $studyTrackingValue = "true"
+}
+elseif (-not $DisableStudyTracking -and $null -ne $existingService) {
+    # --set-env-vars replaces the service environment. Preserve an explicitly
+    # enabled production tracker unless the operator deliberately disables it.
+    $studyTrackingBinding = $existingService.spec.template.spec.containers[0].env |
+        Where-Object { $_.name -eq "CHRONOS_ENABLE_STUDY_TRACKING" } | Select-Object -First 1
+    if ($studyTrackingBinding.value -eq "true") {
+        $studyTrackingValue = "true"
     }
 }
 $keyCooldown = Get-OptionalLocalValue "CHRONOS_GEMINI_KEY_COOLDOWN_SECONDS"
@@ -256,6 +277,7 @@ $environment = @(
     "CHRONOS_GEMINI_MODEL=$GeminiModel",
     "CHRONOS_GEMINI_KEY_COOLDOWN_SECONDS=$parsedKeyCooldown",
     "CHRONOS_ENABLE_INTERNAL_SCHEDULER=false",
+    "CHRONOS_ENABLE_STUDY_TRACKING=$studyTrackingValue",
     "CHRONOS_ENABLE_GMAIL=$($EnableGmail.IsPresent.ToString().ToLowerInvariant())",
     "CHRONOS_TIMEZONE=Asia/Taipei",
     "CHRONOS_WEB_USERNAME=chronos"

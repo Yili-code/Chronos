@@ -26,6 +26,12 @@ CHRONOS_TELEGRAM_CHAT_ID=...
 pwsh -File .\scripts\deploy_cloud_run.ps1 -ProjectId YOUR_PROJECT_ID
 ```
 
+首次啟用 production 課後追蹤時，明確加入 `-EnableStudyTracking`。之後部署會保留已啟用狀態；只有加入 `-DisableStudyTracking` 才會關閉：
+
+```powershell
+pwsh -File .\scripts\deploy_cloud_run.ps1 -ProjectId YOUR_PROJECT_ID -EnableStudyTracking
+```
+
 部署腳本需要 PowerShell 7。重跑時會沿用既有的 Web password、webhook secret 與 scheduler secret；重新部署不等於旋轉憑證。
 
 腳本會：

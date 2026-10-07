@@ -16,6 +16,10 @@ Do not confuse passing local tests with deployment or production verification.
   the secret in the deployment system; do not paste it in logs or documents.
 - Set `CHRONOS_ENABLE_STUDY_TRACKING=false` to stop scheduled study delivery.
   Existing persisted course records are preserved.
+- The main deployment script accepts `-EnableStudyTracking` and
+  `-DisableStudyTracking`. With neither switch, it preserves an existing
+  explicit `true` value so an unrelated deployment cannot silently stop course
+  prompts. A new service remains disabled until explicitly enabled.
 
 The general deployment script provisions the daily task job only. The separately
 authorized `scripts/activate_course_schedule.py` provisions or updates the
