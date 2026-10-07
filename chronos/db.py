@@ -13,6 +13,7 @@ from .course_tracking import progress_followup
 from .course_tracking_store import session_from_firestore, session_to_firestore
 from .note_record import NoteRecord
 from .assignments import Assignment, to_record, from_record, set_deadline, owner_deadline_edit
+from .task_timing import normalize_timing, task_sort_key
 
 
 SCHEMA = """
@@ -43,6 +44,12 @@ CREATE TABLE IF NOT EXISTS pending_task_edits (
 CREATE TABLE IF NOT EXISTS tag_aliases (
     project TEXT PRIMARY KEY,
     alias TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS telegram_task_messages (
+    chat_id INTEGER NOT NULL,
+    message_id INTEGER NOT NULL,
+    task_id INTEGER NOT NULL,
+    PRIMARY KEY(chat_id, message_id)
 );
 CREATE TABLE IF NOT EXISTS course_sessions (
     session_id TEXT PRIMARY KEY,
@@ -83,6 +90,8 @@ CREATE INDEX IF NOT EXISTS idx_study_notes_course ON study_notes(course, created
 
 
 class Database:
+
+
     def __init__(self, path: Path):
         self.path = path
         self._transaction: ContextVar[sqlite3.Connection | None] = ContextVar("transaction", default=None)
@@ -91,6 +100,9 @@ class Database:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as connection:
             connection.executescript(SCHEMA)
+            task_columns = {row[1] for row in connection.execute("PRAGMA table_info(tasks)")}
+            if "timing_json" not in task_columns:
+                connection.execute("ALTER TABLE tasks ADD COLUMN timing_json TEXT NOT NULL DEFAULT '{}'")
             columns = {row[1] for row in connection.execute("PRAGMA table_info(course_sessions)")}
             if "survey_task_id" not in columns:
                 connection.execute("ALTER TABLE course_sessions ADD COLUMN survey_task_id INTEGER")
@@ -283,21 +295,40 @@ class Database:
             rows = connection.execute("SELECT project, alias FROM tag_aliases").fetchall()
         return {row[0]: row[1] for row in rows}
 
-    def create_task(self, title: str, due_at: datetime | None, project: str | None, created_at: datetime) -> dict:
+    def bind_task_message(self, chat_id: int, message_id: int, task_id: int) -> None:
+        with self.connect() as connection:
+            connection.execute("INSERT INTO telegram_task_messages VALUES (?, ?, ?) "
+                               "ON CONFLICT(chat_id, message_id) DO UPDATE SET task_id=excluded.task_id",
+                               (chat_id, message_id, task_id))
+
+    def task_for_message(self, chat_id: int, message_id: int) -> int | None:
+        with self.connect() as connection:
+            row = connection.execute("SELECT task_id FROM telegram_task_messages WHERE chat_id=? AND message_id=?",
+                                     (chat_id, message_id)).fetchone()
+        return row[0] if row else None
+
+    @staticmethod
+    def _task_data(row) -> dict:
+        data = dict(row)
+        data["timing"] = json.loads(data.pop("timing_json", "{}"))
+        return data
+
+    def create_task(self, title: str, due_at: datetime | None, project: str | None, created_at: datetime, timing: dict | None = None) -> dict:
+        timing = normalize_timing(timing, due_at)
         with self.connect() as connection:
             cursor = connection.execute(
-                "INSERT INTO tasks(title, project, due_at, created_at) VALUES (?, ?, ?, ?)",
-                (title, project, due_at.isoformat() if due_at else None, created_at.isoformat()),
+                "INSERT INTO tasks(title, project, due_at, created_at, timing_json) VALUES (?, ?, ?, ?, ?)",
+                (title, project, due_at.isoformat() if due_at else None, created_at.isoformat(), json.dumps(timing)),
             )
             row = connection.execute("SELECT * FROM tasks WHERE id = ?", (cursor.lastrowid,)).fetchone()
-        return dict(row)
+        return self._task_data(row)
 
     def list_open_tasks(self) -> list[dict]:
         with self.connect() as connection:
             rows = connection.execute(
                 "SELECT * FROM tasks WHERE status = 'open' ORDER BY due_at IS NULL, due_at, id"
             ).fetchall()
-        return [dict(row) for row in rows]
+        return sorted((self._task_data(row) for row in rows), key=task_sort_key)
 
     def create_assignment(self, assignment: Assignment) -> dict:
         """Persist source identity and its ordinary task together, exactly once."""
@@ -469,25 +500,28 @@ class Database:
                 return False
             updated = set_deadline(from_record(json.loads(row[0])), deadline, origin="owner")
             connection.execute("UPDATE assignments SET record_json=? WHERE task_id=?", (json.dumps(to_record(updated)), task_id))
-            connection.execute("UPDATE tasks SET due_at=? WHERE id=?", (updated.deadline.isoformat(), task_id))
+            connection.execute("UPDATE tasks SET due_at=?, timing_json=json_remove(timing_json, '$.due_date') WHERE id=?",
+                               (updated.deadline.isoformat(), task_id))
             return True
 
     def postpone_task(self, task_id: int, due_at: datetime) -> bool:
         scope = self.connect() if self._transaction.get() is not None else self.transaction()
         with scope as connection:
             cursor = connection.execute(
-                "UPDATE tasks SET due_at = ? WHERE id = ? AND status = 'open'", (due_at.isoformat(), task_id)
+                "UPDATE tasks SET due_at = ?, timing_json=json_remove(timing_json, '$.due_date') WHERE id = ? AND status = 'open'", (due_at.isoformat(), task_id)
             )
             if cursor.rowcount == 1:
                 self._sync_assignment_deadline(connection, task_id, due_at)
         return cursor.rowcount == 1
 
-    def edit_task(self, task_id: int, title: str, due_at: datetime | None, project: str | None) -> bool:
+    def edit_task(self, task_id: int, title: str, due_at: datetime | None, project: str | None, timing: dict | None = None) -> bool:
         scope = self.connect() if self._transaction.get() is not None else self.transaction()
         with scope as connection:
             cursor = connection.execute(
-                "UPDATE tasks SET title = ?, due_at = ?, project = ? WHERE id = ? AND status = 'open'",
-                (title, due_at.isoformat() if due_at else None, project, task_id),
+                "UPDATE tasks SET title = ?, due_at = ?, project = ?, "
+                "timing_json = COALESCE(?, json_remove(timing_json, '$.due_date')) WHERE id = ? AND status = 'open'",
+                (title, due_at.isoformat() if due_at else None, project,
+                 json.dumps(normalize_timing(timing, due_at)) if timing is not None else None, task_id),
             )
             if cursor.rowcount == 1:
                 self._sync_assignment_deadline(connection, task_id, due_at)

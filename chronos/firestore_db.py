@@ -14,6 +14,7 @@ from .course_tracking import progress_followup
 from .course_tracking_store import session_from_firestore, session_to_firestore
 from .note_record import NoteRecord
 from .assignments import Assignment, to_record, from_record, set_deadline, owner_deadline_edit
+from .task_timing import normalize_timing, task_sort_key
 
 
 class FirestoreDatabase:
@@ -26,6 +27,7 @@ class FirestoreDatabase:
         self.client = firestore.Client(project=project_id, database=database_id, **options)
         self.tasks = self.client.collection(f"{collection_prefix}_tasks")
         self.updates = self.client.collection(f"{collection_prefix}_telegram_updates")
+        self.task_messages = self.client.collection(f"{collection_prefix}_telegram_task_messages")
         self.pending_task_edits = self.client.collection(f"{collection_prefix}_pending_task_edits")
         self.meta = self.client.collection(f"{collection_prefix}_meta")
         self.course_sessions = self.client.collection(f"{collection_prefix}_course_sessions")
@@ -48,6 +50,8 @@ class FirestoreDatabase:
     def initialize(self) -> None:
         # Firestore collections are created on their first write.
         return None
+
+
 
     def save_study_note(self, note: NoteRecord) -> NoteRecord:
         """First completed result wins; retries never overwrite canonical content."""
@@ -128,7 +132,7 @@ class FirestoreDatabase:
 
     @staticmethod
     def _task_data(task_id: int, data: dict) -> dict:
-        return {"id": task_id, **data}
+        return {"id": task_id, "timing": {}, **data}
 
     def _run_transaction(self, operation):
         active = self._transaction.get()
@@ -146,7 +150,15 @@ class FirestoreDatabase:
 
         return run(transaction)
 
-    def create_task(self, title: str, due_at: datetime | None, project: str | None, created_at: datetime) -> dict:
+    def bind_task_message(self, chat_id: int, message_id: int, task_id: int) -> None:
+        self.task_messages.document(f"{chat_id}_{message_id}").set({"task_id": task_id})
+
+    def task_for_message(self, chat_id: int, message_id: int) -> int | None:
+        snapshot = self.task_messages.document(f"{chat_id}_{message_id}").get()
+        return snapshot.get("task_id") if snapshot.exists else None
+
+    def create_task(self, title: str, due_at: datetime | None, project: str | None, created_at: datetime, timing: dict | None = None) -> dict:
+        timing = normalize_timing(timing, due_at)
         def create(transaction):
             counter_ref = self.meta.document("task_counter")
             counter = counter_ref.get(transaction=transaction)
@@ -155,6 +167,7 @@ class FirestoreDatabase:
                 "title": title,
                 "project": project,
                 "due_at": due_at.isoformat() if due_at else None,
+                "timing": timing,
                 "status": "open",
                 "created_at": created_at.isoformat(),
                 "completed_at": None,
@@ -171,7 +184,7 @@ class FirestoreDatabase:
         active = self._transaction.get()
         snapshots = query.stream(transaction=active) if active is not None else query.stream()
         result = [self._task_data(int(snapshot.id), snapshot.to_dict()) for snapshot in snapshots]
-        return sorted(result, key=lambda task: (task.get("due_at") is None, task.get("due_at") or "", task["id"]))
+        return sorted(result, key=task_sort_key)
 
     def create_assignment(self, assignment: Assignment) -> dict:
         def create(transaction):
@@ -349,7 +362,12 @@ class FirestoreDatabase:
                     deadline = datetime.fromisoformat(values["due_at"]) if values["due_at"] else None
                     data["record"] = to_record(owner_deadline_edit(from_record(data["record"]), deadline))
                 updates.append((assignment.reference, data))
-            transaction.update(reference, values)
+            task_values = dict(values)
+            if "due_at" in task_values and "timing" not in task_values:
+                timing = dict(snapshot.to_dict().get("timing") or {})
+                timing.pop("due_date", None)
+                task_values["timing"] = timing
+            transaction.update(reference, task_values)
             for assignment_ref, data in updates:
                 transaction.update(assignment_ref, data)
             return True
@@ -368,8 +386,10 @@ class FirestoreDatabase:
             if len(linked) != 1 or not task.exists or task.get("status") != "open":
                 return False
             updated = set_deadline(from_record(linked[0].to_dict()["record"]), deadline, origin="owner")
+            timing = dict(task.to_dict().get("timing") or {})
+            timing.pop("due_date", None)
             transaction.update(linked[0].reference, {"record": to_record(updated)})
-            transaction.update(ref, {"due_at": updated.deadline.isoformat()})
+            transaction.update(ref, {"due_at": updated.deadline.isoformat(), "timing": timing})
             return True
         active = self._transaction.get()
         return confirm(active) if active is not None else self._run_transaction(confirm)
@@ -377,10 +397,11 @@ class FirestoreDatabase:
     def postpone_task(self, task_id: int, due_at: datetime) -> bool:
         return self._update_open_task(task_id, {"due_at": due_at.isoformat()})
 
-    def edit_task(self, task_id: int, title: str, due_at: datetime | None, project: str | None) -> bool:
+    def edit_task(self, task_id: int, title: str, due_at: datetime | None, project: str | None, timing: dict | None = None) -> bool:
         return self._update_open_task(
             task_id,
-            {"title": title, "due_at": due_at.isoformat() if due_at else None, "project": project},
+            {"title": title, "due_at": due_at.isoformat() if due_at else None, "project": project,
+             **({"timing": normalize_timing(timing, due_at)} if timing is not None else {})},
         )
 
     def clear_tasks(self) -> int:

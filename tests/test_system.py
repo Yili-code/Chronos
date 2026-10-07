@@ -193,6 +193,8 @@ def test_webhook_auth_and_commands(system):
         '/tasks — list open tasks\n'
         '/done x — complete task\n'
         '/edit x ... — edit task\n'
+        '/edit #id ... — edit a fixed task ID\n'
+        'Reply to a task card to edit it. Editing a sent message does not replay commands.\n'
         '/clear — delete all tasks\n'
         '\n<b>Study</b>\n'
         '/classday ... — confirm a course-specific instruction day\n'
@@ -220,10 +222,12 @@ def test_webhook_auth_and_commands(system):
     assert service.list_open() == []
     assert send('新增工作').status_code == 200
     assert bot.send_message.call_args.args[1] == '<b>Created</b>\n<b>Test task</b>'
-    assert bot.send_message.call_args.kwargs == {'parse_mode': 'HTML'}
+    assert bot.send_message.call_args.kwargs['parse_mode'] == 'HTML'
+    assert bot.send_message.call_args.kwargs['reply_markup']['inline_keyboard'][0][0]['callback_data'] == 'task:edit:1'
     assert send('/tasks').status_code == 200
     assert bot.send_message.call_args.args[1] == '<b>Tasks</b>\n\n1. <b>Test task</b>'
-    assert bot.send_message.call_args.kwargs == {'parse_mode': 'HTML'}
+    assert bot.send_message.call_args.kwargs['parse_mode'] == 'HTML'
+    assert bot.send_message.call_args.kwargs['reply_markup']['inline_keyboard'][0][0]['callback_data'] == 'task:edit:1'
     main.ai.edit = AsyncMock(return_value=ParsedTask(
         'Test task', datetime(2026, 9, 20, 10, tzinfo=config.tz)))
     assert send('/edit 1 改到週日').status_code == 200
@@ -401,7 +405,7 @@ def test_telegram_transport(monkeypatch):
     assert asyncio.run(bot.set_webhook('https://example.invalid/telegram/webhook', 'test-secret'))['ok']
     webhook_payload = json.loads(requests[-1].content)
     assert webhook_payload['secret_token'] == 'test-secret'
-    assert webhook_payload['allowed_updates'] == ['message', 'callback_query']
+    assert webhook_payload['allowed_updates'] == ['message', 'edited_message', 'callback_query']
     assert not asyncio.run(TelegramClient('').send_message(123, '測試'))['ok']
 
 

@@ -28,7 +28,7 @@ def skip_retry_wait(monkeypatch):
 
 def valid_response():
     return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": json.dumps({
-        "title": "Submit report", "due_at": "2026-09-18T17:00:00+08:00", "project": "Chronos"
+        "title": "Submit report", "due_at": "2026-09-18T17:00:00+08:00", "project": "Chronos", "timing": {}
     })}]}}]})
 
 
@@ -50,7 +50,7 @@ def test_external_parse(monkeypatch):
     assert parsed.due_at == datetime.fromisoformat("2026-09-18T17:00:00+08:00")
 
 
-def test_external_edit_returns_complete_final_task(monkeypatch):
+def test_external_edit_applies_explicit_field_operations(monkeypatch):
     def handler(request):
         payload = json.loads(request.content)
         assert payload["contents"][0]["parts"][0]["text"] == "改成星期五，移除專案"
@@ -58,9 +58,15 @@ def test_external_edit_returns_complete_final_task(monkeypatch):
         assert '"title": "Review proposal"' in prompt
         assert '"project": "Chronos"' in prompt
         assert "Preserve every field the instruction does not change" in prompt
-        assert "must set that field to null" in prompt
+        assert "keep/clear must use null values" in prompt
         return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": json.dumps({
-            "title": "Review proposal", "due_at": "2026-09-18T09:00:00+08:00", "project": None
+            "title": {"op": "keep", "value": None},
+            "due_at": {"op": "clear", "value": None},
+            "due_date": {"op": "set", "value": "2026-09-18"},
+            "project": {"op": "clear", "value": None},
+            "scheduled": {"op": "keep", "value": None},
+            "event": {"op": "keep", "value": None},
+            "uncertain": {"op": "keep", "value": None},
         })}]}}]})
     mock_provider(monkeypatch, handler)
     parsed = asyncio.run(ExternalAI(config()).edit({
@@ -68,7 +74,8 @@ def test_external_edit_returns_complete_final_task(monkeypatch):
     }, "改成星期五，移除專案"))
     assert parsed.title == "Review proposal"
     assert parsed.project is None
-    assert parsed.due_at == datetime.fromisoformat("2026-09-18T09:00:00+08:00")
+    assert parsed.due_at is None
+    assert parsed.timing["due_date"] == "2026-09-18"
 
 
 def test_external_classday_parse_supports_natural_language(monkeypatch):

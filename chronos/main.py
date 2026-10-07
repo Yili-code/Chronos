@@ -25,6 +25,7 @@ from .tasks import (
 )
 from .telegram import TelegramClient
 from .web import PAGE
+from .task_timing import display_time, task_sort_key, timing_details
 from .study_scheduler import tick_study, notify_study_failures
 
 logging.basicConfig(level=logging.INFO)
@@ -42,6 +43,8 @@ HELP_TEXT = (
     "/tasks — list open tasks\n"
     "/done x — complete task\n"
     "/edit x ... — edit task\n"
+    "/edit #id ... — edit a fixed task ID\n"
+    "Reply to a task card to edit it. Editing a sent message does not replay commands.\n"
     "/clear — delete all tasks\n"
     "\n<b>Study</b>\n"
     "/classday ... — confirm a course-specific instruction day\n"
@@ -76,6 +79,24 @@ def message_bundle(*messages: dict) -> dict:
     return {"messages": list(messages)}
 
 
+def task_edit_keyboard(items: list[dict]) -> dict:
+    return {"inline_keyboard": [[{"text": f"Edit #{task['id']} · {task['title'][:40]}",
+                                  "callback_data": f"task:edit:{task['id']}"}] for task in items[:50]]}
+
+
+def task_card(task: dict, text: str) -> dict:
+    if (task.get("timing") or {}).get("uncertain"):
+        text += "\n\nIs this the deadline, planned work time, or course/event date? Reply with the intended role."
+    return {"text": text, "parse_mode": "HTML", "task_id": task["id"],
+            "reply_markup": task_edit_keyboard([task])}
+
+
+def edit_conflict(items: list[dict], expected: dict) -> bool:
+    latest = next((item for item in items if item["id"] == expected["id"]), None)
+    return latest is not None and any(latest.get(key) != expected.get(key)
+                                      for key in ("title", "due_at", "project", "timing"))
+
+
 def pending_edit_keyboard(update_id: int, position: int) -> dict:
     return {
         "inline_keyboard": [
@@ -100,10 +121,11 @@ def format_update_summary(
     changes: list[tuple[str, str, str]] = []
     if before["title"] != after["title"]:
         changes.append(("Title", before["title"], after["title"]))
-    if before.get("due_at") != after.get("due_at"):
-        old_due = _display_due(before.get("due_at"))
-        new_due = _display_due(after.get("due_at"))
-        changes.append(("Due", old_due, new_due))
+    old_times = dict(timing_details(before, settings.tz))
+    new_times = dict(timing_details(after, settings.tz))
+    for label in dict.fromkeys([*old_times, *new_times]):
+        if old_times.get(label) != new_times.get(label):
+            changes.append((label, old_times.get(label, "None"), new_times.get(label, "None")))
     if before.get("project") != after.get("project"):
         old_tag = _display_tag(before.get("project"), aliases)
         new_tag = _display_tag(after.get("project"), aliases)
@@ -118,15 +140,13 @@ def format_update_summary(
             f"{escape(project)} is now shown as #{escape(alias)}.",
         ])
     if not changes and not tag_alias:
+        lines[0] = f"<b>No changes · Task {position}</b>"
         lines.extend(["", "No field values changed."])
     return "\n".join(lines)
 
 
 def _display_due(value: str | None) -> str:
-    if not value:
-        return "None"
-    parsed = datetime.fromisoformat(value).astimezone(settings.tz)
-    return f"{parsed:%Y-%m-%d %H:%M}"
+    return display_time(value, settings.tz)
 
 
 def _display_tag(value: str | None, aliases: dict[str, str]) -> str:
@@ -178,6 +198,10 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Chronos", lifespan=lifespan)
+
+
+
+
 
 
 async def run_study_tick() -> dict:
@@ -253,6 +277,7 @@ class TelegramUpdate(BaseModel):
     model_config = ConfigDict(strict=True)
     update_id: int = Field(ge=0, le=2**63 - 1)
     message: TelegramMessage | None = None
+    edited_message: TelegramMessage | None = None
     callback_query: TelegramCallbackQuery | None = None
 
 
@@ -289,7 +314,7 @@ async def create_natural_task(body: NaturalTask) -> dict:
         raise HTTPException(status_code=503, detail=str(error)) from error
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
-    return tasks.create(parsed.title, parsed.due_at, parsed.project)
+    return tasks.create(parsed.title, parsed.due_at, parsed.project, parsed.timing)
 
 
 @app.post("/api/tasks/{task_id}/complete", dependencies=[Depends(require_web_auth)])
@@ -316,7 +341,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             status_code=422,
             detail="Invalid webhook shape: check update_id, message or callback_query, chat, and text",
         ) from None
-    source_message = update.message or (update.callback_query.message if update.callback_query else None)
+    source_message = update.edited_message or update.message or (update.callback_query.message if update.callback_query else None)
     if source_message is None:
         return {"ok": True}
     chat_id = source_message.chat.id
@@ -342,7 +367,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         await telegram.answer_callback_query(update.callback_query.id)
         return {"ok": True}
     export_match = re.fullmatch(r"/export\s+([0-9a-f]{64})", (source_message.text or "").strip())
-    if update.callback_query is None and source_message.reply_to_message is None and export_match:
+    if update.edited_message is None and update.callback_query is None and source_message.reply_to_message is None and export_match:
         from .note_delivery import export_note
         status = await export_note(db, telegram, chat_id=chat_id, update_id=update_id,
                                    fingerprint=export_match.group(1), now=datetime.now(settings.tz))
@@ -360,6 +385,15 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                 action = lambda: "Clear cancelled."
             elif data and re.fullmatch(r"edit:(?:retry|cancel):\d+", data):
                 action = await prepare_pending_edit(data)
+            elif data and re.fullmatch(r"task:edit:\d+", data):
+                selected = tasks.get_open_by_id(int(data.rsplit(":", 1)[1]))
+                if selected is None:
+                    action = lambda: "This task is no longer open. Use /tasks to select another task."
+                else:
+                    card = task_card(selected, "Reply to this message with your changes.\n\n" +
+                                     "\n".join(format_task_block(selected, settings.tz)))
+                    card["reply_markup"] = {"force_reply": True, "selective": True}
+                    action = lambda: message_bundle(card)
             else:
                 action = lambda: "This action is no longer available."
             receipt = db.process_update(update_id, action)
@@ -369,7 +403,18 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             return {"ok": True}
         if receipt is None:
             # Network work happens before acquiring the persistence transaction.
-            if source_message.reply_to_message is not None:
+            bound_task = (db.task_for_message(chat_id, source_message.reply_to_message.message_id)
+                          if source_message.reply_to_message is not None else None)
+            if update.edited_message is not None:
+                action = lambda: (
+                    "Editing a sent message does not change tasks or replay commands. "
+                    "No task was changed. Send /edit 1 your changes as a new message, "
+                    "or use /tasks → Edit and reply to the task card."
+                )
+            elif bound_task is not None:
+                instruction = re.sub(r"^/edit\s*", "", text, flags=re.IGNORECASE).strip()
+                action = await prepare_message(f"/edit #{bound_task} {instruction}", update_id=update_id)
+            elif source_message.reply_to_message is not None:
                 if source_message.message_id is None:
                     raise HTTPException(status_code=422, detail="Reply message id is required")
                 received_at = datetime.now(settings.tz)
@@ -407,6 +452,9 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             result = await telegram.send_message(chat_id, message["text"], **send_options)
             if not result.get("ok"):
                 raise HTTPException(status_code=502, detail="Telegram reply failed; waiting for retry")
+            sent_id = result.get("result", {}).get("message_id")
+            if message.get("task_id") is not None and sent_id is not None:
+                db.bind_task_message(chat_id, sent_id, message["task_id"])
             if receipt.get("messages"):
                 db.mark_update_message_delivered(update_id, index)
             else:
@@ -480,7 +528,11 @@ async def prepare_pending_edit(data: str) -> Callable[[], str | dict]:
     def retry() -> dict:
         before = tasks.list_open()
         aliases = tasks.project_aliases()
-        task = tasks.edit(current["id"], parsed.title, parsed.due_at, parsed.project)
+        if edit_conflict(before, current):
+            return message_bundle({"text": "This task changed while the edit was being prepared. "
+                                   "No changes were applied. Retry the saved edit to use its latest values.",
+                                   "reply_markup": pending_edit_keyboard(pending_id, current_position)})
+        task = tasks.edit(current["id"], parsed.title, parsed.due_at, parsed.project, parsed.timing)
         if task is None:
             db.delete_pending_task_edit(pending_id)
             return message_bundle({
@@ -496,6 +548,8 @@ async def prepare_pending_edit(data: str) -> Callable[[], str | dict]:
                     current_position, current, task, tag_alias=tag_alias, aliases=aliases
                 ),
                 "parse_mode": "HTML",
+                "task_id": task["id"],
+                "reply_markup": task_edit_keyboard([task]),
             },
             {
                 "text": format_updated_tasks(before, task, aliases=aliases, tag_alias=tag_alias),
@@ -554,7 +608,11 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
     if command in {"start", "help"}:
         return lambda: HELP_TEXT
     if command == "tasks":
-        return task_list_text
+        def list_tasks() -> dict:
+            items = tasks.list_open()
+            return message_bundle({"text": task_list_text(items), "parse_mode": "HTML",
+                                   "reply_markup": task_edit_keyboard(items)})
+        return list_tasks
     if command == "clear":
         return lambda: CLEAR_CONFIRM_TEXT
     completed = re.fullmatch(r"done\s+(\d+)", command or "", re.IGNORECASE)
@@ -572,12 +630,19 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
                 f"{format_tasks(remaining, settings.tz, project_aliases=aliases)}"
             )
         return complete
-    edited = re.fullmatch(r"edit\s+(\d+)\s+(.+)", command or "", re.IGNORECASE)
+    edited = re.fullmatch(r"edit\s+(#?\d+)\s+(.+)", command or "", re.IGNORECASE | re.DOTALL)
     if edited:
-        position = int(edited.group(1))
-        current = tasks.get_open_by_position(position)
+        reference = edited.group(1)
+        position = int(reference.lstrip("#"))
+        items = tasks.list_open()
+        if reference.startswith("#"):
+            current = next((item for item in items if item["id"] == position), None)
+        else:
+            current = items[position - 1] if 1 <= position <= len(items) else None
         if current is None:
-            return lambda: f"Task {position} not found.\n\n{task_list_text()}"
+            return lambda: f"Task {reference} not found.\n\n{task_list_text()}"
+        if reference.startswith("#"):
+            position = next(i for i, item in enumerate(items, 1) if item["id"] == current["id"])
         instruction = edited.group(2).strip()
         deterministic = parse_deterministic_edit(current, instruction)
         tag_alias = deterministic.tag_alias if deterministic else None
@@ -617,7 +682,10 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
         def edit() -> dict:
             before = tasks.list_open()
             aliases = tasks.project_aliases()
-            task = tasks.edit(task_id, parsed.title, parsed.due_at, parsed.project)
+            if edit_conflict(before, current):
+                return message_bundle({"text": "This task changed while the edit was being prepared. "
+                                       "No changes were applied. Use /tasks and send your changes again."})
+            task = tasks.edit(task_id, parsed.title, parsed.due_at, parsed.project, parsed.timing)
             if task is None:
                 return message_bundle({
                     "text": f"Task {position} is no longer open. No changes were applied.",
@@ -631,6 +699,8 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
                         position, current, task, tag_alias=tag_alias, aliases=aliases
                     ),
                     "parse_mode": "HTML",
+                    "task_id": task_id,
+                    "reply_markup": task_edit_keyboard([task]),
                 },
                 {
                     "text": format_updated_tasks(before, task, aliases=aliases, tag_alias=tag_alias),
@@ -638,6 +708,11 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
                 },
             )
         return edit
+    if re.match(r"^edit(?:\s|$)", command or "", re.IGNORECASE):
+        return lambda: (
+            "Specify the task and the change: /edit 1 移除期限 or /edit #42 your changes. "
+            "Use /tasks to choose a task, or reply to its task card with your changes. No task was changed."
+        )
     if command is not None or re.fullmatch(r"(?:代辦|清單|完成\s*#?\d+|延期\s*#?\d+.*)", normalized):
         return lambda: "Unknown command. Use /help to see available commands."
     try:
@@ -645,12 +720,12 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
     except (AIError, ValueError) as error:
         return lambda reply=str(error): reply
     aliases = tasks.project_aliases()
-    def create() -> str:
-        task = tasks.create(parsed.title, parsed.due_at, parsed.project)
+    def create() -> dict:
+        task = tasks.create(parsed.title, parsed.due_at, parsed.project, parsed.timing)
         details = "\n".join(format_task_block(
             task, settings.tz, project_aliases=aliases
         ))
-        return f"<b>Created</b>\n{details}"
+        return message_bundle(task_card(task, f"<b>Created</b>\n{details}"))
     return create
 
 
@@ -663,7 +738,7 @@ def format_updated_tasks(
 ) -> str:
     """Render the known transaction outcome without a Firestore read-after-write."""
     after = [{**item, **updated} if item["id"] == updated["id"] else item for item in before]
-    after.sort(key=lambda item: (item.get("due_at") is None, item.get("due_at") or "", item["id"]))
+    after.sort(key=task_sort_key)
     display_aliases = dict(aliases or {})
     if tag_alias:
         display_aliases[tag_alias[0]] = tag_alias[1]

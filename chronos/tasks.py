@@ -1,9 +1,11 @@
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, time, timedelta
 from html import escape
+from zoneinfo import ZoneInfo
 
 from .db import Database
+from .task_timing import normalize_timing, timing_details
 
 
 @dataclass
@@ -11,6 +13,7 @@ class ParsedTask:
     title: str
     due_at: datetime | None = None
     project: str | None = None
+    timing: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -24,8 +27,8 @@ class TaskService:
         self.db = db
         self.tz = tz
 
-    def create(self, title: str, due_at: datetime | None = None, project: str | None = None) -> dict:
-        return self.db.create_task(title.strip(), due_at, project, datetime.now(self.tz))
+    def create(self, title: str, due_at: datetime | None = None, project: str | None = None, timing: dict | None = None) -> dict:
+        return self.db.create_task(title.strip(), due_at, project, datetime.now(self.tz), normalize_timing(timing, due_at))
 
     def list_open(self) -> list[dict]:
         return self.db.list_open_tasks()
@@ -36,14 +39,17 @@ class TaskService:
     def postpone(self, task_id: int, due_at: datetime) -> bool:
         return self.db.postpone_task(task_id, due_at)
 
-    def edit(self, task_id: int, title: str, due_at: datetime | None, project: str | None) -> dict | None:
-        if not self.db.edit_task(task_id, title.strip(), due_at, project):
+    def edit(self, task_id: int, title: str, due_at: datetime | None, project: str | None, timing: dict | None = None) -> dict | None:
+        if timing is not None:
+            timing = normalize_timing(timing, due_at)
+        if not self.db.edit_task(task_id, title.strip(), due_at, project, timing):
             return None
         return {
             "id": task_id,
             "title": title.strip(),
             "due_at": due_at.isoformat() if due_at else None,
             "project": project,
+            **({"timing": timing} if timing is not None else {}),
         }
 
     def clear(self) -> int:
@@ -92,7 +98,11 @@ class TaskService:
         cleaned = re.sub(r"\s+", " ", cleaned).strip(" ，,。")
         if not cleaned:
             raise ValueError("Task text cannot be empty.")
-        return ParsedTask(title=cleaned, due_at=due_at, project=project)
+        timing = {}
+        if due_at and not re.search(r"\d{1,2}(?::|：)\d{2}", text):
+            timing = {"due_date": due_at.date().isoformat(), "source_text": text}
+            due_at = None
+        return ParsedTask(title=cleaned, due_at=due_at, project=project, timing=timing)
 
     def _extract_due(self, text: str, now: datetime) -> datetime | None:
         date_value = None
@@ -117,7 +127,7 @@ class TaskService:
         if not date_value and not clock:
             return None
         date_value = date_value or now.date()
-        hour, minute = 9, 0
+        hour, minute = 0, 0
         if clock:
             period, hour_text, minute_text = clock.groups()
             hour, minute = int(hour_text), int(minute_text)
@@ -134,7 +144,7 @@ class TaskService:
         return data
 
 
-def parse_deterministic_edit(current: dict, instruction: str) -> DeterministicEdit | None:
+def parse_deterministic_edit(current: dict, instruction: str, now: datetime | None = None) -> DeterministicEdit | None:
     """Resolve narrow field operations without sending private task text to an LLM."""
     text = re.sub(r"\s+", " ", instruction.strip())
     lowered = text.casefold()
@@ -142,7 +152,37 @@ def parse_deterministic_edit(current: dict, instruction: str) -> DeterministicEd
         title=current["title"],
         due_at=datetime.fromisoformat(current["due_at"]) if current.get("due_at") else None,
         project=current.get("project"),
+        timing=dict(current.get("timing") or {}),
     )
+
+    # Handle the screenshot's correction without relying on an external model.
+    correction = re.fullmatch(
+        r"(?P<day>(?:星期|週|周)[一二三四五六日天]|\d{4}-\d{2}-\d{2})?\s*"
+        r"(?:是)?(?:課程|上課|課堂|course|class|lecture|event)(?:的)?\s*"
+        r"(?:時間|日期|time|date)\s*[,，;；]?\s*"
+        r"(?:非|不是|並非|not(?:\s+(?:the|a))?)\s*(?:due(?:\s+(?:time|date))?|deadline|截止(?:時間|日期)?|期限)[。.!！]?",
+        text, re.IGNORECASE,
+    )
+    if correction:
+        now = now or datetime.now(ZoneInfo("Asia/Taipei"))
+        original = current.get("due_at") or task.timing.get("due_date")
+        day = correction.group("day")
+        value = original[:10] if original else None
+        if day and re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
+            value = datetime.strptime(day, "%Y-%m-%d").date().isoformat()
+        elif day:
+            target = {"一": 0, "二": 1, "三": 2, "四": 3, "五": 4, "六": 5, "日": 6, "天": 6}[day[-1]]
+            if not value or datetime.fromisoformat(value).weekday() != target:
+                value = (now.date() + timedelta(days=(target - now.weekday()) % 7)).isoformat()
+        task.due_at = None
+        task.timing.pop("due_date", None)
+        task.timing.pop("uncertain", None)
+        task.timing["source_text"] = text
+        if value:
+            task.timing["event"] = value
+        else:
+            task.timing["uncertain"] = "Course / event date not specified"
+        return DeterministicEdit(task)
 
     remove_due = {
         "remove date", "remove the date", "remove due date", "remove the due date",
@@ -150,6 +190,7 @@ def parse_deterministic_edit(current: dict, instruction: str) -> DeterministicEd
     }
     if lowered in remove_due:
         task.due_at = None
+        task.timing.pop("due_date", None)
         return DeterministicEdit(task)
 
     remove_project = {
@@ -208,9 +249,8 @@ def format_task_block(
 ) -> list[str]:
     prefix = f"{position}. " if position is not None else ""
     lines = [f"{prefix}<b>{escape(task['title'])}</b>"]
-    if task.get("due_at"):
-        value = datetime.fromisoformat(task["due_at"]).astimezone(tz)
-        lines.append(f"<b>Due:</b> {value:%Y-%m-%d %H:%M}")
+    for label, value in timing_details(task, tz):
+        lines.append(f"<b>{label}:</b> {escape(value)}")
     if task.get("project"):
         project = project_display_name(str(task["project"]), project_aliases)
         lines.append(f"<b>Tag:</b> #{escape(project)}")
@@ -222,9 +262,8 @@ def format_task(task: dict, tz, *, html: bool = False) -> str:
     if title is None:
         title = escape(task["title"]) if html else task["title"]
     parts = [title]
-    if task.get("due_at"):
-        value = datetime.fromisoformat(task["due_at"]).astimezone(tz)
-        parts.append(f"{value:%m/%d %H:%M}")
+    for label, value in timing_details(task, tz):
+        parts.append(f"{label}: {escape(value) if html else value}")
     if task.get("project"):
         project = escape(str(task["project"])) if html else str(task["project"])
         parts.append(f"#{project}")

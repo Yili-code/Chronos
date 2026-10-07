@@ -78,7 +78,7 @@ class TelegramClient:
         return result
 
     async def set_webhook(self, url: str, secret: str = "") -> dict:
-        payload = {"url": url, "allowed_updates": ["message", "callback_query"]}
+        payload = {"url": url, "allowed_updates": ["message", "edited_message", "callback_query"]}
         if secret:
             payload["secret_token"] = secret
         return await self.request("setWebhook", payload)
