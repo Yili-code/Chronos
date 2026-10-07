@@ -220,3 +220,31 @@ def test_mail_card_escapes_html_and_hides_display_noise():
     assert "7693d1e" in mail["subject"]
     buttons = mail_buttons("ab12", True)["inline_keyboard"]
     assert [b["text"] for row in buttons for b in row] == ["Trash", "Task", "Archive", "Read"]
+
+
+@pytest.mark.parametrize("subject", ["安全性快訊", "New sign-in on Windows", "Unusual login activity", "Your password was changed", "密碼已變更"])
+def test_future_account_security_notifications_are_trashed(subject):
+    mail = message(subject=subject, labels=["UNREAD", "IMPORTANT"], received_at=200, unsubscribe=False)
+    assert filter_reason(mail, discard_account_security_after=100) == "依你的規則：帳號安全通知"
+    assert filter_reason(mail) is None
+    assert filter_reason(mail, discard_account_security_after=300) is None
+    assert filter_reason(mail, "@shop.example", 100) is None
+
+
+@pytest.mark.parametrize("subject", ["Dependabot security alert CVE-2026-1234", "Your verification code", "Reset your password", "Security advisory for a package"])
+def test_security_rule_keeps_other_notifications(subject):
+    mail = message(subject=subject, labels=["UNREAD"], received_at=200)
+    assert filter_reason(mail, discard_account_security_after=100) is None
+
+
+@pytest.mark.asyncio
+async def test_read_action_finishes_backlog_item_without_archiving(workflow):
+    workflow.gmail.message_ids.return_value = (["ab12"], False)
+    workflow.gmail.read.side_effect = lambda _: message(labels=["INBOX", "UNREAD"])
+    await workflow.daily(backlog=True, request_key="first")
+    action = await workflow.prepare_action("ab12", "read")
+    action()
+    workflow.gmail.message_ids.return_value = ([], False)
+    assert (await workflow.daily(backlog=True, request_key="next"))["processed"] == 0
+    assert workflow.gmail.message_ids.call_args.kwargs["skip"]("ab12")
+    workflow.gmail.archive.assert_not_awaited()

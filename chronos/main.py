@@ -410,7 +410,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                 result = await mail.daily(backlog=True, request_key=str(update_id))
             except GmailError as error:
                 raise HTTPException(status_code=503, detail=str(error)) from None
-            reply = (f"本批還有 {result['waiting']} 封，請先封存或刪除，再傳 /mail_next。"
+            reply = (f"本批還有 {result['waiting']} 封，請先封存、刪除或標為已讀，再傳 /mail_next。"
                      if result.get("waiting") else "批次已送出，請查看上方郵件卡片。")
             receipt = db.process_update(update_id, lambda: reply)
         if not receipt["delivered"]:
@@ -444,6 +444,12 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                 except GmailError as error:
                     raise HTTPException(status_code=503, detail=str(error)) from None
             receipt = db.process_update(update_id, action)
+        if receipt["reply"] in {"已移到垃圾桶。", "已標為已讀。"} or receipt["reply"].startswith("已封存，可在 Gmail 所有郵件找到"):
+            card_id = source_message.message_id if mail_callback else source_message.reply_to_message.message_id
+            result = await telegram.request("deleteMessage", {"chat_id": chat_id, "message_id": card_id})
+            missing = result.get("error_code") == 400 and "message to delete not found" in result.get("description", "").lower()
+            if not result.get("ok") and not missing:
+                raise HTTPException(status_code=502, detail="Mail action completed; Telegram card deletion pending")
         if not receipt["delivered"]:
             result = await telegram.send_message(chat_id, receipt["reply"])
             if not result.get("ok"):

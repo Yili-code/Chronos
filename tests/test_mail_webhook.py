@@ -116,3 +116,44 @@ def test_next_batch_command_is_owner_only_and_deduplicated(system, monkeypatch):
         assert client.post("/telegram/webhook", json=payload, headers=headers).status_code == 200
     worker.daily.assert_awaited_once_with(backlog=True, request_key="9010")
     assert "2" in bot.send_message.call_args.args[1]
+
+
+def test_trash_removes_original_telegram_card_after_gmail_succeeds(system, monkeypatch):
+    client, tasks, bot, config = system
+    gmail = enable(config, monkeypatch)
+    bot.request.return_value = {"ok": True}
+    assert post(client, 9100, callback="mail:trash:ab12").status_code == 200
+    gmail.trash.assert_awaited_once_with("ab12")
+    bot.request.assert_awaited_once_with("deleteMessage", {"chat_id": 123, "message_id": 500})
+
+
+def test_failed_gmail_trash_keeps_telegram_card(system, monkeypatch):
+    from chronos.gmail import GmailError
+    client, tasks, bot, config = system
+    gmail = enable(config, monkeypatch)
+    gmail.trash.side_effect = GmailError("Unavailable")
+    assert post(client, 9101, callback="mail:trash:ab12").status_code == 503
+    bot.request.assert_not_awaited()
+
+
+def test_retry_deletes_card_without_repeating_gmail_trash(system, monkeypatch):
+    client, tasks, bot, config = system
+    gmail = enable(config, monkeypatch)
+    bot.request.return_value = {"ok": False, "error_code": 500}
+    assert post(client, 9102, callback="mail:trash:ab12").status_code == 502
+    bot.request.return_value = {"ok": False, "error_code": 400, "description": "Bad Request: message to delete not found"}
+    assert post(client, 9102, callback="mail:trash:ab12").status_code == 200
+    gmail.trash.assert_awaited_once()
+
+
+def test_archive_and_read_remove_cards_only_after_success(system, monkeypatch):
+    client, tasks, bot, config = system
+    gmail = enable(config, monkeypatch)
+    main.mail_workflow().patch("message:ab12", backlog=True)
+    bot.request.return_value = {"ok": True}
+    assert post(client, 9110, callback="mail:keep:ab12").status_code == 200
+    gmail.archive.assert_awaited_once_with("ab12")
+    assert post(client, 9111, callback="mail:read:ab12").status_code == 200
+    gmail.mark_read.assert_awaited_once_with("ab12")
+    assert bot.request.await_count == 2
+    assert all(c.args == ("deleteMessage", {"chat_id": 123, "message_id": 500}) for c in bot.request.call_args_list)

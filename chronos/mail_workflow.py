@@ -30,17 +30,31 @@ PROMOTION = re.compile(
 )
 
 
-def filter_reason(mail, keep_senders=""):
+ACCOUNT_SECURITY = re.compile(
+    r"安全性快訊|帳[戶號]安全(?:通知|警示)|新(?:裝置|设备).*登[入錄]|異常登[入錄]|"
+    r"密碼(?:已|遭|已被)?(?:變更|更改|重設)|"
+    r"security alert|new (?:sign.in|login)|unusual (?:sign.in|login|activity)|"
+    r"password (?:was |has been )?(?:changed|reset)|new device.*(?:sign.in|login)", re.I,
+)
+VULNERABILITY = re.compile(r"dependabot|vulnerability|security advisory|CVE-\d|套件漏洞|漏洞通知", re.I)
+
+
+def filter_reason(mail, keep_senders="", discard_account_security_after=0):
     labels = set(mail.get("labels", []))
-    if not {"UNREAD", "CATEGORY_PROMOTIONS"} <= labels:
-        return None
-    if labels & {"TRASH", "SPAM", "STARRED", "IMPORTANT", "CATEGORY_PERSONAL"}:
+    if "UNREAD" not in labels or labels & {"TRASH", "SPAM", "STARRED"}:
         return None
     address = parseaddr(mail["sender"])[1].lower()
     for entry in keep_senders.lower().split(","):
         entry = entry.strip()
         if entry and (address == entry or (entry.startswith("@") and address.endswith(entry))):
             return None
+    subject = mail["subject"]
+    if (discard_account_security_after and mail.get("received_at", 0) >= discard_account_security_after
+            and not mail.get("has_reply") and ACCOUNT_SECURITY.search(subject)
+            and not VULNERABILITY.search(subject + " " + mail.get("snippet", ""))):
+        return "依你的規則：帳號安全通知"
+    if "CATEGORY_PROMOTIONS" not in labels or labels & {"IMPORTANT", "CATEGORY_PERSONAL"}:
+        return None
     text = mail["subject"] + " " + mail.get("snippet", "") + " " + mail.get("body", "")
     if mail.get("body_truncated") or mail.get("has_reply") or not mail.get("unsubscribe") or PROTECTED.search(text):
         return None
@@ -196,6 +210,8 @@ class MailWorkflow:
                 if previous and previous.get("complete"):
                     remaining = 0
                     for identifier in previous["ids"]:
+                        if (self.get("message:" + identifier) or {}).get("read"):
+                            continue
                         renew()
                         try:
                             current = await self.gmail.read(identifier)
@@ -218,7 +234,8 @@ class MailWorkflow:
                 state = self.get(day)
                 if not state:
                     ids, more = await self.gmail.message_ids(5,
-                        f"in:inbox -in:trash -in:spam before:{progress['cutoff']}", on_page=renew)
+                        f"in:inbox -in:trash -in:spam before:{progress['cutoff']}",
+                        skip=lambda identifier: bool((self.get("message:" + identifier) or {}).get("read")), on_page=renew)
                     state = self.patch(day, ids=ids, more=more)
             else:
                 active = self.get("active-day") or {}
@@ -254,7 +271,7 @@ class MailWorkflow:
                     continue
                 # A journal survives a crash between the Gmail write and Telegram report.
                 pending = item.get("trash_pending", False)
-                reason = item.get("reason") if pending else filter_reason(mail, self.settings.gmail_keep_senders)
+                reason = item.get("reason") if pending else filter_reason(mail, self.settings.gmail_keep_senders, self.settings.gmail_discard_account_security_after)
                 if not pending and (("INBOX" if backlog else "UNREAD") not in mail["labels"] or set(mail["labels"]) & {"TRASH", "SPAM"}):
                     self.patch(item_key, skipped=True)
                     continue
@@ -264,7 +281,7 @@ class MailWorkflow:
                 if reason:
                     if "TRASH" not in mail["labels"]:
                         # Re-evaluate after a prior uncertain write: never trash a newly protected/read mail.
-                        if not filter_reason(mail, self.settings.gmail_keep_senders):
+                        if not filter_reason(mail, self.settings.gmail_keep_senders, self.settings.gmail_discard_account_security_after):
                             reason = None
                         else:
                             self.patch(item_key, trash_pending=True, reason=reason)
@@ -281,9 +298,9 @@ class MailWorkflow:
             suffix = "（達本次上限，其餘未讀信留待後續整理）" if state["more"] else ""
             if backlog:
                 text = (f"歷史郵件第 {progress['number']} 批 · {len(state['ids'])} 封\n"
-                        "請將本批封存或移到垃圾桶，完成後傳 /mail_next 取得下一批。新增任務及已讀不會移出收件匣。")
+                        "請選 Trash、Archive 或 Read，完成後傳 /mail_next。Read 保留於收件匣但不再列入整理。")
                 if not state["ids"]:
-                    text = "歷史收件匣整理完成；新進郵件由每日排程接續。"
+                    text = "歷史郵件批次整理完成；選 Read 的信仍留在收件匣，新進郵件由每日排程接續。"
                 await self.deliver(day + ":end", text)
                 if not state["ids"]:
                     self.patch("backlog", enabled=False)

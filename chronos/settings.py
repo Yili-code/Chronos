@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     gmail_client_secret: str = ""
     gmail_refresh_token: str = ""
     gmail_account: str = ""
+    gmail_discard_account_security_after: int = Field(default=0, ge=0)
     gmail_keep_senders: str = ""  # Comma-separated exact addresses or @domains.
     gmail_max_messages: int = Field(default=100, ge=1, le=500)
     database_path: Path = Path("chronos.db")

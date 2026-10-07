@@ -52,6 +52,7 @@ def decode_message(raw):
         body = re.sub(r"<[^>]+>", " ", body)
     normalized_body = clean(body, 1000000)
     return {
+        "received_at": int(raw.get("internalDate", 0)) // 1000,
         "id": message_id(raw["id"]), "thread_id": raw.get("threadId", ""),
         "labels": raw.get("labelIds", []), "subject": clean(headers.get("subject", "(無主旨)"), 240),
         "sender": clean(headers.get("from", ""), 240), "date": clean(headers.get("date", ""), 100),
