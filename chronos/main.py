@@ -42,43 +42,28 @@ gmail = GmailClient(settings)
 scheduler = AsyncIOScheduler(timezone=settings.tz)
 
 HELP_TEXT = (
-    '<b>指令說明</b>\n'
-    '參數請替換成實際內容；[ ] 表示選填，不需輸入括號。\n'
-    '\n<b>任務</b>\n'
-    '/tasks — 查看未完成任務\n'
-    '/add 任務內容 [#標籤] — 原文新增，不使用 AI、不設定期限\n'
-    '/done 順位 — 完成任務\n'
-    '/edit 順位 修改內容 — 修改任務\n'
-    '/edit #固定ID 修改內容 — 指定固定 ID 修改\n'
-    '順位是 /tasks 最新清單中的序號，會隨清單變動。\n'
-    '固定 ID 可見於任務卡片的編輯按鈕（Edit #編號）。\n'
-    '範例：<code>/edit 1 移除期限</code>\n'
-    '範例：<code>/edit #42 移除期限</code>\n'
-    '\n也可直接回覆任務卡片，輸入修改內容。\n'
-    '編輯已送出的訊息不會重新執行指令。\n'
-    '\n/clear — 確認後刪除所有任務（含已完成），無法復原\n'
-    '\n<b>郵件</b>\n'
-    '回覆郵件卡片：刪除／保留／已讀\n'
-    '建立任務範例：<code>新增任務：回覆會議邀請</code>\n'
-    '不會自動寄送郵件。\n'
-    '\n<b>課程</b>\n'
-    '/classday 日期 課程代碼 class|off|auto\n'
-    '日期格式：YYYY-MM-DD；須為該課原課表日。\n'
-    'class＝上課；off＝不上課；auto＝恢復自動判定。\n'
-    '輸入 /classday 可查課程代碼；也支援自然語言：\n'
-    '<code>/classday 10/07 軟體工程不上課</code>\n'
-    '/study_budget — 查看已記錄的學習 AI 用量，不產生內容\n'
-    '\n<b>作業</b>\n'
-    '/prepare 作業ID — 請求產生可編輯草稿\n'
-    '/draft 作業ID [頁碼] — 閱讀已存草稿，不重新生成\n'
-    '作業 ID 請取自作業通知的固定編號，輸入時不加 #。\n'
-    '範例：<code>/prepare 42</code>、<code>/draft 42 1</code>\n'
-    '\n<b>筆記</b>\n'
-    '/notes [課程] — 列出已存筆記；省略課程則列出最近筆記\n'
-    '/note 筆記編號 [段落編號] — 閱讀筆記\n'
-    '/export 筆記編號 — 下載 Markdown 原文\n'
-    '請從 /notes 複製完整筆記編號。\n'
-    '頁碼與段落編號皆從 1 起算，省略時預設為 1。'
+    "<b>Commands</b>\n"
+    "\n<b>Tasks</b>\n"
+    "/tasks — list open tasks\n"
+    "/add title [#tag] — add exact text without AI or a deadline\n"
+    "/done x — complete task\n"
+    "/edit x ... — edit task\n"
+    "/edit #id ... — edit a fixed task ID\n"
+    "Reply to a task card to edit it. Editing a sent message does not replay commands.\n"
+    "/clear — delete all tasks\n"
+    "\n<b>Mail</b>\n"
+    "Reply to a mail card: 刪除 / 保留 / 已讀 / 新增任務：...\n"
+    "Mail is never sent automatically.\n"
+    "\n<b>Study</b>\n"
+    "/classday ... — confirm a course-specific instruction day\n"
+    "/study_budget — inspect recorded Study AI usage without generating\n"
+    "\n<b>Assignments</b>\n"
+    "/prepare y — request an editable assignment draft\n"
+    "/draft y [page] — read a saved draft without generating\n"
+    "\n<b>Notes</b>\n"
+    "/notes {course} — list saved study notes\n"
+    "/note x {page} — read a saved note\n"
+    "/export x — download canonical Markdown"
 )
 
 CLEAR_CONFIRM_TEXT = "Delete all tasks? This cannot be undone."

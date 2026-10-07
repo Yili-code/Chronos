@@ -187,14 +187,30 @@ def test_webhook_auth_and_commands(system):
     assert send('/start').status_code == 200
     help_text = bot.send_message.call_args.args[1]
     assert help_text == main.HELP_TEXT
-    assert '<b>指令說明</b>' in help_text
-    assert '/done 順位' in help_text
-    assert '/edit #固定ID 修改內容' in help_text
-    assert '/notes [課程]' in help_text
-    assert '/note 筆記編號 [段落編號]' in help_text
-    assert '含已完成' in help_text
-    assert '無法復原' in help_text
-    assert len(help_text.encode('utf-16-le')) // 2 < 4096
+    assert help_text == (
+        '<b>Commands</b>\n'
+        '\n<b>Tasks</b>\n'
+        '/tasks — list open tasks\n'
+        '/add title [#tag] — add exact text without AI or a deadline\n'
+        '/done x — complete task\n'
+        '/edit x ... — edit task\n'
+        '/edit #id ... — edit a fixed task ID\n'
+        'Reply to a task card to edit it. Editing a sent message does not replay commands.\n'
+        '/clear — delete all tasks\n'
+        '\n<b>Mail</b>\n'
+        'Reply to a mail card: 刪除 / 保留 / 已讀 / 新增任務：...\n'
+        'Mail is never sent automatically.\n'
+        '\n<b>Study</b>\n'
+        '/classday ... — confirm a course-specific instruction day\n'
+        '/study_budget — inspect recorded Study AI usage without generating\n'
+        '\n<b>Assignments</b>\n'
+        '/prepare y — request an editable assignment draft\n'
+        '/draft y [page] — read a saved draft without generating\n'
+        '\n<b>Notes</b>\n'
+        '/notes {course} — list saved study notes\n'
+        '/note x {page} — read a saved note\n'
+        '/export x — download canonical Markdown'
+    )
     assert '/reschedule' not in help_text
     assert '/postpone' not in help_text
     assert '/deadline' not in help_text
