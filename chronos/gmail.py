@@ -116,11 +116,14 @@ class GmailClient:
         return expected
 
     async def unread_ids(self, limit, skip=None, on_page=None):
+        return await self.message_ids(limit, "is:unread -in:trash -in:spam", skip, on_page)
+
+    async def message_ids(self, limit, query, skip=None, on_page=None):
         ids, page = [], None
         while len(ids) < limit:
             if on_page:
                 on_page()
-            params = {"q": "is:unread -in:trash -in:spam", "maxResults": min(100, limit - len(ids))}
+            params = {"q": query, "maxResults": min(100, limit - len(ids))}
             if page:
                 params["pageToken"] = page
             data = await self._request("GET", "messages", params=params)
@@ -141,3 +144,6 @@ class GmailClient:
 
     async def mark_read(self, identifier):
         await self._request("POST", f"messages/{message_id(identifier)}/modify", json={"removeLabelIds": ["UNREAD"]})
+
+    async def archive(self, identifier):
+        await self._request("POST", f"messages/{message_id(identifier)}/modify", json={"removeLabelIds": ["INBOX"]})

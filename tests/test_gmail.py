@@ -25,7 +25,7 @@ async def test_transport_refresh_pagination_and_only_safe_write_endpoints():
                 return httpx.Response(200, json={"messages": [{"id": "ab2"}]})
             return httpx.Response(200, json={"messages": [{"id": "ab1"}], "nextPageToken": "next"})
         if path.endswith("modify"):
-            assert json.loads(request.content) == {"removeLabelIds": ["UNREAD"]}
+            assert json.loads(request.content) in ({"removeLabelIds": ["UNREAD"]}, {"removeLabelIds": ["INBOX"]})
         else:
             assert path.endswith("/trash")
         return httpx.Response(200, json={"id": "ab2"})
@@ -36,6 +36,7 @@ async def test_transport_refresh_pagination_and_only_safe_write_endpoints():
     assert await client.unread_ids(2, skip=lambda identifier: identifier == "ab1") == (["ab2"], False)
     await client.trash("ab2")
     await client.mark_read("ab2")
+    await client.archive("ab2")
     assert len([c for c in calls if c.url.host == "oauth2.googleapis.com"]) == 1
     assert not hasattr(client, "send") and not hasattr(client, "delete")
     with pytest.raises(GmailError):

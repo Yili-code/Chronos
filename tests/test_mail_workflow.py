@@ -174,3 +174,35 @@ async def test_concurrent_daily_run_is_rejected(workflow):
     with pytest.raises(GmailError, match="Another"):
         await workflow.daily()
     workflow.gmail.unread_ids.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_backlog_includes_read_and_waits_for_inbox_clear(workflow):
+    mail = message(labels=["INBOX"], subject="Read personal mail")
+    workflow.gmail.read.side_effect = lambda _: copy.deepcopy(mail)
+    workflow.gmail.message_ids.return_value = (["ab12"], False)
+    assert (await workflow.daily(backlog=True, request_key="first"))["processed"] == 1
+    workflow.gmail.message_ids.assert_awaited_once()
+    assert workflow.gmail.message_ids.call_args.args[0] == 5
+    assert "in:inbox" in workflow.gmail.message_ids.call_args.args[1]
+    workflow.gmail.trash.assert_not_awaited()
+    assert (await workflow.daily(backlog=True))["waiting"] == 1
+    workflow.gmail.message_ids.assert_awaited_once()
+    action = await workflow.prepare_action("ab12", "保留")
+    assert "封存" in action()
+    workflow.gmail.archive.assert_awaited_once_with("ab12")
+    mail["labels"] = []
+    assert (await workflow.daily(backlog=True, request_key="first"))["already_complete"]
+    workflow.gmail.message_ids.return_value = ([], False)
+    await workflow.daily(backlog=True, request_key="second")
+    assert workflow.get("backlog")["enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_backlog_resume_does_not_resend_cards(workflow):
+    workflow.gmail.message_ids.return_value = (["ab12"], False)
+    workflow.gmail.read.side_effect = lambda _: message(labels=["INBOX"])
+    await workflow.daily(backlog=True, request_key="one")
+    count = workflow.telegram.send_message.await_count
+    await workflow.daily(backlog=True, request_key="one")
+    assert workflow.telegram.send_message.await_count == count

@@ -327,6 +327,16 @@ async def health() -> dict:
     return {"status": "ok"}
 
 
+@app.post("/internal/mail/backlog")
+async def trigger_mail_backlog(x_chronos_scheduler_secret: str | None = Header(default=None)) -> dict:
+    if not settings.scheduler_secret or not hmac.compare_digest(x_chronos_scheduler_secret or "", settings.scheduler_secret):
+        raise HTTPException(status_code=403, detail="Invalid scheduler credential")
+    try:
+        return await mail_workflow().daily(backlog=True, request_key="bootstrap")
+    except GmailError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from None
+
+
 @app.post("/internal/daily")
 async def trigger_daily_tasks(x_chronos_scheduler_secret: str | None = Header(default=None)) -> dict:
     if not settings.scheduler_secret:
@@ -393,6 +403,22 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
     # Route mail cards before generic task/study replies. Bind callbacks to the
     # actual delivered card so arbitrary mail IDs cannot be supplied by a client.
     mail = mail_workflow() if settings.enable_gmail else None
+    if mail and update.message and (source_message.text or "").strip() == "/mail_next":
+        receipt = db.get_update(update_id)
+        if receipt is None:
+            try:
+                result = await mail.daily(backlog=True, request_key=str(update_id))
+            except GmailError as error:
+                raise HTTPException(status_code=503, detail=str(error)) from None
+            reply = (f"本批還有 {result['waiting']} 封，請先封存或刪除，再傳 /mail_next。"
+                     if result.get("waiting") else "批次已送出，請查看上方郵件卡片。")
+            receipt = db.process_update(update_id, lambda: reply)
+        if not receipt["delivered"]:
+            result = await telegram.send_message(chat_id, receipt["reply"])
+            if not result.get("ok"):
+                raise HTTPException(status_code=502, detail="Mail reply pending")
+            db.mark_update_delivered(update_id)
+        return {"ok": True}
     mail_binding = (mail.binding(chat_id, source_message.reply_to_message.message_id)
                     if mail and source_message.reply_to_message else None)
     mail_callback = bool(update.callback_query and (update.callback_query.data or "").startswith("mail:"))

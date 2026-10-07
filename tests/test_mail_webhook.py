@@ -87,3 +87,32 @@ def test_mail_status_is_authenticated_and_read_only(system, monkeypatch):
     gmail.trash.assert_not_awaited()
     gmail.mark_read.assert_not_awaited()
     bot.send_message.assert_not_awaited()
+
+
+def test_backlog_endpoint_requires_scheduler_auth(system, monkeypatch):
+    client, tasks, bot, config = system
+    enable(config, monkeypatch)
+    worker = AsyncMock()
+    worker.daily.return_value = {"processed": 5}
+    monkeypatch.setattr(main, "mail_workflow", lambda: worker)
+    assert client.post("/internal/mail/backlog").status_code == 403
+    worker.daily.assert_not_awaited()
+    assert client.post("/internal/mail/backlog", headers={"X-Chronos-Scheduler-Secret": "test-scheduler"}).status_code == 200
+    worker.daily.assert_awaited_once_with(backlog=True, request_key="bootstrap")
+
+
+def test_next_batch_command_is_owner_only_and_deduplicated(system, monkeypatch):
+    client, tasks, bot, config = system
+    enable(config, monkeypatch)
+    worker = AsyncMock()
+    worker.daily.return_value = {"waiting": 2}
+    monkeypatch.setattr(main, "mail_workflow", lambda: worker)
+    payload = {"update_id": 9010, "message": {"message_id": 900, "chat": {"id": 456}, "text": "/mail_next"}}
+    headers = {"X-Telegram-Bot-Api-Secret-Token": "test-hook"}
+    assert client.post("/telegram/webhook", json=payload, headers=headers).status_code == 403
+    worker.daily.assert_not_awaited()
+    payload["message"]["chat"]["id"] = 123
+    for _ in range(2):
+        assert client.post("/telegram/webhook", json=payload, headers=headers).status_code == 200
+    worker.daily.assert_awaited_once_with(backlog=True, request_key="9010")
+    assert "2" in bot.send_message.call_args.args[1]

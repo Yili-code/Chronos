@@ -115,7 +115,7 @@ class MailWorkflow:
                 {"text": "移到垃圾桶", "callback_data": f"mail:trash:{mail_id}"},
                 {"text": "新增任務", "callback_data": f"mail:task:{mail_id}"},
             ], [
-                {"text": "保留", "callback_data": f"mail:keep:{mail_id}"},
+                {"text": "保留（封存）" if (self.get("message:" + mail_id) or {}).get("backlog") else "保留", "callback_data": f"mail:keep:{mail_id}"},
                 {"text": "標為已讀", "callback_data": f"mail:read:{mail_id}"},
             ]]}
         try:
@@ -137,8 +137,9 @@ class MailWorkflow:
             self.patch(f"telegram:{self.settings.telegram_chat_id}:{sent_id}", mail_id=mail_id)
         self.patch(delivery_key, delivery="sent", message_id=sent_id)
 
-    async def daily(self, now=None):
+    async def daily(self, now=None, *, backlog=False, request_key=None):
         self.require_config()
+        backlog = backlog or bool((self.get("backlog") or {}).get("enabled"))
         # Leave ample time for the last in-flight message before Cloud Run's
         # request deadline. A scheduler retry resumes the persisted snapshot.
         deadline = time.monotonic() + 1200
@@ -160,18 +161,55 @@ class MailWorkflow:
             self.db.mutate_mail_state(self.key("daily-lock"), transition)
         day = "day:" + now.date().isoformat()
         try:
-            active = self.get("active-day") or {}
-            previous = self.get(active["day"]) if active.get("day") else None
-            if active.get("day") and not (previous or {}).get("complete"):
-                day = active["day"]
-            self.patch("active-day", day=day)
-            state = self.get(day)
-            if state and state.get("complete"):
-                return {"already_complete": True}
-            if not state:
-                ids, more = await self.gmail.unread_ids(self.settings.gmail_max_messages,
-                                                       skip=self.already_reported, on_page=renew)
-                state = self.patch(day, ids=ids, more=more)
+            if backlog:
+                progress = self.get("backlog") or {}
+                day = progress.get("day")
+                mapped = self.get("backlog-request:" + request_key) if request_key else None
+                if mapped:
+                    day = mapped["day"]
+                    if (self.get(day) or {}).get("complete"):
+                        return {"already_complete": True}
+                previous = self.get(day) if day else None
+                if previous and previous.get("complete"):
+                    remaining = 0
+                    for identifier in previous["ids"]:
+                        renew()
+                        try:
+                            current = await self.gmail.read(identifier)
+                        except GmailError as error:
+                            if error.status == 404:
+                                continue
+                            raise
+                        if "INBOX" in current["labels"] and not set(current["labels"]) & {"TRASH", "SPAM"}:
+                            remaining += 1
+                    if remaining:
+                        return {"waiting": remaining}
+                    day = None
+                if not day:
+                    number = progress.get("number", 0) + 1
+                    day = f"batch:{number}"
+                    progress = self.patch("backlog", enabled=True, day=day, number=number,
+                                          cutoff=progress.get("cutoff", int(time.time())))
+                if request_key:
+                    self.patch("backlog-request:" + request_key, day=day)
+                state = self.get(day)
+                if not state:
+                    ids, more = await self.gmail.message_ids(5,
+                        f"in:inbox -in:trash -in:spam before:{progress['cutoff']}", on_page=renew)
+                    state = self.patch(day, ids=ids, more=more)
+            else:
+                active = self.get("active-day") or {}
+                previous = self.get(active["day"]) if active.get("day") else None
+                if active.get("day") and not (previous or {}).get("complete"):
+                    day = active["day"]
+                self.patch("active-day", day=day)
+                state = self.get(day)
+                if state and state.get("complete"):
+                    return {"already_complete": True}
+                if not state:
+                    ids, more = await self.gmail.unread_ids(self.settings.gmail_max_messages,
+                                                           skip=self.already_reported, on_page=renew)
+                    state = self.patch(day, ids=ids, more=more)
             for identifier in state["ids"]:
                 if time.monotonic() >= deadline:
                     raise GmailError("Mail digest batch paused at its time limit; retry to continue")
@@ -194,12 +232,12 @@ class MailWorkflow:
                 # A journal survives a crash between the Gmail write and Telegram report.
                 pending = item.get("trash_pending", False)
                 reason = item.get("reason") if pending else filter_reason(mail, self.settings.gmail_keep_senders)
-                if not pending and ("UNREAD" not in mail["labels"] or set(mail["labels"]) & {"TRASH", "SPAM"}):
+                if not pending and (("INBOX" if backlog else "UNREAD") not in mail["labels"] or set(mail["labels"]) & {"TRASH", "SPAM"}):
                     self.patch(item_key, skipped=True)
                     continue
                 if saved.get("keep"):
                     reason = None
-                self.patch("message:" + identifier, mail=mail)
+                self.patch("message:" + identifier, mail=mail, backlog=backlog)
                 if reason:
                     if "TRASH" not in mail["labels"]:
                         # Re-evaluate after a prior uncertain write: never trash a newly protected/read mail.
@@ -217,10 +255,20 @@ class MailWorkflow:
                 self.patch("message:" + identifier, last_delivery=item_key)
                 text = (f"📬 {mail['subject']}\n寄件者：{mail['sender']}\n{summary}\n"
                         f"https://mail.google.com/mail/u/{self.settings.gmail_account}/#all/{identifier}\n\n"
-                        "可按鈕操作，或回覆「刪除」「保留」「已讀」「新增任務：要做的事」。寄信未啟用。")
+                        + ("歷史整理：保留會封存。新增任務後仍請封存或刪除；全部處理完傳 /mail_next。" if backlog else
+                         "可按鈕操作，或回覆「刪除」「保留」「已讀」「新增任務：要做的事」。寄信未啟用。"))
                 await self.deliver(item_key, text, identifier)
             suffix = "（達本次上限，其餘未讀信留待後續整理）" if state["more"] else ""
-            await self.deliver(day + ":end", f"郵件整理完成 · {day[4:]}\n本次檢查 {len(state['ids'])} 封尚未播報的未讀信{suffix}。\n保留的信維持未讀且不重複播報；新增任務須由你操作。")
+            if backlog:
+                text = (f"歷史郵件第 {progress['number']} 批 · {len(state['ids'])} 封\n"
+                        "請將本批封存或移到垃圾桶，完成後傳 /mail_next 取得下一批。新增任務及已讀不會移出收件匣。")
+                if not state["ids"]:
+                    text = "歷史收件匣整理完成；新進郵件由每日排程接續。"
+                await self.deliver(day + ":end", text)
+                if not state["ids"]:
+                    self.patch("backlog", enabled=False)
+            else:
+                await self.deliver(day + ":end", f"郵件整理完成 · {day[4:]}\n本次檢查 {len(state['ids'])} 封尚未播報的未讀信{suffix}。\n保留的信維持未讀且不重複播報；新增任務須由你操作。")
             self.patch(day, complete=True)
             return {"processed": len(state["ids"]), "more": state["more"]}
         finally:
@@ -237,6 +285,13 @@ class MailWorkflow:
         action = {"刪除": "trash", "刪掉": "trash", "移到垃圾桶": "trash", "delete": "trash",
                   "保留": "keep", "已讀": "read", "標為已讀": "read", "新增任務": "task",
                   "加到tasks": "task", "加到 tasks": "task"}.get(instruction.lower(), instruction.lower())
+        if action in {"封存", "archive"} or (action == "keep" and saved.get("backlog")):
+            await self.gmail.verify_account()
+            await self.gmail.archive(identifier)
+            def archive():
+                self.patch("message:" + identifier, keep=True, archived=True)
+                return "已封存，可在 Gmail 所有郵件找到；本批完成後傳 /mail_next。"
+            return archive
         if action in {"trash", "read"}:
             await self.gmail.verify_account()
             if action == "trash":
