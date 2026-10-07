@@ -13,6 +13,12 @@ class ParsedTask:
     project: str | None = None
 
 
+@dataclass
+class DeterministicEdit:
+    task: ParsedTask
+    tag_alias: tuple[str, str] | None = None
+
+
 class TaskService:
     def __init__(self, db: Database, tz):
         self.db = db
@@ -43,11 +49,22 @@ class TaskService:
     def clear(self) -> int:
         return self.db.clear_tasks()
 
+    def project_aliases(self) -> dict[str, str]:
+        return self.db.list_tag_aliases()
+
+    def save_project_alias(
+        self, project: str, alias: str, existing_aliases: dict[str, str] | None = None
+    ) -> None:
+        self.db.save_tag_alias(project, alias, existing_aliases)
+
     def get_open_by_position(self, position: int) -> dict | None:
         open_tasks = self.list_open()
         if position < 1 or position > len(open_tasks):
             return None
         return open_tasks[position - 1]
+
+    def get_open_by_id(self, task_id: int) -> dict | None:
+        return next((task for task in self.list_open() if task["id"] == task_id), None)
 
     def complete_position(self, position: int) -> dict | None:
         task = self.get_open_by_position(position)
@@ -117,13 +134,87 @@ class TaskService:
         return data
 
 
-def format_tasks(tasks: list[dict], tz) -> str:
+def parse_deterministic_edit(current: dict, instruction: str) -> DeterministicEdit | None:
+    """Resolve narrow field operations without sending private task text to an LLM."""
+    text = re.sub(r"\s+", " ", instruction.strip())
+    lowered = text.casefold()
+    task = ParsedTask(
+        title=current["title"],
+        due_at=datetime.fromisoformat(current["due_at"]) if current.get("due_at") else None,
+        project=current.get("project"),
+    )
+
+    remove_due = {
+        "remove date", "remove the date", "remove due date", "remove the due date",
+        "no date", "no due date", "移除日期", "移除期限", "不要日期", "不需要日期",
+    }
+    if lowered in remove_due:
+        task.due_at = None
+        return DeterministicEdit(task)
+
+    remove_project = {
+        "remove tag", "remove the tag", "remove project", "remove the project",
+        "no tag", "no project", "移除標籤", "移除分類", "移除專案",
+    }
+    if lowered in remove_project:
+        task.project = None
+        return DeterministicEdit(task)
+
+    alias_patterns = (
+        r"(?:未來\s+)?(?P<project>[A-Za-z][A-Za-z -]*?)\s*(?:標籤|tag)\s*改用\s*#?(?P<alias>[A-Za-z][A-Za-z0-9]{0,9})(?:\s*[（(]?(?:存入記憶|remember(?: this)?)[）)]?)?",
+        r"(?:remember\s+to\s+)?use\s+#?(?P<alias>[A-Za-z][A-Za-z0-9]{0,9})\s+for\s+(?P<project>[A-Za-z][A-Za-z -]*?)\s+tags?(?:\s+from\s+now\s+on)?",
+    )
+    for pattern in alias_patterns:
+        match = re.fullmatch(pattern, text, re.IGNORECASE)
+        if not match:
+            continue
+        project = canonical_project(match.group("project"))
+        if task.project and canonical_project(task.project) != project:
+            return None
+        task.project = task.project or project
+        return DeterministicEdit(task, (project, match.group("alias").upper()))
+
+    implicit_alias = re.fullmatch(
+        r"(?:未來\s+)?(?:標籤|tag)\s*改用\s*#?(?P<alias>[A-Za-z][A-Za-z0-9]{0,9})(?:\s*[（(]?(?:存入記憶|remember(?: this)?)[）)]?)?",
+        text,
+        re.IGNORECASE,
+    )
+    if implicit_alias and task.project:
+        project = canonical_project(task.project)
+        return DeterministicEdit(task, (project, implicit_alias.group("alias").upper()))
+    return None
+
+
+def canonical_project(value: str) -> str:
+    return re.sub(r"-+", "-", re.sub(r"[^a-z0-9]+", "-", value.casefold())).strip("-")
+
+
+def format_tasks(tasks: list[dict], tz, project_aliases: dict[str, str] | None = None) -> str:
     if not tasks:
         return "No open tasks."
     lines = ["<b>Tasks</b>"]
     for position, task in enumerate(tasks, start=1):
-        lines.append(f"{position}. {format_task(task, tz, html=True)}")
+        lines.append("")
+        lines.extend(format_task_block(task, tz, position=position, project_aliases=project_aliases))
     return "\n".join(lines)
+
+
+def format_task_block(
+    task: dict,
+    tz,
+    *,
+    position: int | None = None,
+    project_aliases: dict[str, str] | None = None,
+) -> list[str]:
+    prefix = f"{position}. " if position is not None else ""
+    lines = [f"{prefix}<b>{escape(task['title'])}</b>"]
+    if task.get("due_at"):
+        value = datetime.fromisoformat(task["due_at"]).astimezone(tz)
+        lines.append(f"<b>Due:</b> {value:%Y-%m-%d %H:%M}")
+    if task.get("project"):
+        project = project_display_name(str(task["project"]), project_aliases)
+        lines.append(f"<b>Tag:</b> #{escape(project)}")
+    return lines
 
 
 def format_task(task: dict, tz, *, html: bool = False) -> str:
@@ -138,6 +229,20 @@ def format_task(task: dict, tz, *, html: bool = False) -> str:
         project = escape(str(task["project"])) if html else str(task["project"])
         parts.append(f"#{project}")
     return " ".join(parts)
+
+
+def project_display_name(project: str, aliases: dict[str, str] | None = None) -> str:
+    canonical = canonical_project(project)
+    configured = (aliases or {}).get(canonical)
+    if configured:
+        return configured
+    if len(project) <= 16:
+        return project
+    words = [word for word in re.split(r"[.\-_\s]+", project) if word]
+    if len(words) < 2:
+        return project
+    abbreviation = "".join(word[0] for word in words).upper()
+    return abbreviation if 2 <= len(abbreviation) <= 8 else project
 
 
 def _format_course_task_title(title: str, *, html: bool) -> str | None:

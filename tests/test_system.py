@@ -26,6 +26,7 @@ def system(tmp_path, monkeypatch):
     service = TaskService(db, config.tz)
     bot = TelegramClient('test-token')
     monkeypatch.setattr(bot, 'send_message', AsyncMock(return_value={'ok': True}))
+    monkeypatch.setattr(bot, 'request', AsyncMock(return_value={'ok': True}))
     monkeypatch.setattr(bot, 'answer_callback_query', AsyncMock(return_value={'ok': True}))
     monkeypatch.setattr(bot, 'set_webhook', AsyncMock(return_value={'ok': True}))
     monkeypatch.setattr(main, 'settings', config)
@@ -218,15 +219,17 @@ def test_webhook_auth_and_commands(system):
     assert bot.send_message.call_args.kwargs == {'parse_mode': None}
     assert service.list_open() == []
     assert send('新增工作').status_code == 200
-    assert bot.send_message.call_args.args[1] == 'Created: Test task'
+    assert bot.send_message.call_args.args[1] == '<b>Created</b>\n<b>Test task</b>'
+    assert bot.send_message.call_args.kwargs == {'parse_mode': 'HTML'}
     assert send('/tasks').status_code == 200
-    assert bot.send_message.call_args.args[1] == '<b>Tasks</b>\n1. Test task'
+    assert bot.send_message.call_args.args[1] == '<b>Tasks</b>\n\n1. <b>Test task</b>'
     assert bot.send_message.call_args.kwargs == {'parse_mode': 'HTML'}
     main.ai.edit = AsyncMock(return_value=ParsedTask(
         'Test task', datetime(2026, 9, 20, 10, tzinfo=config.tz)))
     assert send('/edit 1 改到週日').status_code == 200
     assert service.list_open()[0]['due_at'].startswith('2026-09-20T10:00')
-    assert bot.send_message.call_args.args[1].startswith('Updated: Test task 09/20 10:00\n\n<b>Tasks</b>')
+    assert bot.send_message.await_args_list[-2].args[1].startswith('<b>Updated · Task 1</b>')
+    assert bot.send_message.await_args_list[-1].args[1].startswith('<b>Tasks</b>')
     assert send('/done 1').status_code == 200
     assert bot.send_message.call_args.args[1] == 'Completed: Test task\n\nNo open tasks.'
     assert service.list_open() == []
@@ -240,9 +243,12 @@ def test_webhook_auth_and_commands(system):
     main.ai.edit = AsyncMock(return_value=ParsedTask(
         'Finalize roadmap', datetime(2026, 10, 3, 18, tzinfo=config.tz), 'Chronos'))
     assert send('/edit 1 改成完成 roadmap 並移到 10/03 18:00').status_code == 200
-    assert bot.send_message.call_args.args[1] == (
-        'Updated: Finalize roadmap 10/03 18:00 #Chronos\n\n'
-        '<b>Tasks</b>\n1. Finalize roadmap 10/03 18:00 #Chronos')
+    assert bot.send_message.await_args_list[-2].args[1].startswith('<b>Updated · Task 1</b>')
+    assert bot.send_message.await_args_list[-1].args[1] == (
+        '<b>Tasks</b>\n\n'
+        '1. <b>Finalize roadmap</b>\n'
+        '<b>Due:</b> 2026-10-03 18:00\n'
+        '<b>Tag:</b> #Chronos')
 
 
 def test_daily_reminder_schedule(system):
@@ -259,6 +265,79 @@ def test_daily_reminder_schedule(system):
     config.telegram_chat_id = None
     asyncio.run(main.send_daily_tasks())
     bot.send_message.assert_not_awaited()
+
+
+def test_failed_edit_is_saved_and_can_be_retried_by_stable_task_id(system):
+    client, service, bot, config = system
+    original = service.create('Original task')
+    main.ai.edit = AsyncMock(side_effect=AIError('provider unavailable'))
+    headers = {'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}
+    payload = {'update_id': 70, 'message': {
+        'chat': {'id': 123}, 'text': '/edit 1 translate and shorten the title',
+    }}
+    assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 200
+    error_message = bot.send_message.await_args_list[-1]
+    assert error_message.args[1] == (
+        '<b>Update failed · Task 1</b>\n'
+        'The update service is temporarily unavailable. No changes were made to Task 1. '
+        'Your command has been saved; use the button below to retry it.'
+    )
+    assert error_message.kwargs['parse_mode'] == 'HTML'
+    assert error_message.kwargs['reply_markup']['inline_keyboard'][0][0] == {
+        'text': 'Retry editing Task 1', 'callback_data': 'edit:retry:70',
+    }
+    assert main.db.get_pending_task_edit(70)['task_id'] == original['id']
+
+    main.ai.edit = AsyncMock(return_value=ParsedTask('Short title'))
+    callback = {'update_id': 71, 'callback_query': {
+        'id': 'retry-70', 'data': 'edit:retry:70',
+        'message': {'message_id': 701, 'chat': {'id': 123}},
+    }}
+    assert client.post('/telegram/webhook', headers=headers, json=callback).status_code == 200
+    assert service.list_open()[0]['title'] == 'Short title'
+    assert main.db.get_pending_task_edit(70) is None
+    assert bot.send_message.await_args_list[-2].args[1].startswith('<b>Updated · Task 1</b>')
+    assert bot.send_message.await_args_list[-1].args[1].startswith('<b>Tasks</b>')
+    bot.request.assert_awaited_with('editMessageReplyMarkup', {
+        'chat_id': 123, 'message_id': 701, 'reply_markup': {'inline_keyboard': []},
+    })
+
+
+def test_deterministic_tag_alias_edit_skips_ai(system):
+    client, service, bot, _ = system
+    service.create('Review chapter 2', project='computer-architecture')
+    main.ai.edit = AsyncMock()
+    response = client.post('/telegram/webhook', headers={
+        'X-Telegram-Bot-Api-Secret-Token': 'test-hook',
+    }, json={'update_id': 72, 'message': {
+        'chat': {'id': 123},
+        'text': '/edit 1 未來 computer architecture 標籤改用 CA (存入記憶)',
+    }})
+    assert response.status_code == 200
+    main.ai.edit.assert_not_awaited()
+    assert service.project_aliases() == {'computer-architecture': 'CA'}
+    assert '<b>Tag:</b> #CA' in bot.send_message.await_args_list[-1].args[1]
+
+
+def test_second_update_message_retries_without_resending_first(system, monkeypatch):
+    client, service, bot, _ = system
+    service.create('Original task')
+    main.ai.edit = AsyncMock(return_value=ParsedTask('Renamed task'))
+    edit = Mock(wraps=service.edit)
+    monkeypatch.setattr(service, 'edit', edit)
+    bot.send_message.side_effect = [
+        {'ok': True}, {'ok': False, 'error_code': 500}, {'ok': True},
+    ]
+    payload = {'update_id': 73, 'message': {
+        'chat': {'id': 123}, 'text': '/edit 1 rename it',
+    }}
+    headers = {'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}
+    assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 502
+    assert main.db.get_update(73)['delivered_count'] == 1
+    assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 200
+    assert edit.call_count == 1
+    assert bot.send_message.await_count == 3
+    assert main.db.get_update(73)['delivered'] is True
 
 
 def test_daily_reminder_reports_delivery_failure(system):
@@ -294,7 +373,7 @@ def test_persistence_order_and_reschedule(tmp_path):
     reopened = TaskService(Database(db.path), tz)
     assert [x['id'] for x in reopened.list_open()] == [earlier['id'], later['id'], no_due['id']]
     formatted = format_tasks(reopened.list_open(), tz)
-    assert formatted.startswith('<b>Tasks</b>\n1. 較早 09/19 10:00')
+    assert formatted.startswith('<b>Tasks</b>\n\n1. <b>較早</b>\n<b>Due:</b> 2026-09-19 10:00')
     assert '#Chronos' in formatted
     assert reopened.complete(earlier['id'])
     assert not reopened.postpone(earlier['id'], datetime.now(tz))
@@ -446,7 +525,7 @@ def test_duplicate_other_mutations(system, monkeypatch, command):
         assert client.post('/telegram/webhook', json=payload, headers={
             'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}).status_code == 200
     assert action.call_count == 1
-    assert bot.send_message.await_count == 1
+    assert bot.send_message.await_count == (2 if command == 'edit' else 1)
 
 
 def test_clear_requires_button_confirmation_and_deletes_every_task(system):

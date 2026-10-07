@@ -29,7 +29,20 @@ CREATE INDEX IF NOT EXISTS idx_tasks_status_due ON tasks(status, due_at);
 CREATE TABLE IF NOT EXISTS telegram_updates (
     update_id INTEGER PRIMARY KEY,
     reply TEXT NOT NULL,
-    delivered INTEGER NOT NULL DEFAULT 0
+    delivered INTEGER NOT NULL DEFAULT 0,
+    messages_json TEXT,
+    delivered_count INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS pending_task_edits (
+    update_id INTEGER PRIMARY KEY,
+    task_id INTEGER NOT NULL,
+    position INTEGER NOT NULL,
+    instruction TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS tag_aliases (
+    project TEXT PRIMARY KEY,
+    alias TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS course_sessions (
     session_id TEXT PRIMARY KEY,
@@ -81,6 +94,13 @@ class Database:
             columns = {row[1] for row in connection.execute("PRAGMA table_info(course_sessions)")}
             if "survey_task_id" not in columns:
                 connection.execute("ALTER TABLE course_sessions ADD COLUMN survey_task_id INTEGER")
+            update_columns = {row[1] for row in connection.execute("PRAGMA table_info(telegram_updates)")}
+            if "messages_json" not in update_columns:
+                connection.execute("ALTER TABLE telegram_updates ADD COLUMN messages_json TEXT")
+            if "delivered_count" not in update_columns:
+                connection.execute(
+                    "ALTER TABLE telegram_updates ADD COLUMN delivered_count INTEGER NOT NULL DEFAULT 0"
+                )
 
     def save_study_note(self, note: NoteRecord) -> NoteRecord:
         validated = NoteRecord.model_validate(note.model_dump())
@@ -198,13 +218,70 @@ class Database:
     def get_update(self, update_id: int) -> dict | None:
         with self.connect() as connection:
             row = connection.execute(
-                "SELECT reply, delivered FROM telegram_updates WHERE update_id = ?", (update_id,)
+                "SELECT reply, delivered, messages_json, delivered_count "
+                "FROM telegram_updates WHERE update_id = ?", (update_id,)
             ).fetchone()
-        return dict(row) if row else None
+        if row is None:
+            return None
+        receipt = {"reply": row["reply"], "delivered": bool(row["delivered"])}
+        if row["messages_json"]:
+            receipt["messages"] = json.loads(row["messages_json"])
+            receipt["delivered_count"] = row["delivered_count"]
+        return receipt
 
     def mark_update_delivered(self, update_id: int) -> None:
         with self.connect() as connection:
             connection.execute("UPDATE telegram_updates SET delivered = 1 WHERE update_id = ?", (update_id,))
+
+    def mark_update_message_delivered(self, update_id: int, delivered_count: int) -> None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT messages_json FROM telegram_updates WHERE update_id=?", (update_id,)
+            ).fetchone()
+            if row is None:
+                return
+            messages = json.loads(row[0]) if row[0] else []
+            connection.execute(
+                "UPDATE telegram_updates SET delivered_count=?, delivered=? WHERE update_id=?",
+                (delivered_count, int(delivered_count >= len(messages)), update_id),
+            )
+
+    def save_pending_task_edit(
+        self, update_id: int, task_id: int, position: int, instruction: str, created_at: datetime
+    ) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT INTO pending_task_edits VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(update_id) DO UPDATE SET task_id=excluded.task_id, "
+                "position=excluded.position, instruction=excluded.instruction, created_at=excluded.created_at",
+                (update_id, task_id, position, instruction, created_at.isoformat()),
+            )
+
+    def get_pending_task_edit(self, update_id: int) -> dict | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM pending_task_edits WHERE update_id=?", (update_id,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def delete_pending_task_edit(self, update_id: int) -> None:
+        with self.connect() as connection:
+            connection.execute("DELETE FROM pending_task_edits WHERE update_id=?", (update_id,))
+
+    def save_tag_alias(
+        self, project: str, alias: str, existing_aliases: dict[str, str] | None = None
+    ) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT INTO tag_aliases VALUES (?, ?) "
+                "ON CONFLICT(project) DO UPDATE SET alias=excluded.alias",
+                (project, alias),
+            )
+
+    def list_tag_aliases(self) -> dict[str, str]:
+        with self.connect() as connection:
+            rows = connection.execute("SELECT project, alias FROM tag_aliases").fetchall()
+        return {row[0]: row[1] for row in rows}
 
     def create_task(self, title: str, due_at: datetime | None, project: str | None, created_at: datetime) -> dict:
         with self.connect() as connection:
@@ -428,16 +505,30 @@ class Database:
             cursor = connection.execute("DELETE FROM tasks")
         return cursor.rowcount
 
-    def process_update(self, update_id: int, action: Callable[[], str]) -> dict:
+    def process_update(self, update_id: int, action: Callable[[], str | dict]) -> dict:
         """Persist a Telegram mutation and its reply in one transaction."""
         with self.transaction() as connection:
             receipt = self.get_update(update_id)
             if receipt is None:
-                reply = action()
+                output = action()
+                if isinstance(output, str):
+                    connection.execute(
+                        "INSERT INTO telegram_updates(update_id, reply) VALUES (?, ?)",
+                        (update_id, output),
+                    )
+                    return {"reply": output, "delivered": False}
+                messages = output["messages"]
+                reply = messages[0]["text"]
                 connection.execute(
-                    "INSERT INTO telegram_updates(update_id, reply) VALUES (?, ?)", (update_id, reply)
+                    "INSERT INTO telegram_updates(update_id, reply, messages_json) VALUES (?, ?, ?)",
+                    (update_id, reply, json.dumps(messages)),
                 )
-                return {"reply": reply, "delivered": False}
+                return {
+                    "reply": reply,
+                    "delivered": False,
+                    "messages": messages,
+                    "delivered_count": 0,
+                }
             return receipt
 
     def create_course_session(self, session: ProgressSession, *, create_tasks: bool = False) -> ProgressSession:

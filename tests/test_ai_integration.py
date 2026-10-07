@@ -25,13 +25,16 @@ def test_web_and_telegram_use_external_ai(task_service, monkeypatch):
     monkeypatch.setattr(main.ai, "parse", parse)
     task = asyncio.run(main.create_natural_task(main.NaturalTask(text="工作")))
     assert task["title"] == "Review external analysis"
-    assert asyncio.run(main.handle_message("新增 工作")) == "Created: Review external analysis"
+    assert asyncio.run(main.handle_message("新增 工作")) == (
+        "<b>Created</b>\n<b>Review external analysis</b>"
+    )
     assert parse.await_count == 2
     due = datetime(2026, 9, 20, 12, tzinfo=main.settings.tz)
     edit = AsyncMock(return_value=ParsedTask("Review external analysis", due))
     monkeypatch.setattr(main.ai, "edit", edit)
     reply = asyncio.run(main.handle_message("/edit 1 改到週日中午"))
-    assert "Updated: Review external analysis 09/20 12:00" in reply
+    assert "<b>Updated · Task 1</b>" in reply
+    assert "After: 2026-09-20 12:00" in reply
     assert "<b>Tasks</b>" in reply
     assert task_service.list_open()[0]["due_at"] == due.isoformat()
 
@@ -45,7 +48,9 @@ def test_failure_does_not_change_tasks(task_service, monkeypatch):
         asyncio.run(main.create_natural_task(main.NaturalTask(text="工作")))
     assert error.value.status_code == 503
     assert "External AI failed" in asyncio.run(main.handle_message("新增 工作"))
-    assert "External AI failed" in asyncio.run(main.handle_message("/edit 1 改到明天"))
+    assert "update service is temporarily unavailable" in asyncio.run(
+        main.handle_message("/edit 1 改到明天")
+    )
     assert asyncio.run(main.handle_message("/reschedule 1 明天")) == "Unknown command. Use /help to see available commands."
     assert task_service.list_open() == before
     assert "Original task" in asyncio.run(main.handle_message("/tasks"))
@@ -60,10 +65,11 @@ def test_edit_uses_natural_language_and_returns_latest_list(task_service, monkey
     reply = asyncio.run(main.handle_message("/edit 1 改成完成 launch plan，期限 10/03 18:00 並移除專案"))
     edit.assert_awaited_once()
     assert edit.call_args.args[0]["id"] == original["id"]
-    assert reply == (
-        "Updated: Finalize launch plan 10/03 18:00\n\n"
-        "<b>Tasks</b>\n1. Finalize launch plan 10/03 18:00"
-    )
+    assert "<b>Updated · Task 1</b>" in reply
+    assert "Before: Draft launch plan" in reply
+    assert "After: Finalize launch plan" in reply
+    assert "After: 2026-10-03 18:00" in reply
+    assert "<b>Tasks</b>\n\n1. <b>Finalize launch plan</b>" in reply
     stored = task_service.list_open()[0]
     assert stored["title"] == "Finalize launch plan"
     assert stored["project"] is None

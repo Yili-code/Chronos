@@ -73,8 +73,9 @@ CHRONOS_PUBLIC_BASE_URL=https://你的公開網址
 ```
 
 除了 slash commands 外，直接傳送中英文自然語言就會新增一筆代辦。Telegram 與 Web 的互動文字統一使用英文。
-`/tasks` 依「期限最早、無期限最後、同期限較早建立者優先」排序，並將目前未完成代辦動態編為 `1..n`；永久 database ID 不會顯示。`/done` 與 `/edit` 使用這個當下位置，操作後會回覆結果及更新後清單。不存在的位置會顯示錯誤及最新清單。每天 08:00 的清單使用同一格式。
-`/edit <position> <instruction>` 接受中文或英文自然語言，可同時修改標題、期限與分類，也能明確移除期限或分類；未提及的欄位會保留，儲存標題仍為精簡英文 action phrase。任務改期與作業截止日期都統一使用 `/edit`；`/reschedule` 與 `/deadline` 不再支援。
+`/tasks` 依「期限最早、無期限最後、同期限較早建立者優先」排序，並將目前未完成代辦動態編為 `1..n`；永久 database ID 不會顯示。`/done` 與 `/edit` 接受當下位置，但 mutation 會在 receipt transaction 內綁定永久 ID，因此清單重新排序不會讓已保存的 retry 改到另一筆 task。不存在的位置會顯示英文錯誤及最新清單。每天 08:00 的清單使用同一格式。
+`/edit <position> <instruction>` 接受中文或英文自然語言，可同時修改標題、期限與分類，也能明確移除期限或分類；未提及的欄位會保留，儲存標題仍為精簡英文 action phrase。移除日期、移除分類與保存 tag abbreviation 等明確操作會走 deterministic path；其他語意改寫才呼叫 AI。任務改期與作業截止日期都統一使用 `/edit`；`/reschedule` 與 `/deadline` 不再支援。
+AI update service 暫時不可用時，task 不會變更，原始 command 會持久保存，Telegram 會提供 **Retry editing Task n** 與 **Cancel saved edit for Task n**。Retry 依永久 task ID 執行；如果目標已完成或刪除，會 fail closed。成功更新分成兩則訊息：第一則只列出 changed fields，第二則才顯示更新後清單。兩則訊息分別保存 delivery progress，第二則失敗時不會主動重送已確認成功的第一則。
 舊的中文 commands 與 `/postpone` 不再支援；`/start` 與 `/help` 都會顯示英文使用說明。
 `/clear` 先顯示確認訊息；只有按下 **Delete all tasks** 才會刪除所有 open 與 completed task records，按 **Cancel** 不會變更資料。Telegram update receipts 與內部 ID counter 不在清除範圍內，以維持 webhook idempotency 與 ID 唯一性。
 
@@ -98,11 +99,11 @@ CHRONOS_PUBLIC_BASE_URL=https://你的公開網址
 
 `/note` 讀取內容，`/export` 則傳送同一份 canonical note 的 Markdown 文件。Repository 不提供固定示範 ID，因為 note ID 是由實際內容計算，寫死的 ID 可能指向不存在或不同的筆記。
 
-`/tasks` 與每日清單使用粗體 `Tasks` 標題，以空格分隔欄位。課程日期顯示為 `MM/DD`；課後回覆原文仍保存作為教材與摘要依據，但新建立的複習代辦會另外使用一次 Gemini 產生簡短英文 label，並在 Telegram 中以粗體顯示。若翻譯暫時失敗，進度仍會保存，複習代辦回退顯示原文。
+`/tasks` 與每日清單使用粗體 `Tasks` 標題。每筆 task 的 title、完整 `YYYY-MM-DD HH:MM` due time 與 tag 各自位於不同文字層級，避免把 metadata 混入標題。過長的多字 tag 只在顯示層縮寫，例如 canonical `computer-architecture` 顯示為 `#CA`；canonical value 仍保留供搜尋與資料關聯。Owner 也能透過 `/edit` 保存自己的 tag display preference。課後回覆原文仍保存作為教材與摘要依據，但新建立的複習代辦會另外使用一次 AI 產生簡短英文 label；若翻譯暫時失敗，進度仍會保存，複習代辦回退顯示原文。
 
 設定 `CHRONOS_TELEGRAM_CHAT_ID` 後，其他 chat 無法操作 bot。
 
-Webhook 會驗證 JSON 結構與整數 `update_id`，合法的非文字更新會略過。每筆 message 或 callback 的代辦變更與處理紀錄會一起儲存在 SQLite；動態位置會在同一 transaction 內解析成永久 ID，重送同一 update 不會重複新增、完成、修改、改期或清除，重啟後仍有效。回覆失敗時，後續重送會重試原始回覆。若 Telegram 已收到回覆而程式尚未記錄送達就中斷，回覆文字仍可能重複，但代辦不會重複變更。去重紀錄目前不會自動清除。
+Webhook 會驗證 JSON 結構與整數 `update_id`，合法的非文字更新會略過。每筆 message 或 callback 的代辦變更與處理紀錄會一起儲存在 SQLite 或 Firestore；動態位置會在同一 transaction 內解析成永久 ID，重送同一 update 不會重複新增、完成、修改、改期或清除，重啟後仍有效。多訊息回覆會逐則保存 delivery progress，後續 webhook retry 從第一則未確認訊息繼續。若 Telegram 已收到某則訊息而程式尚未記錄送達就中斷，該則文字仍可能重複，但代辦不會重複變更。去重與 pending-edit 紀錄目前不會自動清除；完成或取消 retry 會刪除對應 pending edit。
 
 ## Docker
 

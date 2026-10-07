@@ -26,6 +26,7 @@ class FirestoreDatabase:
         self.client = firestore.Client(project=project_id, database=database_id, **options)
         self.tasks = self.client.collection(f"{collection_prefix}_tasks")
         self.updates = self.client.collection(f"{collection_prefix}_telegram_updates")
+        self.pending_task_edits = self.client.collection(f"{collection_prefix}_pending_task_edits")
         self.meta = self.client.collection(f"{collection_prefix}_meta")
         self.course_sessions = self.client.collection(f"{collection_prefix}_course_sessions")
         self.study_deliveries = self.client.collection(f"{collection_prefix}_study_deliveries")
@@ -398,14 +399,72 @@ class FirestoreDatabase:
         snapshot = reference.get(transaction=active) if active is not None else reference.get()
         return snapshot.to_dict() if snapshot.exists else None
 
-    def process_update(self, update_id: int, action: Callable[[], str]) -> dict:
+    def save_pending_task_edit(
+        self, update_id: int, task_id: int, position: int, instruction: str, created_at: datetime
+    ) -> None:
+        reference = self.pending_task_edits.document(str(update_id))
+        data = {
+            "update_id": update_id,
+            "task_id": task_id,
+            "position": position,
+            "instruction": instruction,
+            "created_at": created_at.isoformat(),
+        }
+        active = self._transaction.get()
+        if active is not None:
+            active.set(reference, data)
+        else:
+            reference.set(data)
+
+    def get_pending_task_edit(self, update_id: int) -> dict | None:
+        active = self._transaction.get()
+        snapshot = self.pending_task_edits.document(str(update_id)).get(transaction=active)
+        return snapshot.to_dict() if snapshot.exists else None
+
+    def delete_pending_task_edit(self, update_id: int) -> None:
+        reference = self.pending_task_edits.document(str(update_id))
+        active = self._transaction.get()
+        if active is not None:
+            active.delete(reference)
+        else:
+            reference.delete()
+
+    def save_tag_alias(
+        self, project: str, alias: str, existing_aliases: dict[str, str] | None = None
+    ) -> None:
+        reference = self.meta.document("tag_aliases")
+        def save(transaction):
+            if existing_aliases is None:
+                snapshot = reference.get(transaction=transaction)
+                aliases = snapshot.to_dict() if snapshot.exists else {}
+            else:
+                aliases = existing_aliases
+            transaction.set(reference, {**aliases, project: alias})
+        active = self._transaction.get()
+        save(active) if active is not None else self._run_transaction(save)
+
+    def list_tag_aliases(self) -> dict[str, str]:
+        active = self._transaction.get()
+        snapshot = self.meta.document("tag_aliases").get(transaction=active)
+        return snapshot.to_dict() if snapshot.exists else {}
+
+    def process_update(self, update_id: int, action: Callable[[], str | dict]) -> dict:
         def process(transaction):
             reference = self.updates.document(str(update_id))
             snapshot = reference.get(transaction=transaction)
             if snapshot.exists:
                 return snapshot.to_dict()
-            reply = action()
-            receipt = {"reply": reply, "delivered": False}
+            output = action()
+            if isinstance(output, str):
+                receipt = {"reply": output, "delivered": False}
+            else:
+                messages = output["messages"]
+                receipt = {
+                    "reply": messages[0]["text"],
+                    "delivered": False,
+                    "messages": messages,
+                    "delivered_count": 0,
+                }
             transaction.create(reference, receipt)
             return receipt
 
@@ -413,6 +472,17 @@ class FirestoreDatabase:
 
     def mark_update_delivered(self, update_id: int) -> None:
         self.updates.document(str(update_id)).update({"delivered": True})
+
+    def mark_update_message_delivered(self, update_id: int, delivered_count: int) -> None:
+        reference = self.updates.document(str(update_id))
+        snapshot = reference.get()
+        if not snapshot.exists:
+            return
+        messages = snapshot.get("messages") or []
+        reference.update({
+            "delivered_count": delivered_count,
+            "delivered": delivered_count >= len(messages),
+        })
 
     def create_course_session(self, session: ProgressSession, *, create_tasks: bool = False) -> ProgressSession:
         """Create once by deterministic session id; retries return the existing value."""

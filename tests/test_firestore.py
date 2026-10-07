@@ -42,6 +42,12 @@ class FakeDocument:
     def update(self, values):
         self.client.data[self.key].update(values)
 
+    def set(self, values):
+        self.client.data[self.key] = dict(values)
+
+    def delete(self):
+        self.client.data.pop(self.key, None)
+
 
 class FakeQuery:
     def __init__(self, collection, field_filter):
@@ -300,6 +306,33 @@ def test_firestore_position_is_resolved_inside_receipt_transaction(monkeypatch):
     remaining = service.list_open()
     assert [task["id"] for task in remaining] == [later["id"]]
     assert all(task["id"] != earlier["id"] for task in remaining)
+
+
+def test_firestore_persists_pending_edits_aliases_and_multi_message_progress(monkeypatch):
+    db = database(monkeypatch)
+    now = datetime(2026, 10, 7, 9, tzinfo=TZ)
+    db.save_pending_task_edit(700, 9, 2, "rename it", now)
+    assert db.get_pending_task_edit(700) == {
+        "update_id": 700,
+        "task_id": 9,
+        "position": 2,
+        "instruction": "rename it",
+        "created_at": now.isoformat(),
+    }
+    db.save_tag_alias("computer-architecture", "CA")
+    assert db.list_tag_aliases() == {"computer-architecture": "CA"}
+    messages = [
+        {"text": "Updated", "parse_mode": "HTML"},
+        {"text": "Tasks", "parse_mode": "HTML"},
+    ]
+    receipt = db.process_update(701, lambda: {"messages": messages})
+    assert receipt["delivered_count"] == 0
+    db.mark_update_message_delivered(701, 1)
+    assert db.get_update(701)["delivered"] is False
+    db.mark_update_message_delivered(701, 2)
+    assert db.get_update(701)["delivered"] is True
+    db.delete_pending_task_edit(700)
+    assert db.get_pending_task_edit(700) is None
 
 
 def test_firestore_collection_prefix_is_validated(monkeypatch):

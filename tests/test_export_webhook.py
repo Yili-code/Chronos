@@ -48,7 +48,7 @@ def test_missing_export_returns_help_without_generation(system, monkeypatch):
     response = client.post("/telegram/webhook", json=request_payload(),
                            headers={"X-Telegram-Bot-Api-Secret-Token": "test-hook"})
     assert response.status_code == 200
-    assert "找不到" in bot.send_message.call_args.args[1]
+    assert "No exportable note was found" in bot.send_message.call_args.args[1]
     sender.assert_not_awaited()
     main.ai.parse.assert_not_awaited()
 

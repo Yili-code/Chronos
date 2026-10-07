@@ -170,7 +170,7 @@ class ExternalAI:
         parsed = await self._generate_output(prompt, text, schema, TaskOutput, "task")
         if parsed.due_at is not None:
             if parsed.due_at.utcoffset() is None:
-                raise AIError("Gemini returned an invalid response. No task was changed; rephrase the request.")
+                raise AIError("The AI service returned an invalid response. No task was changed; rephrase the request.")
             parsed.due_at = parsed.due_at.astimezone(self.settings.tz)
         return ParsedTask(parsed.title, parsed.due_at, parsed.project)
 
@@ -183,7 +183,7 @@ class ExternalAI:
             "progress summary": "No progress summary was created",
         }[subject]
         if not config.gemini_api_key:
-            raise AIError("Gemini is not configured. Set CHRONOS_GEMINI_API_KEY.")
+            raise AIError("The AI service is not configured. Contact the service owner.")
         url = f"{config.gemini_api_base.rstrip('/')}/models/{config.gemini_model}:generateContent"
         request_body = {
             "systemInstruction": {"parts": [{"text": prompt}]},
@@ -203,24 +203,26 @@ class ExternalAI:
             content = response.json()["candidates"][0]["content"]["parts"][0]["text"]
             parsed = output_model.model_validate(json.loads(content))
         except (TimeoutError, httpx.TimeoutException):
-            raise AIError(f"Gemini timed out after automatic retries. {no_change}; try again later.") from None
+            logger.warning("Gemini request timed out after automatic retries")
+            raise AIError(f"The AI service is temporarily unavailable. {no_change}; try again later.") from None
         except httpx.HTTPStatusError as error:
             status = error.response.status_code
             if status in {401, 403}:
-                message = f"Gemini authentication failed. Check the API key and permissions; {no_change.lower()}."
+                message = f"The AI service is unavailable because of a configuration error. {no_change}."
             elif status == 404:
-                message = f"The configured Gemini model is unavailable. Check the model setting; {no_change.lower()}."
-            elif status == 429:
-                message = f"Gemini is rate-limited or out of quota after automatic retries. {no_change}."
-            elif status in {500, 502, 503, 504}:
-                message = f"Gemini is temporarily busy after automatic retries. {no_change}; try again later."
+                message = f"The configured AI model is unavailable. {no_change}."
+            elif status in RETRYABLE_STATUS_CODES:
+                message = f"The AI service is temporarily unavailable. {no_change}; try again later."
             else:
-                message = f"Gemini rejected the request (HTTP {status}); {no_change.lower()}."
+                message = f"The AI service rejected the request. {no_change}."
+            logger.warning("Gemini request failed with HTTP %s", status)
             raise AIError(message) from None
         except httpx.TransportError:
-            raise AIError(f"Gemini could not be reached after automatic retries. {no_change}.") from None
+            logger.warning("Gemini transport failed after automatic retries")
+            raise AIError(f"The AI service is temporarily unavailable. {no_change}; try again later.") from None
         except (ValueError, ValidationError, KeyError, IndexError, TypeError):
-            raise AIError(f"Gemini returned an invalid response. {no_change}; rephrase the request.") from None
+            logger.warning("Gemini returned an invalid structured response")
+            raise AIError(f"The AI service returned an invalid response. {no_change}; rephrase the request.") from None
         return parsed
 
     async def _post_with_retry(self, client: httpx.AsyncClient, url: str, **request: object) -> httpx.Response:

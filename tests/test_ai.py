@@ -138,12 +138,12 @@ def test_missing_configuration():
 
 @pytest.mark.parametrize(("status", "message", "attempts"), [
     (400, "rejected", 1),
-    (401, "authentication failed", 1),
-    (403, "authentication failed", 1),
+    (401, "configuration error", 1),
+    (403, "configuration error", 1),
     (404, "model is unavailable", 1),
-    (429, "rate-limited", 3),
-    (500, "temporarily busy", 3),
-    (503, "temporarily busy", 3),
+    (429, "temporarily unavailable", 3),
+    (500, "temporarily unavailable", 3),
+    (503, "temporarily unavailable", 3),
 ])
 def test_provider_error_is_classified_and_safe(monkeypatch, status, message, attempts):
     calls = 0
@@ -157,6 +157,7 @@ def test_provider_error_is_classified_and_safe(monkeypatch, status, message, att
         asyncio.run(ExternalAI(config()).parse("新增工作"))
     assert calls == attempts
     assert "test-secret" not in str(error.value)
+    assert "Gemini" not in str(error.value)
 
 
 def test_transient_provider_error_recovers(monkeypatch):
@@ -180,7 +181,7 @@ def test_timeout(monkeypatch):
         raise httpx.ReadTimeout("timeout", request=request)
     skip_retry_wait(monkeypatch)
     mock_provider(monkeypatch, handler)
-    with pytest.raises(AIError, match="timed out"):
+    with pytest.raises(AIError, match="temporarily unavailable"):
         asyncio.run(ExternalAI(config()).parse("新增工作"))
     assert calls == 3
 
@@ -193,7 +194,7 @@ def test_transport_error_is_retried(monkeypatch):
         raise httpx.ConnectError("test-secret", request=request)
     skip_retry_wait(monkeypatch)
     mock_provider(monkeypatch, handler)
-    with pytest.raises(AIError, match="could not be reached") as error:
+    with pytest.raises(AIError, match="temporarily unavailable") as error:
         asyncio.run(ExternalAI(config()).parse("新增工作"))
     assert calls == 3
     assert "test-secret" not in str(error.value)
