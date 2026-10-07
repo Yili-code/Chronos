@@ -5,7 +5,7 @@ from html import escape
 from zoneinfo import ZoneInfo
 
 from .db import Database
-from .task_timing import normalize_timing, timing_details
+from .task_timing import normalize_timing, timing_details, urgent_deadline
 
 
 @dataclass
@@ -256,13 +256,13 @@ def canonical_project(value: str) -> str:
     return re.sub(r"-+", "-", re.sub(r"[^a-z0-9]+", "-", value.casefold())).strip("-")
 
 
-def format_tasks(tasks: list[dict], tz, project_aliases: dict[str, str] | None = None) -> str:
+def format_tasks(tasks: list[dict], tz, project_aliases: dict[str, str] | None = None, *, now: datetime | None = None) -> str:
     if not tasks:
         return "No open tasks."
     lines = ["<b>Tasks</b>"]
     for position, task in enumerate(tasks, start=1):
         lines.append("")
-        lines.extend(format_task_block(task, tz, position=position, project_aliases=project_aliases))
+        lines.extend(format_task_block(task, tz, position=position, project_aliases=project_aliases, now=now))
     return "\n".join(lines)
 
 
@@ -272,9 +272,11 @@ def format_task_block(
     *,
     position: int | None = None,
     project_aliases: dict[str, str] | None = None,
+    now: datetime | None = None,
 ) -> list[str]:
     prefix = f"{position}. " if position is not None else ""
-    lines = [f"{prefix}<b>{escape(task['title'])}</b>"]
+    alert = "🚨 " if urgent_deadline(task, tz, now=now) else ""
+    lines = [f"{prefix}{alert}<b>{escape(task['title'])}</b>"]
     for label, value in timing_details(task, tz):
         lines.append(f"<b>{label}:</b> {escape(value)}")
     if task.get("project"):
@@ -283,11 +285,11 @@ def format_task_block(
     return lines
 
 
-def format_task(task: dict, tz, *, html: bool = False) -> str:
+def format_task(task: dict, tz, *, html: bool = False, now: datetime | None = None) -> str:
     title = _format_course_task_title(task["title"], html=html)
     if title is None:
         title = escape(task["title"]) if html else task["title"]
-    parts = [title]
+    parts = [("🚨 " if urgent_deadline(task, tz, now=now) else "") + title]
     for label, value in timing_details(task, tz):
         parts.append(f"{label}: {escape(value) if html else value}")
     if task.get("project"):

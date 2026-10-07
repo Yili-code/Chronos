@@ -46,7 +46,7 @@ def test_dynamic_positions_hide_permanent_ids(tmp_path):
     earlier = tasks.create("Earlier", datetime(2026, 9, 19, 10, tzinfo=TZ), "Chronos")
 
     assert [task["id"] for task in tasks.list_open()] == [earlier["id"], later["id"], no_due["id"]]
-    assert format_tasks(tasks.list_open(), TZ) == (
+    assert format_tasks(tasks.list_open(), TZ, now=NOW) == (
         "<b>Tasks</b>\n\n"
         "1. <b>Earlier</b>\n"
         "<b>Due:</b> 2026-09-19 10:00\n"

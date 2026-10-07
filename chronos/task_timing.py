@@ -1,5 +1,5 @@
 """Task time roles. Date-only values never imply a time of day."""
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -56,3 +56,19 @@ def timing_details(task: dict, tz) -> list[tuple[str, str]]:
     if timing.get("uncertain"):
         result.append(("Time needs clarification", timing["uncertain"]))
     return result
+
+
+def urgent_deadline(task: dict, tz, *, now: datetime | None = None) -> bool:
+    """Flag open deadlines less than three days away, including overdue ones."""
+    if task.get("status") == "done" or task.get("completed_at"):
+        return False
+    deadline = task.get("due_at") or (task.get("timing") or {}).get("due_date")
+    if not deadline:
+        return False
+    current = (now or datetime.now(tz)).astimezone(tz)
+    if len(deadline) == 10:
+        return (date.fromisoformat(deadline) - current.date()).days < 3
+    due = datetime.fromisoformat(deadline)
+    if due.tzinfo is None:
+        due = due.replace(tzinfo=tz)
+    return due.astimezone(timezone.utc) - current.astimezone(timezone.utc) < timedelta(days=3)

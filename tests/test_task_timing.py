@@ -163,3 +163,30 @@ def test_invalid_title_operations_fail_without_silent_changes(monkeypatch, inval
         {"content": {"parts": [{"text": json.dumps(operations)}]}}]}))
     with pytest.raises(AIError, match="invalid response"):
         asyncio.run(ExternalAI(config()).edit({"title": "Original", "due_at": None, "project": None}, "rename it", NOW))
+
+
+@pytest.mark.parametrize("deadline,expected", [
+    ("2026-10-10T10:00:00+08:00", False),
+    ("2026-10-10T09:59:59+08:00", True),
+    ("2026-10-11T10:00:00+08:00", False),
+    ("2026-10-07T10:00:00+08:00", True),
+    ("2026-10-06T10:00:00+08:00", True),
+    ("2026-10-10T02:00:00Z", False),
+    ("2026-10-09", True), ("2026-10-10", False),
+])
+def test_urgent_deadline_boundaries(deadline, expected):
+    from chronos.task_timing import urgent_deadline
+    task = {"title": "Submit", "due_at": deadline} if len(deadline) > 10 else {
+        "title": "Submit", "timing": {"due_date": deadline}}
+    assert urgent_deadline(task, TZ, now=NOW) is expected
+    assert ("🚨" in format_tasks([task], TZ, now=NOW)) is expected
+
+
+def test_only_open_deadlines_get_alert():
+    from chronos.task_timing import urgent_deadline
+    from chronos.tasks import format_task
+    for task in ({"timing": {"event": "2026-10-07", "scheduled": "2026-10-07"}},
+                 {"due_at": None}, {"status": "done", "due_at": "2026-10-07"}):
+        assert not urgent_deadline(task, TZ, now=NOW)
+    task = {"title": "A & B", "due_at": "2026-10-08"}
+    assert format_task(task, TZ, html=True, now=NOW).startswith("🚨 A &amp; B")

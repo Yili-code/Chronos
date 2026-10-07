@@ -249,7 +249,7 @@ def test_webhook_auth_and_commands(system):
     assert bot.send_message.await_args_list[-2].args[1].startswith('<b>Updated · Task 1</b>')
     assert bot.send_message.await_args_list[-1].args[1] == (
         '<b>Tasks</b>\n\n'
-        '1. <b>Finalize roadmap</b>\n'
+        '1. 🚨 <b>Finalize roadmap</b>\n'
         '<b>Due:</b> 2026-10-03 18:00\n'
         '<b>Tag:</b> #Chronos')
 
@@ -375,7 +375,7 @@ def test_persistence_order_and_reschedule(tmp_path):
     db.initialize()
     reopened = TaskService(Database(db.path), tz)
     assert [x['id'] for x in reopened.list_open()] == [earlier['id'], later['id'], no_due['id']]
-    formatted = format_tasks(reopened.list_open(), tz)
+    formatted = format_tasks(reopened.list_open(), tz, now=datetime(2026, 9, 14, tzinfo=tz))
     assert formatted.startswith('<b>Tasks</b>\n\n1. <b>較早</b>\n<b>Due:</b> 2026-09-19 10:00')
     assert '#Chronos' in formatted
     assert reopened.complete(earlier['id'])
