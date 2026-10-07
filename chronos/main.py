@@ -430,7 +430,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             if update.edited_message is not None:
                 action = lambda: "編輯舊訊息不會重新執行郵件動作，請傳送新指令。"
             elif mail_callback:
-                match = re.fullmatch(r"mail:(trash|task|keep|read):([A-Za-z0-9_-]{1,32})", update.callback_query.data or "")
+                match = re.fullmatch(r"mail:(trash|task|keep|read|(?:confirm|edit|cancel)_[a-f0-9]{8}):([A-Za-z0-9_-]{1,32})", update.callback_query.data or "")
                 binding = mail.binding(chat_id, source_message.message_id)
                 if not match or not binding or binding["mail_id"] != match.group(2):
                     raise HTTPException(status_code=403, detail="Mail callback is not bound to this card")
@@ -452,9 +452,26 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                 raise HTTPException(status_code=502, detail="Mail action completed; Telegram card deletion pending")
         if not receipt["delivered"]:
             if receipt["reply"] != "已移到垃圾桶。":
-                result = await telegram.send_message(chat_id, receipt["reply"])
+                markup = None
+                is_proposal = receipt["reply"].startswith("新增待辦？\n\n")
+                is_edit = receipt["reply"] == "請回覆這則訊息，輸入新的待辦內容。"
+                identifier = (mail.binding(chat_id, source_message.message_id)["mail_id"] if mail_callback else mail_binding["mail_id"])
+                if is_proposal:
+                    import hashlib
+                    title = receipt["reply"].split("\n\n", 1)[1]
+                    token = hashlib.sha256(title.encode()).hexdigest()[:8]
+                    markup = {"inline_keyboard": [[{"text": label, "callback_data": f"mail:{action}_{token}:{identifier}"}
+                              for label, action in (("Yes", "confirm"), ("Edit", "edit"), ("Cancel", "cancel"))]]}
+                elif is_edit:
+                    markup = {"force_reply": True, "input_field_placeholder": "輸入待辦內容"}
+                result = await telegram.send_message(chat_id, receipt["reply"], reply_markup=markup)
                 if not result.get("ok"):
                     raise HTTPException(status_code=502, detail="Mail action reply pending")
+                if is_proposal or is_edit:
+                    message_id = result.get("result", {}).get("message_id")
+                    if not message_id:
+                        raise HTTPException(status_code=502, detail="Mail task prompt ID missing")
+                    mail.patch(f"telegram:{chat_id}:{message_id}", mail_id=identifier)
             db.mark_update_delivered(update_id)
         if update.callback_query:
             result = await telegram.answer_callback_query(update.callback_query.id)

@@ -322,6 +322,43 @@ class MailWorkflow:
         action = {"刪除": "trash", "刪掉": "trash", "移到垃圾桶": "trash", "delete": "trash",
                   "保留": "keep", "已讀": "read", "標為已讀": "read", "新增任務": "task",
                   "加到tasks": "task", "加到 tasks": "task"}.get(instruction.lower(), instruction.lower())
+        task_action = re.fullmatch(r"(confirm|edit|cancel)_([a-f0-9]{8})", action)
+        if action == "task" or task_action or (saved.get("draft_edit") and action not in {"trash", "read", "keep", "archive", "封存"}):
+            if saved.get("task_id") is not None:
+                return lambda: f"這封信已建立任務 #{saved['task_id']}，不重複新增。"
+            if task_action:
+                kind, token = task_action.groups()
+                def apply_draft():
+                    current = self.get("message:" + identifier) or {}
+                    if current.get("task_id") is not None:
+                        return f"這封信已建立任務 #{current['task_id']}，不重複新增。"
+                    if current.get("draft_token") != token or not current.get("draft_title"):
+                        return "這個確認已失效，請重新按 Task。"
+                    if kind == "cancel":
+                        self.patch("message:" + identifier, draft_title=None, draft_token=None, draft_edit=False)
+                        return "已取消，未新增待辦。"
+                    if kind == "edit":
+                        self.patch("message:" + identifier, draft_edit=True)
+                        return "請回覆這則訊息，輸入新的待辦內容。"
+                    if current.get("draft_edit"):
+                        return "請先輸入編輯後的待辦內容，再確認。"
+                    title = current["draft_title"]
+                    def create_confirmed(old):
+                        if old.get("task_id") is not None:
+                            return old
+                        task = self.db.create_task(title, None, None, now or datetime.now(self.settings.tz),
+                            {"source_text": f"Gmail: https://mail.google.com/mail/u/{self.settings.gmail_account}/#all/{identifier}"})
+                        return {**old, "task_id": task["id"], "draft_edit": False, "draft_token": None}
+                    state = self.db.mutate_mail_state(self.key("message:" + identifier), create_confirmed)
+                    return f"已新增任務 #{state['task_id']}：{title}"
+                return apply_draft
+            title = ("Read email: " + display_text(saved["mail"]["subject"])) if action == "task" else instruction
+            title = clean(title, 200)
+            token = hashlib.sha256(title.encode()).hexdigest()[:8]
+            def propose():
+                self.patch("message:" + identifier, draft_title=title, draft_token=token, draft_edit=False)
+                return "新增待辦？\n\n" + title
+            return propose
         if action in {"封存", "archive"} or (action == "keep" and saved.get("backlog")):
             await self.gmail.verify_account()
             await self.gmail.archive(identifier)

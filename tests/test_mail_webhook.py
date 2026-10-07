@@ -158,3 +158,24 @@ def test_archive_and_read_remove_cards_only_after_success(system, monkeypatch):
     gmail.mark_read.assert_awaited_once_with("ab12")
     assert bot.request.await_count == 2
     assert all(c.args == ("deleteMessage", {"chat_id": 123, "message_id": 500}) for c in bot.request.call_args_list)
+
+
+def test_task_confirmation_buttons_and_edit_reply(system, monkeypatch):
+    client, tasks, bot, config = system
+    enable(config, monkeypatch)
+    bot.send_message.return_value = {"ok": True, "result": {"message_id": 700}}
+    assert post(client, 9200, callback="mail:task:ab12").status_code == 200
+    assert not tasks.list_open()
+    buttons = bot.send_message.call_args.kwargs["reply_markup"]["inline_keyboard"][0]
+    assert [b["text"] for b in buttons] == ["Yes", "Edit", "Cancel"]
+    edit = buttons[1]["callback_data"]
+    bot.send_message.return_value = {"ok": True, "result": {"message_id": 701}}
+    assert post(client, 9201, callback=edit, card=700).status_code == 200
+    assert bot.send_message.call_args.kwargs["reply_markup"]["force_reply"]
+    bot.send_message.return_value = {"ok": True, "result": {"message_id": 702}}
+    assert post(client, 9202, text="Investigate failed deployment", card=701).status_code == 200
+    yes = bot.send_message.call_args.kwargs["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+    for _ in range(2):
+        assert post(client, 9203, callback=yes, card=702).status_code == 200
+    assert len(tasks.list_open()) == 1
+    assert tasks.list_open()[0]["title"] == "Investigate failed deployment"

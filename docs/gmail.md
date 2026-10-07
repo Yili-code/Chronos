@@ -83,3 +83,5 @@ Telegram 傳送前也保存紀錄。遇到 timeout 或服務錯誤而無法確�
 `CHRONOS_GMAIL_DISCARD_ACCOUNT_SECURITY_AFTER` 是使用者啟用規則的 Unix 秒數，預設 0 關閉。僅處理 Gmail 收件時間不早於此時間的未讀安全通知（新裝置／異常登入／密碼已變更等主旨），移到垃圾桶並回報原因。既有歷史郵件不受影響；白名單、星號、往返信與套件漏洞通知仍保留。依既有整理排程執行，不是即時 Gmail 規則。
 
 點選 Trash、Archive、Read 或回覆對應指令後，Gmail 操作成功才會移除原 Telegram 卡片。刪除卡片失敗可重試，不重複執行 Gmail 操作。
+
+Task 按鈕先顯示 `Read email:〈主旨〉` 與 Yes／Edit／Cancel；Yes 才建立待辦，Edit 可回覆自訂標題後重新確認，Cancel 不建立。按 Trash 成功只移除卡片，不另發成功確認訊息。
