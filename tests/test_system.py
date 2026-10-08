@@ -92,6 +92,31 @@ def test_course_reply_preserves_evidence_and_stores_english_review_label(system,
     summary.assert_awaited_once_with('第二章到43頁左右')
 
 
+def test_no_class_reply_skips_ai_review_task_and_material_poll(system, monkeypatch):
+    from chronos.course_tracking import COURSE_SCHEDULE, ProgressReportKind, new_session
+    client, service, bot, config = system
+    today = datetime.now(config.tz).date()
+    session = new_session(COURSE_SCHEDULE[4], today, 701)
+    main.db.create_course_session(session, create_tasks=True)
+    summary = AsyncMock(return_value='No class today')
+    monkeypatch.setattr(main.ai, 'summarize_progress', summary)
+    payload = {'update_id': 903, 'message': {'message_id': 702,
+               'chat': {'id': 123}, 'text': '今天沒上課',
+               'reply_to_message': {'message_id': 701}}}
+    headers = {'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}
+
+    assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 200
+
+    saved = main.db.get_course_session(session.session_id)
+    assert saved.report_kind is ProgressReportKind.NO_PROGRESS
+    assert service.list_open() == []
+    assert main.db.list_study_polls() == []
+    summary.assert_not_awaited()
+    sent = bot.send_message.await_args.args[1]
+    assert '沒有新增複習代辦' in sent
+    assert 'No class today' not in sent
+
+
 def test_study_scheduler_endpoint_requires_secret_and_is_disabled_by_default(system):
     client, service, bot, config = system
     assert client.post('/internal/study').status_code == 403

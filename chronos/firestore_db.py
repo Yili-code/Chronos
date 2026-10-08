@@ -9,7 +9,7 @@ from typing import Callable
 from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
-from .course_tracking import ProgressSession, accept_reply, mark_missed_at_day_end
+from .course_tracking import ProgressReportKind, ProgressSession, accept_reply, mark_missed_at_day_end
 from .course_tracking import progress_followup
 from .course_tracking_store import session_from_firestore, session_to_firestore
 from .note_record import NoteRecord
@@ -561,7 +561,7 @@ class FirestoreDatabase:
             if answered is None:
                 return "這堂課已記錄或已結束，未變更進度。"
             poll = None
-            if update_id is not None:
+            if update_id is not None and answered.report_kind is not ProgressReportKind.NO_PROGRESS:
                 from .study_poll_plan import COURSE_SOURCE_IDS, reply_request
                 from .study_poll_queue import initial_poll_state
                 request = reply_request(COURSE_SOURCE_IDS[session.course_key], update_id, received_at)
@@ -570,20 +570,23 @@ class FirestoreDatabase:
                 if not existing.exists:
                     poll = (ref, initial_poll_state(request))
             review = None
-            title, kind, completion = progress_followup(answered, review_summary)
+            followup = progress_followup(answered, review_summary)
             if session.survey_task_id is not None:
                 # Read the linked task before create_task writes its counter.
                 task_ref = self.tasks.document(str(session.survey_task_id))
                 survey = task_ref.get(transaction=transaction)
                 now = datetime.now().astimezone()
-                review = self.create_task(
-                    title,
-                    None, session.course_name, now)
+                if followup is not None:
+                    title, kind, completion = followup
+                    review = self.create_task(title, None, session.course_name, now)
                 if survey.exists and survey.get("status") == "open":
                     transaction.update(task_ref, {"status": "done", "completed_at": now.isoformat()})
             transaction.update(snapshot.reference, session_to_firestore(answered))
             if poll is not None:
                 transaction.set(*poll)
+            if answered.report_kind is ProgressReportKind.NO_PROGRESS:
+                return (f"已記錄{session.course_name}（{session.class_date:%m/%d}）今日無課或無進度。"
+                        "沒有新增複習代辦。")
             if review is not None:
                 return (f"已記錄{session.course_name}的進度，填寫進度代辦已完成。\n"
                         f"新增{kind}代辦。\n"

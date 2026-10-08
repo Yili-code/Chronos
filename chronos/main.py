@@ -557,8 +557,8 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                 if (session is not None and session.class_date == received_date
                         and session.survey_task_id is not None
                         and session.status.value not in {"answered", "missed"}):
-                    from .course_tracking import progress_is_unknown
-                    if not progress_is_unknown(text):
+                    from .course_tracking import progress_is_no_progress, progress_is_unknown
+                    if not progress_is_unknown(text) and not progress_is_no_progress(text):
                         try:
                             review_summary = await ai.summarize_progress(text)
                         except (AIError, ValueError):

@@ -1,6 +1,7 @@
 """Bridge observed activity metadata to explicitly labelled selection prompts."""
 import hashlib
 from datetime import datetime, timedelta
+from .course_tracking import ProgressReportKind
 from .study_materials import MaterialSelection, PdfMaterial, course_catalog
 from .selection_delivery import send_selection
 
@@ -13,7 +14,8 @@ async def prompt_observed_catalogs(db, telegram, observations, *, owner_chat_id,
         if len(results) >= limit:
             break
         course_id = course_mapping.get(session.course_key)
-        if not course_id or not session.reported_progress:
+        if (not course_id or not session.reported_progress
+                or session.report_kind is ProgressReportKind.NO_PROGRESS):
             continue
         key = hashlib.sha256(f"catalog-v1:{owner_chat_id}:{session.session_id}".encode()).hexdigest()[:32]
         if db.get_material_selection(key) is not None:

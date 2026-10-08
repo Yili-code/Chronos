@@ -6,7 +6,7 @@ from dataclasses import asdict
 from datetime import date
 from typing import Protocol
 
-from .course_tracking import ProgressSession, ProgressStatus
+from .course_tracking import ProgressReportKind, ProgressSession, ProgressStatus, classify_progress
 
 
 class CourseSessionStore(Protocol):
@@ -42,10 +42,15 @@ def session_to_firestore(session: ProgressSession) -> dict:
     data = asdict(session)
     data["class_date"] = session.class_date.isoformat()
     data["status"] = session.status.value
+    data["report_kind"] = session.report_kind.value if session.report_kind is not None else None
     return data
 
 
 def session_from_firestore(data: dict) -> ProgressSession:
+    reported_progress = data.get("reported_progress")
+    raw_kind = data.get("report_kind")
+    report_kind = (ProgressReportKind(str(raw_kind)) if raw_kind is not None else
+                   classify_progress(str(reported_progress)) if reported_progress else None)
     return ProgressSession(
         session_id=str(data["session_id"]),
         course_key=str(data["course_key"]),
@@ -54,7 +59,8 @@ def session_from_firestore(data: dict) -> ProgressSession:
         prompt_message_id=int(data["prompt_message_id"]),
         status=ProgressStatus(str(data["status"])),
         reminder_count=int(data["reminder_count"]),
-        reported_progress=data.get("reported_progress"),
+        report_kind=report_kind,
+        reported_progress=reported_progress,
         survey_task_id=data.get("survey_task_id"),
         reply_message_id=(int(data["reply_message_id"]) if data.get("reply_message_id") is not None else None),
     )

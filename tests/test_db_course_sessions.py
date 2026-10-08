@@ -26,3 +26,23 @@ def test_late_reply_expires_session_with_update_receipt(tmp_path):
     assert db.get_course_session(session.session_id).status is ProgressStatus.MISSED
     assert db.get_course_session(session.session_id).reported_progress is None
     assert db.get_update(202) is not None
+
+
+def test_initialize_migrates_existing_course_sessions_with_report_kind(tmp_path):
+    db = Database(tmp_path / "chronos.db")
+    db.initialize()
+    with db.connect() as connection:
+        connection.execute("ALTER TABLE course_sessions RENAME TO course_sessions_old")
+        connection.execute("""CREATE TABLE course_sessions (
+            session_id TEXT PRIMARY KEY, course_key TEXT NOT NULL, course_name TEXT NOT NULL,
+            class_date TEXT NOT NULL, prompt_message_id INTEGER NOT NULL, status TEXT NOT NULL,
+            reminder_count INTEGER NOT NULL DEFAULT 0, reported_progress TEXT,
+            reply_message_id INTEGER, survey_task_id INTEGER
+        )""")
+        connection.execute("DROP TABLE course_sessions_old")
+
+    db.initialize()
+
+    with db.connect() as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(course_sessions)")}
+    assert "report_kind" in columns

@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from chronos.course_tracking import COURSE_SCHEDULE, TAIPEI, new_session
-from chronos.course_tracking import progress_is_unknown
+from chronos.course_tracking import COURSE_SCHEDULE, ProgressReportKind, TAIPEI, new_session
+from chronos.course_tracking import progress_is_no_progress, progress_is_unknown
 from chronos.db import Database
 from chronos.study_scheduler import tick_study
 from test_firestore import database as fake_firestore
@@ -86,6 +86,39 @@ def test_unknown_scope_is_recognized(text):
 @pytest.mark.parametrize("text", ["第三章有些地方不懂", "第 20 頁，不確定考不考", "不知道第三章的證明怎麼做", "Chapter 3, not sure I understand it"])
 def test_uncertainty_about_understanding_keeps_known_scope(text):
     assert not progress_is_unknown(text)
+
+
+@pytest.mark.parametrize("text", [
+    "今天沒上課", "今天沒有進度。", "停課", "No class today", "Class was cancelled today",
+])
+def test_no_progress_reply_is_recognized(text):
+    assert progress_is_no_progress(text)
+
+
+@pytest.mark.parametrize("text", [
+    "今天上課沒有進度壓力", "課程取消後改成複習第三章", "No class today, so I reviewed chapter 3",
+])
+def test_no_progress_phrases_with_real_scope_are_not_suppressed(text):
+    assert not progress_is_no_progress(text)
+
+
+def test_no_class_reply_completes_survey_without_review_or_poll(db):
+    session = new_session(COURSE_SCHEDULE[0], date(2026, 10, 5), 501)
+    stored = db.create_course_session(session, create_tasks=True)
+    receipt = db.process_update(29, lambda: db.record_course_reply(
+        501, 502, "今天沒上課", local_date=date(2026, 10, 5),
+        update_id=29, received_at=datetime(2026, 10, 5, 12, 11, tzinfo=TAIPEI),
+        review_summary="No class today",
+    ))
+
+    assert not db.list_open_tasks()
+    assert not db.list_study_polls()
+    assert "沒有新增複習代辦" in receipt["reply"]
+    saved = db.get_course_session(session.session_id)
+    assert saved.status.value == "answered"
+    assert saved.report_kind is ProgressReportKind.NO_PROGRESS
+    assert saved.reported_progress == "今天沒上課"
+    assert stored.survey_task_id is not None
 
 
 def test_unknown_reply_creates_confirmation_task_once(db):

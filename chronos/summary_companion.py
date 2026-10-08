@@ -1,7 +1,7 @@
 """One bounded local worker pass over durable confirmed selections."""
 from .selection_store import decode
 from .local_summary import generate_local_summary
-from .course_tracking import ProgressStatus
+from .course_tracking import ProgressReportKind, ProgressStatus
 from .study_delivery import StudyDeliveryLedger
 from .telegram import TelegramError
 
@@ -50,6 +50,7 @@ async def run_summary_pass(db, generator, telegram, pdf_store, *, owner_chat_id,
         selection = decode(state["selection"])
         session = db.get_course_session(selection.session_id)
         if (session is None or session.status is not ProgressStatus.ANSWERED
+                or session.report_kind is ProgressReportKind.NO_PROGRESS
                 or session.reported_progress != selection.reported_progress
                 or course_mapping.get(session.course_key) != selection.course_id):
             outcome = "context_mismatch"

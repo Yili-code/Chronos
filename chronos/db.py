@@ -8,7 +8,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Callable, Iterator
 
-from .course_tracking import ProgressSession, accept_reply, mark_missed_at_day_end
+from .course_tracking import ProgressReportKind, ProgressSession, accept_reply, mark_missed_at_day_end
 from .course_tracking import progress_followup
 from .course_tracking_store import session_from_firestore, session_to_firestore
 from .note_record import NoteRecord
@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS course_sessions (
     prompt_message_id INTEGER NOT NULL,
     status TEXT NOT NULL,
     reminder_count INTEGER NOT NULL DEFAULT 0,
+    report_kind TEXT,
     reported_progress TEXT,
     reply_message_id INTEGER
 );
@@ -120,6 +121,8 @@ class Database:
             columns = {row[1] for row in connection.execute("PRAGMA table_info(course_sessions)")}
             if "survey_task_id" not in columns:
                 connection.execute("ALTER TABLE course_sessions ADD COLUMN survey_task_id INTEGER")
+            if "report_kind" not in columns:
+                connection.execute("ALTER TABLE course_sessions ADD COLUMN report_kind TEXT")
             update_columns = {row[1] for row in connection.execute("PRAGMA table_info(telegram_updates)")}
             if "messages_json" not in update_columns:
                 connection.execute("ALTER TABLE telegram_updates ADD COLUMN messages_json TEXT")
@@ -593,11 +596,11 @@ class Database:
             connection.execute(
                 """INSERT OR IGNORE INTO course_sessions
                 (session_id, course_key, course_name, class_date, prompt_message_id,
-                 status, reminder_count, reported_progress, reply_message_id, survey_task_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                 status, reminder_count, report_kind, reported_progress, reply_message_id, survey_task_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 tuple(data[field] for field in (
                     "session_id", "course_key", "course_name", "class_date",
-                    "prompt_message_id", "status", "reminder_count",
+                    "prompt_message_id", "status", "reminder_count", "report_kind",
                     "reported_progress", "reply_message_id", "survey_task_id",
                 )),
             )
@@ -629,21 +632,24 @@ class Database:
                                     reply_message_id=message_id, text=text)
             if answered is None:
                 return "這堂課已記錄或已結束，未變更進度。"
-            if update_id is not None:
+            if update_id is not None and answered.report_kind is not ProgressReportKind.NO_PROGRESS:
                 from .study_poll_plan import COURSE_SOURCE_IDS, reply_request
                 from .study_poll_queue import initial_poll_state
                 request = reply_request(COURSE_SOURCE_IDS[session.course_key], update_id, received_at)
                 connection.execute('INSERT OR IGNORE INTO study_poll_jobs VALUES (?, ?)',
                                    (request.key,json.dumps(initial_poll_state(request))))
             review = None
-            title, kind, completion = progress_followup(answered, review_summary)
+            followup = progress_followup(answered, review_summary)
             if session.survey_task_id is not None:
                 now = datetime.now().astimezone()
                 self.complete_task(session.survey_task_id, now)
-                review = self.create_task(
-                    title,
-                    None, session.course_name, now)
+                if followup is not None:
+                    title, kind, completion = followup
+                    review = self.create_task(title, None, session.course_name, now)
             self.save_course_session(answered)
+            if answered.report_kind is ProgressReportKind.NO_PROGRESS:
+                return (f"已記錄{session.course_name}（{session.class_date:%m/%d}）今日無課或無進度。"
+                        "沒有新增複習代辦。")
             if review is not None:
                 return (f"已記錄{session.course_name}的進度，填寫進度代辦已完成。\n"
                         f"新增{kind}代辦。\n"
@@ -677,11 +683,11 @@ class Database:
         with self.connect() as connection:
             cursor = connection.execute(
                 """UPDATE course_sessions SET course_key=?, course_name=?, class_date=?,
-                prompt_message_id=?, status=?, reminder_count=?, reported_progress=?, reply_message_id=?
+                prompt_message_id=?, status=?, reminder_count=?, report_kind=?, reported_progress=?, reply_message_id=?
                 WHERE session_id=?""",
                 tuple(data[field] for field in (
                     "course_key", "course_name", "class_date", "prompt_message_id",
-                    "status", "reminder_count", "reported_progress", "reply_message_id",
+                    "status", "reminder_count", "report_kind", "reported_progress", "reply_message_id",
                 )) + (session.session_id,),
             )
         if cursor.rowcount != 1:

@@ -26,10 +26,32 @@ class ProgressStatus(str, Enum):
     MISSED = "missed"
 
 
+class ProgressReportKind(str, Enum):
+    PROGRESS = "progress"
+    UNKNOWN_SCOPE = "unknown_scope"
+    NO_PROGRESS = "no_progress"
+
+
+def _normalized_reply(text: str) -> str:
+    normalized = unicodedata.normalize("NFKC", text).casefold()
+    return re.sub(r"[\s，。！？,.!?、'’]", "", normalized)
+
+
+def progress_is_no_progress(text: str) -> bool:
+    """Recognize only whole replies that explicitly report no class/progress."""
+    normalized = _normalized_reply(text)
+    return normalized in {
+        "今天沒上課", "今天沒有上課", "今日沒上課", "今日沒有上課", "沒上課", "沒有上課",
+        "今天停課", "今日停課", "停課", "今天沒進度", "今天沒有進度", "今日沒進度",
+        "今日沒有進度", "沒進度", "沒有進度", "noclasstoday", "therewasnoclasstoday",
+        "classwascancelledtoday", "classwascanceledtoday", "classiscancelledtoday",
+        "classiscanceledtoday", "noprogress", "noprogresstoday",
+    }
+
+
 def progress_is_unknown(text: str) -> bool:
     """Recognize only whole uncertainty replies, never keywords inside a scope."""
-    normalized = unicodedata.normalize("NFKC", text).casefold()
-    normalized = re.sub(r"[\s，。！？,.!?、'’]", "", normalized)
+    normalized = _normalized_reply(text)
     if normalized in {"idontknow", "imnotsure", "notsure", "unknown", "不知道", "不清楚", "不確定", "忘了"}:
         return True
     return re.fullmatch(
@@ -38,9 +60,20 @@ def progress_is_unknown(text: str) -> bool:
     ) is not None
 
 
-def progress_followup(session: "ProgressSession", review_summary: str | None = None) -> tuple[str, str, str]:
+def classify_progress(text: str) -> ProgressReportKind:
+    if progress_is_no_progress(text):
+        return ProgressReportKind.NO_PROGRESS
+    if progress_is_unknown(text):
+        return ProgressReportKind.UNKNOWN_SCOPE
+    return ProgressReportKind.PROGRESS
+
+
+def progress_followup(session: "ProgressSession", review_summary: str | None = None) -> tuple[str, str, str] | None:
     short_date = session.class_date.strftime("%m/%d")
-    if progress_is_unknown(session.reported_progress or ""):
+    kind = session.report_kind or classify_progress(session.reported_progress or "")
+    if kind is ProgressReportKind.NO_PROGRESS:
+        return None
+    if kind is ProgressReportKind.UNKNOWN_SCOPE:
         return (f"確認{session.course_name} {short_date} 上課範圍",
                 "確認範圍", "確認範圍後")
     detail = (review_summary or session.reported_progress or "").strip()
@@ -67,9 +100,16 @@ class ProgressSession:
     prompt_message_id: int
     status: ProgressStatus
     reminder_count: int
+    report_kind: ProgressReportKind | None = None
     reported_progress: str | None = None
     reply_message_id: int | None = None
     survey_task_id: int | None = None
+
+    def __post_init__(self) -> None:
+        # Older callers and persisted records predate report_kind. Keep them
+        # semantically safe as soon as they enter the domain model.
+        if self.report_kind is None and self.reported_progress:
+            object.__setattr__(self, "report_kind", classify_progress(self.reported_progress))
 
 
 COURSE_SCHEDULE: tuple[CourseSlot, ...] = (
@@ -113,6 +153,7 @@ def accept_reply(session: ProgressSession, *, reply_to_message_id: int, reply_me
     return replace(
         session,
         status=ProgressStatus.ANSWERED,
+        report_kind=classify_progress(cleaned),
         reported_progress=cleaned,
         reply_message_id=reply_message_id,
     )
