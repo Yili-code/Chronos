@@ -1,5 +1,6 @@
 """Holiday notices from current, explicit official-calendar evidence only."""
 from datetime import datetime, timedelta
+from html import escape
 
 from .academic_calendar import CalendarEvent, day_policy
 from .calendar_snapshot import is_current
@@ -25,9 +26,9 @@ def holiday_notices(snapshot, now):
         label = "今天" if window == "today" else "明天"
         # Do not imply course-prompt suppression has been activated here.
         checked = datetime.fromisoformat(snapshot['fetched_at']).astimezone(TAIPEI)
-        text = (f"{label}（{day:%m/%d}）官方校曆列為放假／停止上課。\n"
-                f"依據：{snapshot['source_url']}\n"
-                f"校曆查核時間：{checked:%m/%d %H:%M}")
+        text = (f"{label}（{day:%m/%d}）放假。\n\n"
+                f"<b>依據</b>\n{escape(snapshot['source_url'])}\n\n"
+                f"<b>校曆查核時間</b> {checked:%m/%d %H:%M}")
         notices.append((key, text))
     return notices
 
@@ -62,8 +63,8 @@ async def tick_calendar(db, telegram, chat_id, now, *, sync_result=None):
         prior = db.get_study_delivery(f"calendar:holiday:{local.date()}:tomorrow")
         if day_policy(events, local.date()) == 'no_class' and (not prior or prior['status'] != 'sent'):
             notices.append((f"calendar:holiday:{local.date()}:late",
-                f"剛確認今天（{local:%m/%d}）官方校曆列為放假／停止上課。\n"
-                f"依據：{snapshot['source_url']}"))
+                f"剛確認今天（{local:%m/%d}）放假。\n\n"
+                f"<b>依據</b>\n{escape(snapshot['source_url'])}"))
     exhausted = (sync_result or {}).get('calendar_attempts', 0) >= 3
     notices += calendar_advisories(snapshot, now, exhausted=exhausted)
     for key, text in notices:
@@ -71,7 +72,7 @@ async def tick_calendar(db, telegram, chat_id, now, *, sync_result=None):
         if claim is None:
             continue
         try:
-            response = await telegram.send_message(chat_id, text)
+            response = await telegram.send_message(chat_id, text, parse_mode="HTML")
         except TelegramError:
             ledger.finish(key, claim, now)
             continue

@@ -1,6 +1,6 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -29,6 +29,31 @@ def test_notice_windows(day, hour, count):
     now = clock(day, hour)
     assert len(holiday_notices(snapshot(now), now)) == count
     assert len(holiday_notices(snapshot(now), now.astimezone(timezone.utc))) == count
+
+
+def test_tomorrow_notice_uses_compact_spaced_html_sections():
+    now = clock()
+    _, text = holiday_notices(snapshot(now), now)[0]
+    assert text == (
+        "明天（10/09）放假。\n\n"
+        f"<b>依據</b>\n{OFFICIAL_CALENDAR_URL}\n\n"
+        "<b>校曆查核時間</b> 10/08 12:00"
+    )
+
+
+def test_calendar_notices_use_html_parse_mode():
+    now = clock()
+    _, text = holiday_notices(snapshot(now), now)[0]
+    db = Mock()
+    db.get_calendar_snapshot.return_value = snapshot(now)
+    bot = AsyncMock()
+    bot.send_message.return_value = {"ok": True, "result": {"message_id": 42}}
+    ledger = Mock()
+    ledger.claim.return_value = "claim"
+    ledger.finish.return_value = {"status": "sent"}
+    with patch("chronos.calendar_scheduler.StudyDeliveryLedger", return_value=ledger):
+        asyncio.run(tick_calendar(db, bot, 123, now))
+    bot.send_message.assert_awaited_once_with(123, text, parse_mode="HTML")
 
 
 @pytest.mark.parametrize("classes", [("normal_instruction",), ("exam_period",),
