@@ -81,7 +81,7 @@ def mail_buttons(identifier, backlog=False):
 def format_mail_card(mail, summary, account):
     excerpt = summary.startswith(("原文摘錄：", "原文摘錄（摘要暫不可用）："))
     summary = re.sub(r"^原文摘錄(?:（摘要暫不可用）)?：", "", summary)
-    label = "原文摘要" if excerpt else "摘要"
+    label = "原文摘錄" if excerpt else "摘要"
     sender = mail["sender"]
     url = f"https://mail.google.com/mail/u/{quote(account, safe='@')}/#all/{quote(mail['id'], safe='')}"
     return (f"📬 <b>{escape(display_text(mail['subject']))}</b>\n\n"

@@ -214,7 +214,7 @@ def test_mail_card_escapes_html_and_hides_display_noise():
     text = format_mail_card(mail, "原文摘錄（摘要暫不可用）：A & B <test>", "owner@example.com")
     assert "7693d1e" not in text and "暫不可用" not in text
     assert "<b>寄件者</b>  Yili &lt;notifications@github.com&gt;" in text
-    assert "<b>原文摘要</b>\nA &amp; B &lt;test&gt;" in text
+    assert "<b>原文摘錄</b>\nA &amp; B &lt;test&gt;" in text
     assert "<script>" not in text
     assert "Open email</a>" in text
     assert "7693d1e" in mail["subject"]

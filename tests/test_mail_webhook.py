@@ -163,6 +163,7 @@ def test_archive_and_read_remove_cards_only_after_success(system, monkeypatch):
 def test_task_confirmation_buttons_and_edit_reply(system, monkeypatch):
     client, tasks, bot, config = system
     enable(config, monkeypatch)
+    bot.request.return_value = {"ok": True}
     bot.send_message.return_value = {"ok": True, "result": {"message_id": 700}}
     assert post(client, 9200, callback="mail:task:ab12").status_code == 200
     assert not tasks.list_open()
@@ -175,10 +176,37 @@ def test_task_confirmation_buttons_and_edit_reply(system, monkeypatch):
     bot.send_message.return_value = {"ok": True, "result": {"message_id": 702}}
     assert post(client, 9202, text="Investigate failed deployment", card=701).status_code == 200
     yes = bot.send_message.call_args.kwargs["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
-    for _ in range(2):
-        assert post(client, 9203, callback=yes, card=702).status_code == 200
+    bot.request.reset_mock()
+    assert post(client, 9203, callback=yes, card=702).status_code == 200
     assert len(tasks.list_open()) == 1
     assert tasks.list_open()[0]["title"] == "Investigate failed deployment"
+    deleted = [call.args[1]["message_id"] for call in bot.request.await_args_list]
+    assert deleted == [500, 702]
+    assert post(client, 9203, callback=yes, card=702).status_code == 200
+    assert len(tasks.list_open()) == 1
+
+
+def test_task_confirmation_cleanup_retries_without_creating_duplicate(system, monkeypatch):
+    client, tasks, bot, config = system
+    enable(config, monkeypatch)
+    bot.send_message.return_value = {"ok": True, "result": {"message_id": 700}}
+    bot.request.return_value = {"ok": True}
+    assert post(client, 9210, callback="mail:task:ab12").status_code == 200
+    yes = bot.send_message.call_args.kwargs["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+    bot.request.side_effect = [
+        {"ok": True},
+        {"ok": False, "error_code": 500},
+    ]
+    assert post(client, 9211, callback=yes, card=700).status_code == 502
+    assert len(tasks.list_open()) == 1
+    bot.request.side_effect = None
+    bot.request.return_value = {
+        "ok": False,
+        "error_code": 400,
+        "description": "Bad Request: message to delete not found",
+    }
+    assert post(client, 9211, callback=yes, card=700).status_code == 200
+    assert len(tasks.list_open()) == 1
 
 
 def test_daily_mail_endpoint_auth_and_separation(system, monkeypatch):

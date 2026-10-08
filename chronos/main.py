@@ -212,6 +212,16 @@ def mail_workflow():
     return MailWorkflow(db, gmail, telegram, ai, settings)
 
 
+async def delete_telegram_messages(chat_id: int, *message_ids: int | None) -> None:
+    """Delete resolved interaction cards; repeated cleanup is safe."""
+    for message_id in dict.fromkeys(message_id for message_id in message_ids if message_id is not None):
+        result = await telegram.request("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
+        missing = (result.get("error_code") == 400
+                   and "message to delete not found" in result.get("description", "").lower())
+        if not result.get("ok") and not missing:
+            raise HTTPException(status_code=502, detail="Mail interaction cleanup pending")
+
+
 async def send_daily_mail():
     if not settings.enable_gmail:
         return {"enabled": False}
@@ -428,17 +438,20 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
     if mail_callback or mail_binding:
         if mail is None:
             raise HTTPException(status_code=503, detail="Mail integration is disabled")
+        callback_match = (re.fullmatch(
+            r"mail:(trash|task|keep|read|(?:confirm|edit|cancel)_[a-f0-9]{8}):([A-Za-z0-9_-]{1,32})",
+            update.callback_query.data or "",
+        ) if mail_callback else None)
+        active_binding = (mail.binding(chat_id, source_message.message_id) if mail_callback else mail_binding)
         receipt = db.get_update(update_id)
         if receipt is None:
             if update.edited_message is not None:
                 action = lambda: "編輯舊訊息不會重新執行郵件動作，請傳送新指令。"
             elif mail_callback:
-                match = re.fullmatch(r"mail:(trash|task|keep|read|(?:confirm|edit|cancel)_[a-f0-9]{8}):([A-Za-z0-9_-]{1,32})", update.callback_query.data or "")
-                binding = mail.binding(chat_id, source_message.message_id)
-                if not match or not binding or binding["mail_id"] != match.group(2):
+                if not callback_match or not active_binding or active_binding["mail_id"] != callback_match.group(2):
                     raise HTTPException(status_code=403, detail="Mail callback is not bound to this card")
                 try:
-                    action = await mail.prepare_action(match.group(2), match.group(1))
+                    action = await mail.prepare_action(callback_match.group(2), callback_match.group(1))
                 except GmailError as error:
                     raise HTTPException(status_code=503, detail=str(error)) from None
             else:
@@ -449,16 +462,28 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             receipt = db.process_update(update_id, action)
         if receipt["reply"] in {"已移到垃圾桶。", "已標為已讀。"} or receipt["reply"].startswith("已封存，可在 Gmail 所有郵件找到"):
             card_id = source_message.message_id if mail_callback else source_message.reply_to_message.message_id
-            result = await telegram.request("deleteMessage", {"chat_id": chat_id, "message_id": card_id})
-            missing = result.get("error_code") == 400 and "message to delete not found" in result.get("description", "").lower()
-            if not result.get("ok") and not missing:
-                raise HTTPException(status_code=502, detail="Mail action completed; Telegram card deletion pending")
+            await delete_telegram_messages(chat_id, card_id)
+        is_proposal = receipt["reply"].startswith("Add this to Tasks?\n\n")
+        is_edit = receipt["reply"] == "Reply to this message with the new task title."
+        task_resolved = (receipt["reply"].startswith("Added task #")
+                         or receipt["reply"].startswith("This email already has task #"))
+        callback_action = callback_match.group(1) if callback_match else None
+        active_card_id = (source_message.message_id if mail_callback
+                          else source_message.reply_to_message.message_id)
+        origin_card_id = (active_binding or {}).get("origin_message_id")
+        if callback_action == "task" and origin_card_id is None:
+            origin_card_id = active_card_id
+        if task_resolved:
+            await delete_telegram_messages(chat_id, origin_card_id or active_card_id, active_card_id)
+        elif callback_action and callback_action.startswith(("edit_", "cancel_")):
+            await delete_telegram_messages(chat_id, active_card_id)
+        elif is_proposal and not mail_callback and origin_card_id is not None:
+            # The edited title has replaced the force-reply prompt.
+            await delete_telegram_messages(chat_id, active_card_id)
         if not receipt["delivered"]:
             if receipt["reply"] != "已移到垃圾桶。":
                 markup = None
-                is_proposal = receipt["reply"].startswith("Add this to Tasks?\n\n")
-                is_edit = receipt["reply"] == "Reply to this message with the new task title."
-                identifier = (mail.binding(chat_id, source_message.message_id)["mail_id"] if mail_callback else mail_binding["mail_id"])
+                identifier = active_binding["mail_id"]
                 if is_proposal:
                     import hashlib
                     title = receipt["reply"].split("\n\n", 1)[1]
@@ -474,7 +499,10 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                     message_id = result.get("result", {}).get("message_id")
                     if not message_id:
                         raise HTTPException(status_code=502, detail="Mail task prompt ID missing")
-                    mail.patch(f"telegram:{chat_id}:{message_id}", mail_id=identifier)
+                    binding = {"mail_id": identifier}
+                    if origin_card_id is not None:
+                        binding["origin_message_id"] = origin_card_id
+                    mail.patch(f"telegram:{chat_id}:{message_id}", **binding)
             db.mark_update_delivered(update_id)
         if update.callback_query:
             result = await telegram.answer_callback_query(update.callback_query.id)
