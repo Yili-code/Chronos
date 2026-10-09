@@ -229,35 +229,21 @@ def test_webhook_auth_and_commands(system):
     assert send('/start').status_code == 200
     help_text = bot.send_message.call_args.args[1]
     assert help_text == main.HELP_TEXT
-    assert help_text == (
-        '<b>Tasks</b>\n'
-        '/tasks — list open tasks\n'
-        '/add title [#tag] — add exact text without AI or a deadline\n'
-        '/done x — complete\n'
-        '/edit x ... — edit\n'
-        '/edit #id ... — edit a fixed task ID\n'
-        '/clear — delete all tasks\n'
-        '\n<b>Study</b>\n'
-        '/classday ... — confirm a course-specific instruction day\n'
-        '/study_budget — inspect AI usage\n'
-        "/ai_usage — inspect today's core AI requests\n"
-        '\n<b>Assignments</b>\n'
-        '/prepare y — request an editable assignment draft\n'
-        '/draft y [page] — read a saved draft without generating\n'
-        '\n<b>Notes</b>\n'
-        '/notes {course} — list saved study notes\n'
-        '/note x {page} — read a saved note\n'
-        '/export x — download canonical Markdown'
-    )
+    assert help_text == '<b>Help</b>\nChoose a category.'
+    assert '/tasks' not in help_text
     assert '/reschedule' not in help_text
     assert '/postpone' not in help_text
     assert '/deadline' not in help_text
     assert '/exam' not in help_text
     assert '/assignment' not in help_text
-    assert bot.send_message.call_args.kwargs == {'parse_mode': 'HTML'}
+    assert bot.send_message.call_args.kwargs == {
+        'parse_mode': 'HTML', 'reply_markup': main.HELP_KEYBOARD,
+    }
     assert send('/help').status_code == 200
     assert bot.send_message.call_args.args[1] == help_text
-    assert bot.send_message.call_args.kwargs == {'parse_mode': 'HTML'}
+    assert bot.send_message.call_args.kwargs == {
+        'parse_mode': 'HTML', 'reply_markup': main.HELP_KEYBOARD,
+    }
     assert send('代辦').status_code == 200
     assert bot.send_message.call_args.args[1] == 'Unknown command. Use /help to see available commands.'
     assert bot.send_message.call_args.kwargs == {'parse_mode': None}
@@ -295,6 +281,47 @@ def test_webhook_auth_and_commands(system):
         '1. 🚨 <b>Finalize roadmap</b>\n'
         '<b>Due:</b> 10-03 18:00\n'
         '<b>#Chronos</b>')
+
+
+def test_help_expands_full_syntax_by_category(system):
+    client, _, bot, _ = system
+    headers = {'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}
+
+    response = client.post('/telegram/webhook', headers=headers, json={
+        'update_id': 501, 'message': {'chat': {'id': 123}, 'text': '/help tasks'},
+    })
+    assert response.status_code == 200
+    assert bot.send_message.call_args.args[1] == main.HELP_SECTIONS['tasks']
+    assert '/edit &lt;list-position&gt; &lt;changes&gt;' in bot.send_message.call_args.args[1]
+    assert bot.send_message.call_args.kwargs == {
+        'parse_mode': 'HTML', 'reply_markup': main.HELP_BACK_KEYBOARD,
+    }
+
+    response = client.post('/telegram/webhook', headers=headers, json={
+        'update_id': 502,
+        'callback_query': {
+            'id': 'help-study',
+            'data': 'help:study',
+            'message': {'chat': {'id': 123}},
+        },
+    })
+    assert response.status_code == 200
+    assert bot.send_message.call_args.args[1] == main.HELP_SECTIONS['study']
+    assert '/classday YYYY-MM-DD &lt;course-code&gt; class|off|auto' in bot.send_message.call_args.args[1]
+    bot.answer_callback_query.assert_awaited_with('help-study')
+
+    response = client.post('/telegram/webhook', headers=headers, json={
+        'update_id': 503,
+        'callback_query': {
+            'id': 'help-back',
+            'data': 'help:index',
+            'message': {'chat': {'id': 123}},
+        },
+    })
+    assert response.status_code == 200
+    assert bot.send_message.call_args.args[1] == main.HELP_TEXT
+    assert bot.send_message.call_args.kwargs['reply_markup'] == main.HELP_KEYBOARD
+    bot.answer_callback_query.assert_awaited_with('help-back')
 
 
 def test_daily_reminder_schedule(system):

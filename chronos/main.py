@@ -49,26 +49,53 @@ telegram = TelegramClient(settings.telegram_bot_token)
 gmail = GmailClient(settings)
 scheduler = AsyncIOScheduler(timezone=settings.tz)
 
-HELP_TEXT = (
-    "<b>Tasks</b>\n"
-    "/tasks — list open tasks\n"
-    "/add title [#tag] — add exact text without AI or a deadline\n"
-    "/done x — complete\n"
-    "/edit x ... — edit\n"
-    "/edit #id ... — edit a fixed task ID\n"
-    "/clear — delete all tasks\n"
-    "\n<b>Study</b>\n"
-    "/classday ... — confirm a course-specific instruction day\n"
-    "/study_budget — inspect AI usage\n"
-    "/ai_usage — inspect today's core AI requests\n"
-    "\n<b>Assignments</b>\n"
-    "/prepare y — request an editable assignment draft\n"
-    "/draft y [page] — read a saved draft without generating\n"
-    "\n<b>Notes</b>\n"
-    "/notes {course} — list saved study notes\n"
-    "/note x {page} — read a saved note\n"
-    "/export x — download canonical Markdown"
-)
+HELP_TEXT = "<b>Help</b>\nChoose a category."
+HELP_SECTIONS = {
+    "tasks": (
+        "<b>Tasks</b>\n"
+        "/tasks — list open tasks\n"
+        "/add &lt;title&gt; [#tag] — add exact text without AI or a deadline\n"
+        "/done &lt;list-position&gt; — complete a task\n"
+        "/edit &lt;list-position&gt; &lt;changes&gt; — edit by current list position\n"
+        "/edit #&lt;task-id&gt; &lt;changes&gt; — edit by fixed task ID\n"
+        "/clear — delete all tasks after confirmation"
+    ),
+    "study": (
+        "<b>Study</b>\n"
+        "/classday &lt;instruction&gt; — confirm a course-specific instruction day\n"
+        "/classday YYYY-MM-DD &lt;course-code&gt; class|off|auto — save an exact decision\n"
+        "/study_budget — inspect study AI usage\n"
+        "/ai_usage — inspect today's core AI requests\n"
+        "/announcements [page] — list saved announcements\n"
+        "/announcement &lt;version-id&gt; [page] — read a saved announcement"
+    ),
+    "assignments": (
+        "<b>Assignments</b>\n"
+        "/prepare &lt;assignment-id&gt; — request an editable assignment draft\n"
+        "/draft &lt;assignment-id&gt; [page] — read a saved draft without generating"
+    ),
+    "notes": (
+        "<b>Notes</b>\n"
+        "/notes [course] — list saved study notes\n"
+        "/note &lt;full-note-id&gt; [section] — read a saved note\n"
+        "/export &lt;full-note-id&gt; — download canonical Markdown"
+    ),
+}
+HELP_KEYBOARD = {
+    "inline_keyboard": [
+        [
+            {"text": "Tasks", "callback_data": "help:tasks"},
+            {"text": "Study", "callback_data": "help:study"},
+        ],
+        [
+            {"text": "Assignments", "callback_data": "help:assignments"},
+            {"text": "Notes", "callback_data": "help:notes"},
+        ],
+    ]
+}
+HELP_BACK_KEYBOARD = {
+    "inline_keyboard": [[{"text": "Back to categories", "callback_data": "help:index"}]]
+}
 
 CLEAR_CONFIRM_TEXT = "Delete all tasks? This cannot be undone."
 CLEAR_KEYBOARD = {
@@ -603,6 +630,19 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                                      "\n".join(format_task_block(selected, settings.tz)))
                     card["reply_markup"] = {"force_reply": True, "selective": True}
                     action = lambda: message_bundle(card)
+            elif data == "help:index":
+                action = lambda: message_bundle({
+                    "text": HELP_TEXT,
+                    "parse_mode": "HTML",
+                    "reply_markup": HELP_KEYBOARD,
+                })
+            elif data and re.fullmatch(r"help:(?:tasks|study|assignments|notes)", data):
+                section = data.split(":", 1)[1]
+                action = lambda section=section: message_bundle({
+                    "text": HELP_SECTIONS[section],
+                    "parse_mode": "HTML",
+                    "reply_markup": HELP_BACK_KEYBOARD,
+                })
             else:
                 action = lambda: "This action is no longer available."
             receipt = db.process_update(update_id, action)
@@ -819,7 +859,19 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
             "Usage: /notes [course] or /note full-note-id [section]."
         )
     if command in {"start", "help"}:
-        return lambda: HELP_TEXT
+        return lambda: message_bundle({
+            "text": HELP_TEXT,
+            "parse_mode": "HTML",
+            "reply_markup": HELP_KEYBOARD,
+        })
+    help_section = re.fullmatch(r"help\s+(tasks|study|assignments|notes)", command or "", re.IGNORECASE)
+    if help_section:
+        section = help_section.group(1).lower()
+        return lambda: message_bundle({
+            "text": HELP_SECTIONS[section],
+            "parse_mode": "HTML",
+            "reply_markup": HELP_BACK_KEYBOARD,
+        })
     if command == "ai_usage":
         def usage_report() -> str:
             now = datetime.now(settings.tz)

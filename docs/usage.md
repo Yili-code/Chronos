@@ -50,7 +50,7 @@ AI 暫時不可用時，可用 `/add Review Graph Algorithms Quiz 1 #Graph` 新�
 `/edit <position> <instruction>` 接受中文或英文自然語言，可同時修改標題、期限與分類，也能明確移除期限或分類；未提及的欄位會保留，儲存標題仍為精簡英文 action phrase。移除日期、移除分類與保存 tag abbreviation 等明確操作會走 deterministic path；其他語意改寫才呼叫 AI。任務改期與作業截止日期都統一使用 `/edit`；`/reschedule` 與 `/deadline` 不再支援。
 AI update service 暫時不可用時，task 不會變更，原始 command 會持久保存，Telegram 會提供 **Retry editing Task n** 與 **Cancel saved edit for Task n**。Retry 依永久 task ID 執行；如果目標已完成或刪除，會 fail closed。成功更新分成兩則訊息：第一則只列出 changed fields，第二則才顯示更新後清單。兩則訊息分別保存 delivery progress，第二則失敗時不會主動重送已確認成功的第一則。
 編輯失敗會保留 AI 層提供的安全錯誤原因（例如未設定、模型不可用、回應格式不合法或暫時性連線錯誤），不再一律稱為暫時無法使用。既有中文分類在只改標題時會原樣保留。
-舊的中文 commands 與 `/postpone` 不再支援；`/start` 與 `/help` 都會顯示英文使用說明。
+舊的中文 commands 與 `/postpone` 不再支援；`/start` 與 `/help` 只顯示 command categories，點選分類後才展開完整英文語法。也可直接輸入 `/help tasks`、`/help study`、`/help assignments` 或 `/help notes`。
 `/clear` 先顯示確認訊息；只有按下 **Delete all tasks** 才會刪除所有 open 與 completed task records，按 **Cancel** 不會變更資料。Telegram update receipts 與內部 ID counter 不在清除範圍內，以維持 webhook idempotency 與 ID 唯一性。
 
 `/ai_usage` 是 read-only command，顯示今天每種核心 AI operation 的 request、provider attempt 與 provider 回報 token totals。只保存 aggregate counters，不保存 prompt、response、API key 或 task text；未回報 token usage 時會明確顯示 `not reported`，不以字元數偽裝成精確 token 成本。
