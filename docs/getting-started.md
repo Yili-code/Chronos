@@ -10,9 +10,10 @@ Chronos 是單一使用者的 Telegram task assistant，Web 是輔助介面。�
 git clone https://github.com/Yili-code/Chronos.git
 cd Chronos
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe -m pip install uv==0.12.3
+.\.venv\Scripts\uv.exe sync --locked --extra dev
 if (!(Test-Path .env)) { Copy-Item .env.example .env }
-.\.venv\Scripts\python.exe -m uvicorn chronos.main:app --host 127.0.0.1 --port 8000
+.\.venv\Scripts\uv.exe run uvicorn chronos.main:app --host 127.0.0.1 --port 8000
 ```
 
 ## macOS / Linux
@@ -21,19 +22,21 @@ if (!(Test-Path .env)) { Copy-Item .env.example .env }
 git clone https://github.com/Yili-code/Chronos.git
 cd Chronos
 python3 -m venv .venv
-.venv/bin/python -m pip install -e ".[dev]"
+.venv/bin/python -m pip install uv==0.12.3
+.venv/bin/uv sync --locked --extra dev
 test -f .env || cp .env.example .env
-.venv/bin/python -m uvicorn chronos.main:app --host 127.0.0.1 --port 8000
+.venv/bin/uv run uvicorn chronos.main:app --host 127.0.0.1 --port 8000
 ```
 
 開啟 <http://127.0.0.1:8000>，預期看到 **Open tasks** 與 **No open tasks.**。在另一個 PowerShell 視窗執行：
 
 ```powershell
-Invoke-RestMethod http://127.0.0.1:8000/health
+Invoke-RestMethod http://127.0.0.1:8000/live
+Invoke-RestMethod http://127.0.0.1:8000/ready
 Invoke-RestMethod http://127.0.0.1:8000/api/tasks
 ```
 
-`/health` 回傳 `status: ok`，新的 SQLite 資料庫回傳空清單。這只證明 Web 可用，不代表 Gemini、Telegram 或雲端已連通。`chronos.db` 是本機資料，已被 Git 忽略；停止服務後可備份該檔案。
+`/live` 回傳 `status: live`，`/ready` 回傳 `status: ready`，新的 SQLite 資料庫回傳空清單。這只證明 process、設定與資料庫可用，不代表 Gemini、Telegram 或雲端已連通。`chronos.db` 是本機資料，已被 Git 忽略；停止服務後可備份該檔案。
 
 ## Gemini：新增第一筆代辦
 

@@ -1,6 +1,11 @@
-# Chronos 驗證報告
+# Chronos 歷史驗證快照
 
 更新日期：2026-10-07（Asia/Taipei）
+
+> 本文件是 2026-10-07 的 historical snapshot，不代表目前 `HEAD` 或目前 production。
+> 現行 CI 會為每個 commit 產生含 commit SHA、Python version、test totals 與 evidence scope 的
+> `release-evidence.json` artifact。部署後仍須以 `/ready`、runtime status、Scheduler 與 Telegram
+> readback 分別驗證；CI 通過不等於 production 已更新。
 
 ## 結果
 

@@ -1,9 +1,12 @@
 FROM python:3.12-slim
 
 WORKDIR /app
-COPY pyproject.toml ./
+ENV PATH="/app/.venv/bin:$PATH"
+COPY pyproject.toml uv.lock ./
+RUN pip install --no-cache-dir uv==0.12.3 \
+    && uv sync --locked --no-dev --extra collector --no-install-project
 COPY chronos ./chronos
-RUN pip install --no-cache-dir '.[collector]' \
+RUN uv sync --locked --no-dev --extra collector \
     && python -m playwright install --with-deps chromium
 
 # No HTTP server or locally running Chrome is required for this job.

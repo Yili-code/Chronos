@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     web_username: str = "chronos"
     web_password: str = ""
     timezone: str = Field(default="Asia/Taipei")
+    release_sha: str = ""
 
     @property
     def tz(self) -> ZoneInfo:

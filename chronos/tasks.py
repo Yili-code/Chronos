@@ -4,7 +4,7 @@ from datetime import datetime, time, timedelta
 from html import escape
 from zoneinfo import ZoneInfo
 
-from .db import Database
+from .repository import TaskRepository
 from .task_timing import normalize_timing, timing_details, urgent_deadline
 
 
@@ -35,7 +35,7 @@ def parse_literal_task(text: str) -> ParsedTask:
 
 
 class TaskService:
-    def __init__(self, db: Database, tz):
+    def __init__(self, db: TaskRepository, tz):
         self.db = db
         self.tz = tz
 

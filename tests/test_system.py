@@ -165,6 +165,10 @@ def test_study_endpoint_refreshes_calendar_before_course_policy(system, monkeypa
 def test_web_auth_and_task_lifecycle(system):
     client, service, bot, config = system
     assert client.get('/health').json() == {'status': 'ok'}
+    assert client.get('/live').json() == {'status': 'live'}
+    ready = client.get('/ready')
+    assert ready.status_code == 200
+    assert ready.json()['status'] == 'ready'
     for path in ['/', '/api/tasks']:
         assert client.get(path).status_code == 401
         assert client.get(path, auth=('chronos', 'wrong')).status_code == 401
@@ -177,6 +181,7 @@ def test_web_auth_and_task_lifecycle(system):
     assert 'No open tasks.' in homepage
     assert '>Add</button>' in homepage
     assert '>Complete</button>' in homepage
+    assert 'const timeZone="Asia/Taipei"' in homepage
     assert '<h2>代辦</h2>' not in homepage
     assert '開發專案' not in homepage
     assert client.get('/api/projects').status_code == 404
@@ -194,6 +199,18 @@ def test_web_auth_and_task_lifecycle(system):
     assert service.list_open() == []
     main.ai.parse.side_effect = ValueError('Empty')
     assert client.post('/api/tasks/natural', json={'text': ''}).status_code == 422
+
+
+def test_internal_status_is_authenticated_and_side_effect_free(system):
+    client, service, bot, config = system
+    assert client.get('/internal/status').status_code == 403
+    response = client.get('/internal/status', headers={
+        'X-Chronos-Scheduler-Secret': 'test-scheduler'
+    })
+    assert response.status_code == 200
+    assert response.json()['readiness'] == 'ready'
+    assert response.json()['telegram_webhook'] == 'mismatch'
+    bot.send_message.assert_not_awaited()
 
 
 def test_webhook_auth_and_commands(system):
@@ -223,6 +240,7 @@ def test_webhook_auth_and_commands(system):
         '\n<b>Study</b>\n'
         '/classday ... — confirm a course-specific instruction day\n'
         '/study_budget — inspect AI usage\n'
+        "/ai_usage — inspect today's core AI requests\n"
         '\n<b>Assignments</b>\n'
         '/prepare y — request an editable assignment draft\n'
         '/draft y [page] — read a saved draft without generating\n'

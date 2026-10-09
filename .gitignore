@@ -9,9 +9,12 @@ __pycache__/
 .pytest-evidence-full/
 .pytest-excerpt-positive/
 .pytest-course-tasks*/
+.pytest*/
 .venv/
 .env
 .gmail/
 .env.gmail-*
 chronos.db
 .study-data/
+tmp/pdfs/
+output/pdf/

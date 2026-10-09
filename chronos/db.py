@@ -83,6 +83,12 @@ CREATE TABLE IF NOT EXISTS preparation_jobs (source_key TEXT PRIMARY KEY, record
 CREATE TABLE IF NOT EXISTS announcements (source_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS study_poll_jobs (source_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS ai_daily_budget (day TEXT PRIMARY KEY, record_json TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS ai_usage (
+    day TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    record_json TEXT NOT NULL,
+    PRIMARY KEY(day, operation)
+);
 CREATE TABLE IF NOT EXISTS course_day_decisions (source_key TEXT PRIMARY KEY, decision TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS exam_notice_plans (source_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS material_selections (selection_key TEXT PRIMARY KEY, state_json TEXT NOT NULL);
@@ -130,6 +136,10 @@ class Database:
                 connection.execute(
                     "ALTER TABLE telegram_updates ADD COLUMN delivered_count INTEGER NOT NULL DEFAULT 0"
                 )
+
+    def check_ready(self) -> None:
+        with self.connect() as connection:
+            connection.execute("SELECT 1").fetchone()
 
     def save_study_note(self, note: NoteRecord) -> NoteRecord:
         validated = NoteRecord.model_validate(note.model_dump())
@@ -455,6 +465,27 @@ class Database:
         with self.connect() as connection:
             row = connection.execute("SELECT record_json FROM ai_daily_budget WHERE day=?", (day,)).fetchone()
         return json.loads(row[0]) if row else None
+
+    def mutate_ai_usage(self, day: str, operation: str, transition: Callable) -> dict:
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT record_json FROM ai_usage WHERE day=? AND operation=?",
+                (day, operation),
+            ).fetchone()
+            state = transition(json.loads(row[0]) if row else None)
+            connection.execute(
+                "INSERT INTO ai_usage VALUES (?, ?, ?) "
+                "ON CONFLICT(day, operation) DO UPDATE SET record_json=excluded.record_json",
+                (day, operation, json.dumps(state)),
+            )
+            return state
+
+    def list_ai_usage(self, day: str) -> dict[str, dict]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT operation, record_json FROM ai_usage WHERE day=? ORDER BY operation", (day,)
+            ).fetchall()
+        return {row[0]: json.loads(row[1]) for row in rows}
 
     def save_course_day_decision(self, key, decision):
         if decision not in {'class', 'off', 'auto'}:

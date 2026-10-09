@@ -97,9 +97,10 @@ class ProgressSummaryOutput(BaseModel):
 
 
 class ExternalAI:
-    def __init__(self, settings):
+    def __init__(self, settings, usage=None):
         self.settings = settings
         self.key_router = GeminiKeyRouter(settings)
+        self.usage = usage
 
     async def parse(self, text: str, now: datetime | None = None) -> ParsedTask:
         if not text.strip():
@@ -279,25 +280,38 @@ class ExternalAI:
             "contents": [{"role": "user", "parts": [{"text": text}]}],
             "generationConfig": {"responseMimeType": "application/json", "responseJsonSchema": schema},
         }
+        attempts = 0
+        status = "unknown"
+        response = None
+
+        async def count_attempt() -> None:
+            nonlocal attempts
+            attempts += 1
+
         try:
             async with asyncio.timeout(config.ai_timeout):
                 async with httpx.AsyncClient(timeout=config.ai_timeout) as client:
                     response = await self._post_with_retry(
                         client,
                         url,
+                        before_attempt=count_attempt,
                         json=request_body,
                     )
                     response.raise_for_status()
             content = response.json()["candidates"][0]["content"]["parts"][0]["text"]
             parsed = output_model.model_validate(json.loads(content))
+            status = "success"
         except GeminiKeysUnavailable:
+            status = "keys_unavailable"
             logger.warning("Gemini keys are cooling down; no request sent")
             raise AIError(f"The AI service is temporarily unavailable. {no_change}; try again later.") from None
         except (TimeoutError, httpx.TimeoutException):
+            status = "timeout"
             logger.warning("Gemini request timed out after automatic retries")
             raise AIError(f"The AI service is temporarily unavailable. {no_change}; try again later.") from None
         except httpx.HTTPStatusError as error:
             status = error.response.status_code
+            usage_status = f"http_{status}"
             if status in {401, 403}:
                 message = f"The AI service is unavailable because of a configuration error. {no_change}."
             elif status == 404:
@@ -307,14 +321,42 @@ class ExternalAI:
             else:
                 message = f"The AI service rejected the request. {no_change}."
             logger.warning("Gemini request failed with HTTP %s", status)
+            status = usage_status
             raise AIError(message) from None
         except httpx.TransportError:
+            status = "transport_error"
             logger.warning("Gemini transport failed after automatic retries")
             raise AIError(f"The AI service is temporarily unavailable. {no_change}; try again later.") from None
         except (ValueError, ValidationError, KeyError, IndexError, TypeError):
+            status = "invalid_response"
             logger.warning("Gemini returned an invalid structured response")
             raise AIError(f"The AI service returned an invalid response. {no_change}; rephrase the request.") from None
+        finally:
+            if self.usage is not None:
+                metadata = {}
+                if response is not None:
+                    try:
+                        metadata = response.json().get("usageMetadata", {})
+                    except (ValueError, AttributeError):
+                        metadata = {}
+                try:
+                    self.usage.record(
+                        subject,
+                        now=datetime.now(config.tz),
+                        attempts=attempts,
+                        status=str(status),
+                        input_chars=len(text),
+                        prompt_tokens=metadata.get("promptTokenCount"),
+                        output_tokens=metadata.get("candidatesTokenCount"),
+                        total_tokens=metadata.get("totalTokenCount"),
+                    )
+                except Exception:
+                    logger.warning("AI usage accounting failed; request outcome was preserved")
         return parsed
 
-    async def _post_with_retry(self, client: httpx.AsyncClient, url: str, **request: object) -> httpx.Response:
-        return await self.key_router.post(client, url, attempts=MAX_ATTEMPTS, **request)
+    async def _post_with_retry(
+        self, client: httpx.AsyncClient, url: str, before_attempt=None, **request: object
+    ) -> httpx.Response:
+        return await self.key_router.post(
+            client, url, attempts=MAX_ATTEMPTS, before_attempt=before_attempt, **request
+        )

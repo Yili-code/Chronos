@@ -29,6 +29,15 @@ else {
     (Get-Command gcloud -ErrorAction SilentlyContinue).Source
 }
 
+$releaseSha = (& git -C $projectRoot rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0 -or $releaseSha -notmatch '^[0-9a-f]{40}$') {
+    throw "A valid Git commit is required for deployment"
+}
+& git -C $projectRoot diff --quiet --exit-code
+if ($LASTEXITCODE -ne 0) { throw "Commit tracked changes before deployment" }
+& git -C $projectRoot diff --cached --quiet --exit-code
+if ($LASTEXITCODE -ne 0) { throw "Commit staged changes before deployment" }
+
 function Invoke-Gcloud {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
     & $script:gcloudCommand @Arguments
@@ -280,18 +289,29 @@ $environment = @(
     "CHRONOS_ENABLE_STUDY_TRACKING=$studyTrackingValue",
     "CHRONOS_ENABLE_GMAIL=$($EnableGmail.IsPresent.ToString().ToLowerInvariant())",
     "CHRONOS_TIMEZONE=Asia/Taipei",
-    "CHRONOS_WEB_USERNAME=chronos"
+    "CHRONOS_WEB_USERNAME=chronos",
+    "CHRONOS_RELEASE_SHA=$releaseSha"
 ) -join ','
 
-Push-Location $projectRoot
+$releaseDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ("chronos-release-" + [guid]::NewGuid().ToString('N'))
+$releaseArchive = "$releaseDirectory.zip"
+& git -C $projectRoot archive --format=zip --output $releaseArchive HEAD
+if ($LASTEXITCODE -ne 0) { throw "Unable to create release archive" }
+New-Item -ItemType Directory -Path $releaseDirectory | Out-Null
+Expand-Archive -LiteralPath $releaseArchive -DestinationPath $releaseDirectory
+
+Push-Location $releaseDirectory
 try {
     Invoke-Gcloud run deploy $Service --source . --region $Region --project $ProjectId `
         --service-account $runtimeAccount --allow-unauthenticated --port 8080 `
         --memory 512Mi --cpu 1 --concurrency 20 --max-instances 3 --timeout 1800 `
-        --set-env-vars $environment --set-secrets ($secretBindings -join ',') --quiet
+        --set-env-vars $environment --set-secrets ($secretBindings -join ',') `
+        --labels "commit-sha=$releaseSha" --quiet
 }
 finally {
     Pop-Location
+    Remove-Item -LiteralPath $releaseDirectory -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $releaseArchive -Force -ErrorAction SilentlyContinue
 }
 
 $serviceUrl = (& $gcloudCommand run services describe $Service --region $Region --project $ProjectId `
@@ -332,17 +352,44 @@ if ($EnableGmail) {
     }
 }
 
-$health = Invoke-RestMethod -Uri "$serviceUrl/health" -Method Get -TimeoutSec 30
-if ($health.status -ne "ok") { throw "Cloud Run health check failed" }
+$live = Invoke-RestMethod -Uri "$serviceUrl/live" -Method Get -TimeoutSec 30
+if ($live.status -ne "live") { throw "Cloud Run liveness check failed" }
+$ready = Invoke-RestMethod -Uri "$serviceUrl/ready" -Method Get -TimeoutSec 30
+if ($ready.status -ne "ready" -or $ready.release -ne $releaseSha) {
+    throw "Cloud Run readiness or release identity check failed"
+}
 $webhook = Invoke-RestMethod -Uri "https://api.telegram.org/bot$telegramBotToken/getWebhookInfo" `
     -Method Get -TimeoutSec 30
 if (-not $webhook.ok -or $webhook.result.url -ne "$serviceUrl/telegram/webhook") {
     throw "Telegram webhook was not registered to the Cloud Run service"
 }
+$runtimeStatus = Invoke-RestMethod -Uri "$serviceUrl/internal/status" -Method Get -TimeoutSec 30 `
+    -Headers @{ "X-Chronos-Scheduler-Secret" = $schedulerSecret }
+if ($runtimeStatus.readiness -ne "ready" -or $runtimeStatus.telegram_webhook -ne "configured") {
+    throw "Runtime integration status is not ready"
+}
+
+$studySchedulerStatus = "disabled"
+if ($studyTrackingValue -eq "true") {
+    $studyJobName = "chronos-course-progress"
+    $studyJobJson = (& $gcloudCommand scheduler jobs describe $studyJobName --location $Region `
+        --project $ProjectId --format json --quiet 2>$null) -join "`n"
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($studyJobJson)) {
+        throw "Study is configured but chronos-course-progress is missing; run the separately authorized activation"
+    }
+    $studyJob = $studyJobJson | ConvertFrom-Json
+    $expectedStudyUri = "$serviceUrl/internal/study"
+    if ($studyJob.state -ne "ENABLED" -or $studyJob.httpTarget.uri -ne $expectedStudyUri) {
+        throw "Study is configured but its scheduler is paused or points to the wrong endpoint"
+    }
+    $studySchedulerStatus = "operational"
+}
 
 Write-Output "Chronos deployed successfully."
 Write-Output "Service URL: $serviceUrl"
 Write-Output "Health: ok"
+Write-Output "Release commit: $releaseSha"
 Write-Output "Telegram webhook: configured"
+Write-Output "Study scheduler: $studySchedulerStatus"
 Write-Output "Web username: chronos"
 Write-Output "Web password is stored in Secret Manager as chronos-web-password."

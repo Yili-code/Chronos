@@ -39,6 +39,7 @@ CHRONOS_PUBLIC_BASE_URL=https://你的公開網址
 /tasks
 /done 1
 /edit 1 改成週五 10:00 交 final report 並移除專案
+/ai_usage
 /clear
 ```
 
@@ -51,6 +52,8 @@ AI update service 暫時不可用時，task 不會變更，原始 command 會持
 編輯失敗會保留 AI 層提供的安全錯誤原因（例如未設定、模型不可用、回應格式不合法或暫時性連線錯誤），不再一律稱為暫時無法使用。既有中文分類在只改標題時會原樣保留。
 舊的中文 commands 與 `/postpone` 不再支援；`/start` 與 `/help` 都會顯示英文使用說明。
 `/clear` 先顯示確認訊息；只有按下 **Delete all tasks** 才會刪除所有 open 與 completed task records，按 **Cancel** 不會變更資料。Telegram update receipts 與內部 ID counter 不在清除範圍內，以維持 webhook idempotency 與 ID 唯一性。
+
+`/ai_usage` 是 read-only command，顯示今天每種核心 AI operation 的 request、provider attempt 與 provider 回報 token totals。只保存 aggregate counters，不保存 prompt、response、API key 或 task text；未回報 token usage 時會明確顯示 `not reported`，不以字元數偽裝成精確 token 成本。
 
 ### Study 指令範例（需額外設定）
 

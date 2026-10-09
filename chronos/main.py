@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .db import create_database
 from .ai import AIError, ExternalAI
+from .ai_usage import AIUsageRecorder, format_ai_usage
 from .settings import settings
 from .tasks import (
     TaskService,
@@ -25,7 +26,13 @@ from .tasks import (
     project_display_name,
 )
 from .telegram import TelegramClient
-from .web import PAGE
+from .web import render_page
+from .runtime_health import (
+    RuntimeConfigurationError,
+    configured_components,
+    readiness_snapshot,
+    validate_runtime_security,
+)
 from .task_timing import display_time, task_sort_key, timing_details
 from .study_scheduler import tick_study, notify_study_failures
 from .gmail import GmailClient, GmailError
@@ -36,7 +43,8 @@ logger = logging.getLogger("chronos")
 
 db = create_database(settings)
 tasks = TaskService(db, settings.tz)
-ai = ExternalAI(settings)
+ai_usage = AIUsageRecorder(db, settings.tz)
+ai = ExternalAI(settings, usage=ai_usage)
 telegram = TelegramClient(settings.telegram_bot_token)
 gmail = GmailClient(settings)
 scheduler = AsyncIOScheduler(timezone=settings.tz)
@@ -52,6 +60,7 @@ HELP_TEXT = (
     "\n<b>Study</b>\n"
     "/classday ... — confirm a course-specific instruction day\n"
     "/study_budget — inspect AI usage\n"
+    "/ai_usage — inspect today's core AI requests\n"
     "\n<b>Assignments</b>\n"
     "/prepare y — request an editable assignment draft\n"
     "/draft y [page] — read a saved draft without generating\n"
@@ -181,6 +190,7 @@ async def send_daily_tasks() -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    validate_runtime_security(settings)
     db.initialize()
     if settings.enable_gmail:
         mail_workflow().require_config()
@@ -332,6 +342,44 @@ async def health() -> dict:
     return {"status": "ok"}
 
 
+@app.get("/live")
+async def live() -> dict:
+    return {"status": "live"}
+
+
+@app.get("/ready")
+async def ready() -> dict:
+    try:
+        return readiness_snapshot(db, settings)
+    except (RuntimeConfigurationError, OSError, RuntimeError, ValueError):
+        raise HTTPException(status_code=503, detail="Service is not ready") from None
+
+
+@app.get("/internal/status")
+async def internal_status(x_chronos_scheduler_secret: str | None = Header(default=None)) -> dict:
+    if not settings.scheduler_secret:
+        raise HTTPException(status_code=503, detail="Scheduler endpoint is not configured")
+    if not hmac.compare_digest(x_chronos_scheduler_secret or "", settings.scheduler_secret):
+        raise HTTPException(status_code=403, detail="Invalid scheduler credential")
+    snapshot = configured_components(settings)
+    try:
+        readiness_snapshot(db, settings)
+    except (RuntimeConfigurationError, OSError, RuntimeError, ValueError):
+        snapshot["readiness"] = "failed"
+    else:
+        snapshot["readiness"] = "ready"
+    if telegram.enabled:
+        try:
+            webhook = await telegram.request("getWebhookInfo", {})
+        except Exception:
+            snapshot["telegram_webhook"] = "unknown"
+        else:
+            configured_url = f"{settings.public_base_url.rstrip('/')}/telegram/webhook"
+            actual_url = webhook.get("result", {}).get("url") if webhook.get("ok") else None
+            snapshot["telegram_webhook"] = "configured" if configured_url and actual_url == configured_url else "mismatch"
+    return snapshot
+
+
 @app.post("/internal/mail/backlog")
 async def trigger_mail_backlog(x_chronos_scheduler_secret: str | None = Header(default=None)) -> dict:
     if not settings.scheduler_secret or not hmac.compare_digest(x_chronos_scheduler_secret or "", settings.scheduler_secret):
@@ -363,7 +411,7 @@ async def trigger_daily_tasks(x_chronos_scheduler_secret: str | None = Header(de
 
 @app.get("/", response_class=HTMLResponse, dependencies=[Depends(require_web_auth)])
 async def index() -> str:
-    return PAGE
+    return render_page(settings.timezone)
 
 
 @app.get("/api/tasks", dependencies=[Depends(require_web_auth)])
@@ -772,6 +820,11 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
         )
     if command in {"start", "help"}:
         return lambda: HELP_TEXT
+    if command == "ai_usage":
+        def usage_report() -> str:
+            now = datetime.now(settings.tz)
+            return format_ai_usage(ai_usage.report(now), now.date().isoformat())
+        return usage_report
     if command == "tasks":
         def list_tasks() -> dict:
             items = tasks.list_open()

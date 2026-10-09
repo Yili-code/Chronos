@@ -58,12 +58,13 @@ A self-hosted, single-user Telegram task assistant with Gemini-powered natural-l
 git clone https://github.com/Yili-code/Chronos.git
 cd Chronos
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe -m pip install uv==0.12.3
+.\.venv\Scripts\uv.exe sync --locked --extra dev
 if (!(Test-Path .env)) { Copy-Item .env.example .env }
-.\.venv\Scripts\python.exe -m uvicorn chronos.main:app --host 127.0.0.1 --port 8000
+.\.venv\Scripts\uv.exe run uvicorn chronos.main:app --host 127.0.0.1 --port 8000
 ```
 
-開啟 <http://127.0.0.1:8000>。新環境應顯示 **No open tasks.**；<http://127.0.0.1:8000/health> 應回傳 `{"status":"ok"}`。Telegram 設定可以先留空；**自然語言新增仍需要在 `.env` 填入 Gemini key 並重啟**。
+開啟 <http://127.0.0.1:8000>。新環境應顯示 **No open tasks.**；<http://127.0.0.1:8000/live> 應回傳 `{"status":"live"}`，<http://127.0.0.1:8000/ready> 應回傳 `status: ready`。Telegram 設定可以先留空；**自然語言新增仍需要在 `.env` 填入 Gemini key 並重啟**。
 
 下一步依 [完整啟動指南](docs/getting-started.md) 建立第一筆任務、接上 Telegram；同頁提供 macOS / Linux、Docker 與常見問題。公開 Web 前設定自己的密碼並使用 HTTPS。
 

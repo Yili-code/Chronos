@@ -42,6 +42,7 @@ class FirestoreDatabase:
         self.announcements = self.client.collection(f"{collection_prefix}_announcements")
         self.study_poll_jobs = self.client.collection(f"{collection_prefix}_study_poll_jobs")
         self.ai_daily_budget = self.client.collection(f"{collection_prefix}_ai_daily_budget")
+        self.ai_usage = self.client.collection(f"{collection_prefix}_ai_usage")
         self.course_day_decisions = self.client.collection(f"{collection_prefix}_course_day_decisions")
         self.exam_notice_plans = self.client.collection(f"{collection_prefix}_exam_notice_plans")
         self._transaction: ContextVar[firestore.Transaction | None] = ContextVar(
@@ -51,6 +52,9 @@ class FirestoreDatabase:
     def initialize(self) -> None:
         # Firestore collections are created on their first write.
         return None
+
+    def check_ready(self) -> None:
+        self.meta.document("runtime").get()
 
     def get_mail_state(self, key):
         snapshot = self.mail_state.document(key).get(transaction=self._transaction.get())
@@ -311,6 +315,25 @@ class FirestoreDatabase:
     def get_ai_budget(self, day):
         value = self.ai_daily_budget.document(day).get()
         return value.to_dict() if value.exists else None
+
+    def mutate_ai_usage(self, day: str, operation: str, transition: Callable) -> dict:
+        def mutate(transaction):
+            ref = self.ai_usage.document(f"{day}:{operation}")
+            snapshot = ref.get(transaction=transaction)
+            state = transition(snapshot.to_dict() if snapshot.exists else None)
+            transaction.set(ref, {**state, "day": day, "operation": operation})
+            return state
+        return self._run_transaction(mutate)
+
+    def list_ai_usage(self, day: str) -> dict[str, dict]:
+        query = self.ai_usage.where(filter=FieldFilter("day", "==", day))
+        return {
+            snapshot.get("operation"): {
+                key: value for key, value in snapshot.to_dict().items()
+                if key not in {"day", "operation"}
+            }
+            for snapshot in query.stream()
+        }
 
     def save_course_day_decision(self, key, decision):
         if decision not in {'class', 'off', 'auto'}:

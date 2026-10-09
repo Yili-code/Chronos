@@ -32,9 +32,10 @@ Windows PowerShell:
 git clone https://github.com/Yili-code/Chronos.git
 cd Chronos
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe -m pip install uv==0.12.3
+.\.venv\Scripts\uv.exe sync --locked --extra dev
 if (!(Test-Path .env)) { Copy-Item .env.example .env }
-.\.venv\Scripts\python.exe -m uvicorn chronos.main:app --host 127.0.0.1 --port 8000
+.\.venv\Scripts\uv.exe run uvicorn chronos.main:app --host 127.0.0.1 --port 8000
 ```
 
 macOS / Linux:
@@ -43,12 +44,13 @@ macOS / Linux:
 git clone https://github.com/Yili-code/Chronos.git
 cd Chronos
 python3 -m venv .venv
-.venv/bin/python -m pip install -e ".[dev]"
+.venv/bin/python -m pip install uv==0.12.3
+.venv/bin/uv sync --locked --extra dev
 test -f .env || cp .env.example .env
-.venv/bin/python -m uvicorn chronos.main:app --host 127.0.0.1 --port 8000
+.venv/bin/uv run uvicorn chronos.main:app --host 127.0.0.1 --port 8000
 ```
 
-Open <http://127.0.0.1:8000>. A fresh database shows **No open tasks.**; <http://127.0.0.1:8000/health> returns `{"status":"ok"}`. This verifies only the local app, not external services.
+Open <http://127.0.0.1:8000>. A fresh database shows **No open tasks.**; <http://127.0.0.1:8000/live> returns `{"status":"live"}` and <http://127.0.0.1:8000/ready> reports `status: ready`. These checks do not prove external services are available.
 
 ## Create your first task
 

@@ -11,6 +11,10 @@
 3. [Cloud Run + Firestore 部署](deployment.md)（選用、會建立雲端資源）
 4. [貢獻與問題回報](../CONTRIBUTING.md)
 
+## Engineering learning
+
+- [Operational reliability and release evidence](engineering-operations-learning.md)：從這次 hardening 提取可重用的 readiness、fail-closed、release provenance、cost telemetry 與 evidence-level 思考框架。
+
 ## Study：先確認範圍
 
 Study 的 course schedule、Chrome extension 的課程清單，以及 session publisher 的 GCP project 包含維護者專用設定。`.env.example` 預設關閉 Study，AI generation 的每日上限預設為零。啟動一般 Web / Telegram 代辦不會自動完成教材收集或摘要的配置。
