@@ -687,7 +687,38 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             else:
                 action = await prepare_message(text, update_id=update_id)
             receipt = db.process_update(update_id, action)
-    if not receipt["delivered"]:
+    help_callback = (
+        update.callback_query is not None
+        and re.fullmatch(
+            r"help:(?:index|tasks|study|assignments|notes)",
+            update.callback_query.data or "",
+        )
+    )
+    if not receipt["delivered"] and help_callback:
+        if source_message.message_id is None:
+            raise HTTPException(status_code=422, detail="Help message id is required")
+        message = (receipt.get("messages") or [{
+            "text": receipt["reply"],
+            "parse_mode": _legacy_parse_mode(receipt["reply"]),
+        }])[0]
+        payload = {
+            "chat_id": chat_id,
+            "message_id": source_message.message_id,
+            "text": message["text"],
+            "parse_mode": message.get("parse_mode"),
+            "reply_markup": message.get("reply_markup"),
+        }
+        result = await telegram.request("editMessageText", payload)
+        if (
+            not result.get("ok")
+            and "message is not modified" not in str(result.get("description", "")).lower()
+        ):
+            raise HTTPException(status_code=502, detail="Help display update failed")
+        if receipt.get("messages"):
+            db.mark_update_message_delivered(update_id, 1)
+        else:
+            db.mark_update_delivered(update_id)
+    elif not receipt["delivered"]:
         messages = receipt.get("messages") or [{
             "text": receipt["reply"],
             "parse_mode": _legacy_parse_mode(receipt["reply"]),

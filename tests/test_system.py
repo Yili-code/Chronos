@@ -296,18 +296,26 @@ def test_help_expands_full_syntax_by_category(system):
     assert bot.send_message.call_args.kwargs == {
         'parse_mode': 'HTML', 'reply_markup': main.HELP_BACK_KEYBOARD,
     }
+    send_count = bot.send_message.await_count
 
     response = client.post('/telegram/webhook', headers=headers, json={
         'update_id': 502,
         'callback_query': {
             'id': 'help-study',
             'data': 'help:study',
-            'message': {'chat': {'id': 123}},
+            'message': {'message_id': 77, 'chat': {'id': 123}},
         },
     })
     assert response.status_code == 200
-    assert bot.send_message.call_args.args[1] == main.HELP_SECTIONS['study']
-    assert '/classday YYYY-MM-DD &lt;course-code&gt; class|off|auto' in bot.send_message.call_args.args[1]
+    assert bot.send_message.await_count == send_count
+    bot.request.assert_awaited_with('editMessageText', {
+        'chat_id': 123,
+        'message_id': 77,
+        'text': main.HELP_SECTIONS['study'],
+        'parse_mode': 'HTML',
+        'reply_markup': main.HELP_BACK_KEYBOARD,
+    })
+    assert '/classday YYYY-MM-DD &lt;course-code&gt; class|off|auto' in main.HELP_SECTIONS['study']
     bot.answer_callback_query.assert_awaited_with('help-study')
 
     response = client.post('/telegram/webhook', headers=headers, json={
@@ -315,12 +323,18 @@ def test_help_expands_full_syntax_by_category(system):
         'callback_query': {
             'id': 'help-back',
             'data': 'help:index',
-            'message': {'chat': {'id': 123}},
+            'message': {'message_id': 77, 'chat': {'id': 123}},
         },
     })
     assert response.status_code == 200
-    assert bot.send_message.call_args.args[1] == main.HELP_TEXT
-    assert bot.send_message.call_args.kwargs['reply_markup'] == main.HELP_KEYBOARD
+    assert bot.send_message.await_count == send_count
+    bot.request.assert_awaited_with('editMessageText', {
+        'chat_id': 123,
+        'message_id': 77,
+        'text': main.HELP_TEXT,
+        'parse_mode': 'HTML',
+        'reply_markup': main.HELP_KEYBOARD,
+    })
     bot.answer_callback_query.assert_awaited_with('help-back')
 
 
