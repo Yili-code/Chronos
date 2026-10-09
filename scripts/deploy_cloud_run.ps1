@@ -260,21 +260,39 @@ if (-not [int]::TryParse($keyCooldown, [ref]$parsedKeyCooldown) -or $parsedKeyCo
     throw "CHRONOS_GEMINI_KEY_COOLDOWN_SECONDS must be an integer between 1 and 86400"
 }
 if ($EnableGmail) {
-    # OAuth was completed locally. Only Secret Manager receives the credentials.
+    # OAuth may have been completed locally or already provisioned in Cloud Run.
+    # Preserve existing secret references when local values are intentionally absent.
     foreach ($suffix in @("CLIENT_ID", "CLIENT_SECRET", "REFRESH_TOKEN", "ACCOUNT")) {
         $environmentName = "CHRONOS_GMAIL_$suffix"
         $value = Get-OptionalLocalValue $environmentName
-        if ([string]::IsNullOrWhiteSpace($value)) {
-            throw "$environmentName is missing. Run the Gmail authorization helper before deploying."
-        }
         $secretName = "chronos-gmail-" + $suffix.ToLowerInvariant().Replace('_', '-')
-        $version = Set-CloudSecret $secretName $value
-        $secretBindings += "${environmentName}=${secretName}:$version"
+        if (-not [string]::IsNullOrWhiteSpace($value)) {
+            $version = Set-CloudSecret $secretName $value
+            $secretBindings += "${environmentName}=${secretName}:$version"
+            continue
+        }
+        $existingBinding = if ($null -ne $existingService) {
+            $existingService.spec.template.spec.containers[0].env |
+                Where-Object { $_.name -eq $environmentName } | Select-Object -First 1
+        }
+        $existingRef = $existingBinding.valueFrom.secretKeyRef
+        if (-not $existingRef -or -not $existingRef.name -or -not $existingRef.key) {
+            throw "$environmentName is missing locally and has no existing Cloud Run secret reference. Run the Gmail authorization helper before deploying."
+        }
+        $secretBindings += "${environmentName}=$($existingRef.name):$($existingRef.key)"
     }
     $keepSenders = Get-OptionalLocalValue "CHRONOS_GMAIL_KEEP_SENDERS"
     if (-not [string]::IsNullOrWhiteSpace($keepSenders)) {
         $version = Set-CloudSecret "chronos-gmail-keep-senders" $keepSenders
         $secretBindings += "CHRONOS_GMAIL_KEEP_SENDERS=chronos-gmail-keep-senders:$version"
+    }
+    elseif ($null -ne $existingService) {
+        $existingKeepSenders = $existingService.spec.template.spec.containers[0].env |
+            Where-Object { $_.name -eq "CHRONOS_GMAIL_KEEP_SENDERS" } | Select-Object -First 1
+        $existingKeepSendersRef = $existingKeepSenders.valueFrom.secretKeyRef
+        if ($existingKeepSendersRef -and $existingKeepSendersRef.name -and $existingKeepSendersRef.key) {
+            $secretBindings += "CHRONOS_GMAIL_KEEP_SENDERS=$($existingKeepSendersRef.name):$($existingKeepSendersRef.key)"
+        }
     }
     Invoke-Gcloud services enable gmail.googleapis.com --project $ProjectId --quiet
 }
