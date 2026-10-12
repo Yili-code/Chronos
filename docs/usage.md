@@ -59,15 +59,13 @@ AI update service 暫時不可用時，task 不會變更，原始 command 會持
 
 Study 預設關閉，包含 NTOU / TronClass 特定課表與課程 ID；不是跨校通用 LMS 整合。它不下載教材或產生 PDF 摘要，完整邊界見 [Study 課程追蹤](study.md)。
 
-作業固定 ID 會直接出現在作業通知，例如 `新作業 #27`。這個 `27` 只供 `/prepare` 與 `/draft` 使用；修改截止日期時，先用 `/tasks` 找到當下順位，再用 `/edit`。`/assignment`、`/exam` 與 `/exams` 不再支援。
+作業通知仍會顯示其永久 task ID，例如 `新作業 #27`；日常操作請用 `/tasks` 取得當下順位，再以 `/edit` 或 `/done` 處理。Chronos 不產生或保存作業草稿；`/prepare`、`/draft`、`/preparation_budget`、`/assignment`、`/exam` 與 `/exams` 均不支援。
 
 `/classday` 接受中文或英文自然語言，用於確認特定課程在某天是否上課：
 
 ```text
 /classday 10/07 軟體工程不上課
 ```
-
-`/preparation_budget` 顯示 assignment-preparation worker 的每日 request 與估算 token reservations。`/prepare` 只使用已保存的作業文字，不讀取附件。
 
 `/tasks` 與每日清單使用粗體 `Tasks` 標題。每筆 task 的 title、完整 `YYYY-MM-DD HH:MM` due time 與 tag 各自位於不同文字層級，避免把 metadata 混入標題。過長的多字 tag 只在顯示層縮寫，例如 canonical `computer-architecture` 顯示為 `#CA`；canonical value 仍保留供搜尋與資料關聯。Owner 也能透過 `/edit` 保存自己的 tag display preference。課後回覆原文會保存作為進度證據，並完成原本的進度填寫代辦；回覆本身不會被自動轉成複習或確認範圍代辦。若要建立下一步任務，需要另外發送明確的新增代辦訊息。
 

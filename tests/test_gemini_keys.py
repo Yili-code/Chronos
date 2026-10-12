@@ -141,36 +141,6 @@ async def test_slow_primary_leaves_time_for_secondary():
     assert seen == ['test-secret', 'secondary-secret']
 
 
-@pytest.mark.asyncio
-async def test_preparation_failover_reserves_budget_for_each_attempt():
-    from chronos.preparation_ai import GeminiPreparationProvider
-    from chronos.assignment_preparation import PreparationDraft
-    from chronos.ai_budget import BudgetExceeded
-    seen = []
-    def handler(request):
-        seen.append(request.headers['x-goog-api-key'])
-        return httpx.Response(429)
-    budget = SimpleNamespace(reserve=lambda *args: {'near_limit': False})
-    count = [0]
-    def reserve(*args):
-        count[0] += 1
-        if count[0] == 2:
-            raise BudgetExceeded('limit')
-        return {'near_limit': False}
-    budget.reserve = reserve
-    settings = dual_config()
-    settings.gemini_api_base = 'https://generativelanguage.googleapis.com/v1beta'
-    generator = GeminiPreparationProvider(
-        settings,
-        free_tier_confirmed=True,
-        transport=httpx.MockTransport(handler), budget=budget,
-    )
-    with pytest.raises(BudgetExceeded):
-        await generator.request({}, 'test-model', output_type=PreparationDraft)
-    assert seen == ['test-secret']
-    assert count[0] == 2
-
-
 def test_environment_loads_secondary_key(monkeypatch):
     monkeypatch.setenv('CHRONOS_GEMINI_API_KEY_SECONDARY', 'secondary-env-secret')
     monkeypatch.setenv('CHRONOS_GEMINI_KEY_COOLDOWN_SECONDS', '120')

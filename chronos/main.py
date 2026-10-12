@@ -64,15 +64,14 @@ HELP_SECTIONS = {
         "<b>Study</b>\n"
         "/classday &lt;instruction&gt; — confirm a course-specific instruction day\n"
         "/classday YYYY-MM-DD &lt;course-code&gt; class|off|auto — save an exact decision\n"
-        "/preparation_budget — inspect assignment-preparation AI usage\n"
         "/ai_usage — inspect today's core AI requests\n"
         "/announcements [page] — list saved announcements\n"
         "/announcement &lt;version-id&gt; [page] — read a saved announcement"
     ),
     "assignments": (
         "<b>Assignments</b>\n"
-        "/prepare &lt;assignment-id&gt; — request an editable assignment draft\n"
-        "/draft &lt;assignment-id&gt; [page] — read a saved draft without generating"
+        "Observed assignments are added to /tasks.\n"
+        "Chronos does not generate or submit assignment drafts."
     ),
 }
 HELP_KEYBOARD = {
@@ -809,15 +808,6 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
     if command is not None and (command == 'announcement' or command.startswith('announcement ')):
         from .announcement_commands import announcement_query
         return lambda: announcement_query(db, command)
-    if command is not None and (command == 'draft' or command.startswith('draft ')):
-        from .preparation_commands import draft_query
-        return lambda: draft_query(db, command)
-    if command is not None and (command == 'prepare' or command.startswith('prepare ')):
-        from .preparation_commands import prepare_action
-        return prepare_action(db, command, datetime.now(settings.tz))
-    if command == 'preparation_budget':
-        from .ai_budget import budget_report
-        return lambda: budget_report(db, datetime.now(settings.tz))
     if command is not None and (command == 'classday' or command.startswith('classday ')):
         from .course_day_commands import classday_action, save_classday_action
         parts = command.split()

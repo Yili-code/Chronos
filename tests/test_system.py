@@ -221,6 +221,7 @@ def test_webhook_auth_and_commands(system):
     assert '/deadline' not in help_text
     assert '/exam' not in help_text
     assert '/assignment' not in help_text
+    assert '/prepare' not in help_text
     assert bot.send_message.call_args.kwargs == {
         'parse_mode': 'HTML', 'reply_markup': main.HELP_KEYBOARD,
     }
@@ -255,6 +256,10 @@ def test_webhook_auth_and_commands(system):
     parse_count = main.ai.parse.await_count
     assert send('/reschedule 4 tomorrow').status_code == 200
     assert bot.send_message.call_args.args[1] == 'Unknown command. Use /help to see available commands.'
+    assert main.ai.parse.await_count == parse_count
+    for removed in ('/prepare 27', '/draft 27', '/preparation_budget'):
+        assert send(removed).status_code == 200
+        assert bot.send_message.call_args.args[1] == 'Unknown command. Use /help to see available commands.'
     assert main.ai.parse.await_count == parse_count
     service.create('Draft roadmap')
     main.ai.edit = AsyncMock(return_value=ParsedTask(
@@ -301,6 +306,8 @@ def test_help_expands_full_syntax_by_category(system):
         'reply_markup': main.HELP_BACK_KEYBOARD,
     })
     assert '/classday YYYY-MM-DD &lt;course-code&gt; class|off|auto' in main.HELP_SECTIONS['study']
+    assert '/prepare' not in main.HELP_SECTIONS['assignments']
+    assert 'does not generate or submit assignment drafts' in main.HELP_SECTIONS['assignments']
     bot.answer_callback_query.assert_awaited_with('help-study')
 
     response = client.post('/telegram/webhook', headers=headers, json={

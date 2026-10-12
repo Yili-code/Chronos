@@ -69,9 +69,7 @@ CREATE TABLE IF NOT EXISTS assignments (source_key TEXT PRIMARY KEY, task_id INT
 CREATE TABLE IF NOT EXISTS calendar_snapshot (id INTEGER PRIMARY KEY CHECK(id=1), record_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS calendar_sync (id INTEGER PRIMARY KEY CHECK(id=1), record_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS exams (source_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS preparation_jobs (source_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS announcements (source_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS ai_daily_budget (day TEXT PRIMARY KEY, record_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS ai_usage (
     day TEXT NOT NULL,
     operation TEXT NOT NULL,
@@ -82,11 +80,13 @@ CREATE TABLE IF NOT EXISTS course_day_decisions (source_key TEXT PRIMARY KEY, de
 CREATE TABLE IF NOT EXISTS exam_notice_plans (source_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
 """
 
-REMOVED_MATERIAL_TABLES = (
+REMOVED_STUDY_TABLES = (
     "study_notes",
     "summary_jobs",
     "material_selections",
     "study_poll_jobs",
+    "preparation_jobs",
+    "ai_daily_budget",
 )
 
 
@@ -114,7 +114,7 @@ class Database:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as connection:
             connection.executescript(SCHEMA)
-            for table in REMOVED_MATERIAL_TABLES:
+            for table in REMOVED_STUDY_TABLES:
                 connection.execute(f"DROP TABLE IF EXISTS {table}")
             task_columns = {row[1] for row in connection.execute("PRAGMA table_info(tasks)")}
             if "timing_json" not in task_columns:
@@ -345,19 +345,6 @@ class Database:
             connection.execute("INSERT INTO exams VALUES(?, ?) ON CONFLICT(source_key) DO UPDATE SET record_json=excluded.record_json", (exam_key(record), json.dumps(record)))
         return record
 
-    def mutate_preparation(self, key, transition):
-        from contextlib import nullcontext
-        active = self._transaction.get()
-        with (nullcontext(active) if active is not None else self.transaction()) as connection:
-            row = connection.execute("SELECT record_json FROM preparation_jobs WHERE source_key=?", (key,)).fetchone()
-            state = transition(json.loads(row[0]) if row else None)
-            connection.execute("INSERT INTO preparation_jobs VALUES(?, ?) ON CONFLICT(source_key) DO UPDATE SET record_json=excluded.record_json", (key, json.dumps(state)))
-            return state
-
-    def list_preparations(self):
-        with self.connect() as connection:
-            return [(row[0], json.loads(row[1])) for row in connection.execute("SELECT source_key, record_json FROM preparation_jobs ORDER BY source_key")]
-
     def save_announcement(self, record):
         from .announcements import canonical_announcement
         key, record = canonical_announcement(record)
@@ -368,18 +355,6 @@ class Database:
     def list_announcements(self):
         with self.connect() as connection:
             return [(row[0], json.loads(row[1])) for row in connection.execute('SELECT source_key, record_json FROM announcements ORDER BY source_key')]
-
-    def mutate_ai_budget(self, day, transition):
-        with self.transaction() as connection:
-            row = connection.execute("SELECT record_json FROM ai_daily_budget WHERE day=?", (day,)).fetchone()
-            state = transition(json.loads(row[0]) if row else None)
-            connection.execute("INSERT INTO ai_daily_budget VALUES(?, ?) ON CONFLICT(day) DO UPDATE SET record_json=excluded.record_json", (day, json.dumps(state)))
-            return state
-
-    def get_ai_budget(self, day):
-        with self.connect() as connection:
-            row = connection.execute("SELECT record_json FROM ai_daily_budget WHERE day=?", (day,)).fetchone()
-        return json.loads(row[0]) if row else None
 
     def mutate_ai_usage(self, day: str, operation: str, transition: Callable) -> dict:
         with self.transaction() as connection:

@@ -46,14 +46,8 @@ requests. Provider quotas and billing remain authoritative.
 ## Covered features and persistence
 
 Task creation/editing, course-day interpretation, progress summaries and mail
-summaries use `ExternalAI` and therefore share its routing. Explicit assignment
-preparation uses the same key router but retains no-inline-retry behavior for
-uncertain transport failures.
-
-Every actual assignment-preparation provider attempt, including a secondary
-attempt, must reserve from its configured daily preparation budget. Failover does
-not bypass that limit. Task AI has no new project-level spend cap; configure
-provider-side quotas and billing controls separately.
+summaries use `ExternalAI` and therefore share its routing. Assignment draft
+generation is not part of Chronos.
 
 Failover occurs before task persistence. It does not rerun Telegram commands or
 create an additional task. Telegram update deduplication and edit conflict checks

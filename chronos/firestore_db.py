@@ -33,9 +33,7 @@ class FirestoreDatabase:
         self.study_deliveries = self.client.collection(f"{collection_prefix}_study_deliveries")
         self.assignments = self.client.collection(f"{collection_prefix}_assignments")
         self.exams = self.client.collection(f"{collection_prefix}_exams")
-        self.preparation_jobs = self.client.collection(f"{collection_prefix}_preparation_jobs")
         self.announcements = self.client.collection(f"{collection_prefix}_announcements")
-        self.ai_daily_budget = self.client.collection(f"{collection_prefix}_ai_daily_budget")
         self.ai_usage = self.client.collection(f"{collection_prefix}_ai_usage")
         self.course_day_decisions = self.client.collection(f"{collection_prefix}_course_day_decisions")
         self.exam_notice_plans = self.client.collection(f"{collection_prefix}_exam_notice_plans")
@@ -200,19 +198,6 @@ class FirestoreDatabase:
             return record
         return self._run_transaction(save)
 
-    def mutate_preparation(self, key, transition):
-        def mutate(transaction):
-            ref = self.preparation_jobs.document(key)
-            previous = ref.get(transaction=transaction)
-            state = transition(previous.to_dict() if previous.exists else None)
-            transaction.set(ref, state)
-            return state
-        active = self._transaction.get()
-        return mutate(active) if active is not None else self._run_transaction(mutate)
-
-    def list_preparations(self):
-        return [(snapshot.id, snapshot.to_dict()) for snapshot in self.preparation_jobs.stream()]
-
     def save_announcement(self, record):
         from .announcements import canonical_announcement
         key, record = canonical_announcement(record)
@@ -225,19 +210,6 @@ class FirestoreDatabase:
 
     def list_announcements(self):
         return sorted((snapshot.id, snapshot.to_dict()) for snapshot in self.announcements.stream())
-
-    def mutate_ai_budget(self, day, transition):
-        def mutate(transaction):
-            ref = self.ai_daily_budget.document(day)
-            previous = ref.get(transaction=transaction)
-            state = transition(previous.to_dict() if previous.exists else None)
-            transaction.set(ref, state)
-            return state
-        return self._run_transaction(mutate)
-
-    def get_ai_budget(self, day):
-        value = self.ai_daily_budget.document(day).get()
-        return value.to_dict() if value.exists else None
 
     def mutate_ai_usage(self, day: str, operation: str, transition: Callable) -> dict:
         def mutate(transaction):
