@@ -1,4 +1,4 @@
-"""The survey and actual studying have separate, durable completion states."""
+"""Progress evidence and task mutations have separate, durable states."""
 import asyncio
 from datetime import date, datetime
 from unittest.mock import AsyncMock
@@ -22,7 +22,7 @@ def db(request, tmp_path, monkeypatch):
     return result
 
 
-def test_scheduler_creates_one_survey_and_reply_creates_one_review(db):
+def test_scheduler_creates_one_survey_and_reply_completes_it_without_followup(db):
     bot = AsyncMock()
     bot.send_message.return_value = {"ok": True, "result": {"message_id": 501}}
     now = datetime(2026, 10, 5, 12, 10, tzinfo=TAIPEI)
@@ -33,20 +33,14 @@ def test_scheduler_creates_one_survey_and_reply_creates_one_review(db):
     assert survey["title"] == "填寫資訊安全實務與管理進度（10/05）"
     action = lambda: db.record_course_reply(
         501, 502, "講義 A 第 10–12 頁", local_date=now.date(),
-        review_summary="Handout A, pages 10–12",
     )
     first = db.process_update(1, action)
     assert db.process_update(1, action) == first
     db.process_update(2, action)  # a different update replying to the same prompt
-    review, = db.list_open_tasks()
-    assert review["id"] != survey["id"]
-    assert review["title"] == "複習資訊安全實務與管理 10/05：Handout A, pages 10–12"
-    assert review["due_at"] is None
-    assert '/done 清單順位' in first['reply']
-    assert f"/done {review['id']}" not in first['reply']
-    assert '/tasks' in first['reply']
-    assert db.complete_task(review["id"], now)
     assert not db.list_open_tasks()
+    assert "其他代辦保持不變" in first["reply"]
+    saved = db.get_course_session("security:2026-10-05")
+    assert saved.reported_progress == "講義 A 第 10–12 頁"
 
 
 def test_repeated_creation_and_cleared_survey_do_not_resurrect_tasks(db):
@@ -57,10 +51,10 @@ def test_repeated_creation_and_cleared_survey_do_not_resurrect_tasks(db):
     db.create_course_session(session, create_tasks=True)
     assert not db.list_open_tasks()
     db.process_update(3, lambda: db.record_course_reply(501, 502, "第 3 章"))
-    assert len(db.list_open_tasks()) == 1
+    assert not db.list_open_tasks()
 
 
-def test_invalid_or_late_reply_does_not_create_review(db):
+def test_invalid_or_late_reply_does_not_mutate_tasks(db):
     session = new_session(COURSE_SCHEDULE[0], date(2026, 10, 5), 501)
     db.create_course_session(session, create_tasks=True)
     for update, prompt, text, day in [(1, 999, "chapter 1", date(2026, 10, 5)),
@@ -107,11 +101,10 @@ def test_no_class_reply_completes_survey_without_review(db):
     stored = db.create_course_session(session, create_tasks=True)
     receipt = db.process_update(29, lambda: db.record_course_reply(
         501, 502, "今天沒上課", local_date=date(2026, 10, 5),
-        review_summary="No class today",
     ))
 
     assert not db.list_open_tasks()
-    assert "沒有新增複習代辦" in receipt["reply"]
+    assert "其他代辦保持不變" in receipt["reply"]
     saved = db.get_course_session(session.session_id)
     assert saved.status.value == "answered"
     assert saved.report_kind is ProgressReportKind.NO_PROGRESS
@@ -119,19 +112,29 @@ def test_no_class_reply_completes_survey_without_review(db):
     assert stored.survey_task_id is not None
 
 
-def test_unknown_reply_creates_confirmation_task_once(db):
+def test_unknown_reply_is_saved_without_creating_confirmation_task(db):
     session = new_session(COURSE_SCHEDULE[0], date(2026, 10, 5), 501)
     db.create_course_session(session, create_tasks=True)
     action = lambda: db.record_course_reply(501, 502, "我也不知道")
     receipt = db.process_update(30, action)
     db.process_update(31, action)
-    task, = db.list_open_tasks()
-    assert task["title"] == "確認資訊安全實務與管理 10/05 上課範圍"
-    assert "新增確認範圍代辦" in receipt["reply"]
-    assert "複習後" not in receipt["reply"]
+    assert not db.list_open_tasks()
+    assert "其他代辦保持不變" in receipt["reply"]
     saved = db.get_course_session(session.session_id)
     assert saved.status.value == "answered"
+    assert saved.report_kind is ProgressReportKind.UNKNOWN_SCOPE
     assert saved.reported_progress == "我也不知道"
+
+
+def test_progress_reply_that_mentions_a_todo_is_never_created_as_task(db):
+    session = new_session(COURSE_SCHEDULE[0], date(2026, 10, 5), 501)
+    db.create_course_session(session, create_tasks=True)
+
+    receipt = db.process_update(32, lambda: db.record_course_reply(501, 502, "我已新增待辦"))
+
+    assert not db.list_open_tasks()
+    assert "其他代辦保持不變" in receipt["reply"]
+    assert db.get_course_session(session.session_id).reported_progress == "我已新增待辦"
 
 
 def test_sqlite_reply_failure_rolls_back_tasks_session_and_receipt(tmp_path, monkeypatch):

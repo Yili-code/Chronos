@@ -629,20 +629,9 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                     raise HTTPException(status_code=422, detail="Reply message id is required")
                 received_at = datetime.now(settings.tz)
                 received_date = received_at.date()
-                review_summary = None
-                session = db.get_course_session_by_prompt(source_message.reply_to_message.message_id)
-                if (session is not None and session.class_date == received_date
-                        and session.survey_task_id is not None
-                        and session.status.value not in {"answered", "missed"}):
-                    from .course_tracking import progress_is_no_progress, progress_is_unknown
-                    if not progress_is_unknown(text) and not progress_is_no_progress(text):
-                        try:
-                            review_summary = await ai.summarize_progress(text)
-                        except (AIError, ValueError):
-                            pass
                 action = lambda: db.record_course_reply(
                     source_message.reply_to_message.message_id, source_message.message_id, text,
-                    local_date=received_date, review_summary=review_summary,
+                    local_date=received_date,
                 )
             else:
                 action = await prepare_message(text, update_id=update_id)

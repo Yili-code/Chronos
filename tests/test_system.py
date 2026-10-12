@@ -69,33 +69,29 @@ def test_unknown_reply_never_creates_task(system):
     assert service.list_open() == []
 
 
-def test_course_reply_preserves_evidence_and_stores_english_review_label(system, monkeypatch):
+def test_course_reply_preserves_evidence_without_creating_a_task(system):
     from chronos.course_tracking import COURSE_SCHEDULE, new_session
     client, service, bot, config = system
     today = datetime.now(config.tz).date()
     session = new_session(COURSE_SCHEDULE[1], today, 601)
     main.db.create_course_session(session, create_tasks=True)
-    summary = AsyncMock(return_value='Chapter 2 to around page 43')
-    monkeypatch.setattr(main.ai, 'summarize_progress', summary)
     payload = {'update_id': 902, 'message': {'message_id': 602,
-               'chat': {'id': 123}, 'text': '第二章到43頁左右',
+               'chat': {'id': 123}, 'text': '我已新增待辦',
                'reply_to_message': {'message_id': 601}}}
     headers = {'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}
     assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 200
-    review, = service.list_open()
-    assert review['title'] == f'複習計算機結構 {today:%m/%d}：Chapter 2 to around page 43'
-    assert main.db.get_course_session(session.session_id).reported_progress == '第二章到43頁左右'
-    summary.assert_awaited_once_with('第二章到43頁左右')
+    assert service.list_open() == []
+    assert main.db.get_course_session(session.session_id).reported_progress == '我已新增待辦'
+    assert '其他代辦保持不變' in bot.send_message.await_args.args[1]
+    main.ai.parse.assert_not_awaited()
 
 
-def test_no_class_reply_skips_ai_review_task(system, monkeypatch):
+def test_no_class_reply_skips_followup_task(system):
     from chronos.course_tracking import COURSE_SCHEDULE, ProgressReportKind, new_session
     client, service, bot, config = system
     today = datetime.now(config.tz).date()
     session = new_session(COURSE_SCHEDULE[4], today, 701)
     main.db.create_course_session(session, create_tasks=True)
-    summary = AsyncMock(return_value='No class today')
-    monkeypatch.setattr(main.ai, 'summarize_progress', summary)
     payload = {'update_id': 903, 'message': {'message_id': 702,
                'chat': {'id': 123}, 'text': '今天沒上課',
                'reply_to_message': {'message_id': 701}}}
@@ -106,9 +102,8 @@ def test_no_class_reply_skips_ai_review_task(system, monkeypatch):
     saved = main.db.get_course_session(session.session_id)
     assert saved.report_kind is ProgressReportKind.NO_PROGRESS
     assert service.list_open() == []
-    summary.assert_not_awaited()
     sent = bot.send_message.await_args.args[1]
-    assert '沒有新增複習代辦' in sent
+    assert '其他代辦保持不變' in sent
     assert 'No class today' not in sent
 
 

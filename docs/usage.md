@@ -69,7 +69,7 @@ Study 預設關閉，包含 NTOU / TronClass 特定課表與課程 ID；不是�
 
 `/preparation_budget` 顯示 assignment-preparation worker 的每日 request 與估算 token reservations。`/prepare` 只使用已保存的作業文字，不讀取附件。
 
-`/tasks` 與每日清單使用粗體 `Tasks` 標題。每筆 task 的 title、完整 `YYYY-MM-DD HH:MM` due time 與 tag 各自位於不同文字層級，避免把 metadata 混入標題。過長的多字 tag 只在顯示層縮寫，例如 canonical `computer-architecture` 顯示為 `#CA`；canonical value 仍保留供搜尋與資料關聯。Owner 也能透過 `/edit` 保存自己的 tag display preference。課後回覆原文仍保存作為進度證據；新建立的複習代辦會另外使用一次 AI 產生簡短英文 label。若翻譯暫時失敗，進度仍會保存，複習代辦回退顯示原文。
+`/tasks` 與每日清單使用粗體 `Tasks` 標題。每筆 task 的 title、完整 `YYYY-MM-DD HH:MM` due time 與 tag 各自位於不同文字層級，避免把 metadata 混入標題。過長的多字 tag 只在顯示層縮寫，例如 canonical `computer-architecture` 顯示為 `#CA`；canonical value 仍保留供搜尋與資料關聯。Owner 也能透過 `/edit` 保存自己的 tag display preference。課後回覆原文會保存作為進度證據，並完成原本的進度填寫代辦；回覆本身不會被自動轉成複習或確認範圍代辦。若要建立下一步任務，需要另外發送明確的新增代辦訊息。
 
 設定 `CHRONOS_TELEGRAM_CHAT_ID` 後，其他 chat 無法操作 bot。
 

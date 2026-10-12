@@ -68,19 +68,6 @@ def classify_progress(text: str) -> ProgressReportKind:
     return ProgressReportKind.PROGRESS
 
 
-def progress_followup(session: "ProgressSession", review_summary: str | None = None) -> tuple[str, str, str] | None:
-    short_date = session.class_date.strftime("%m/%d")
-    kind = session.report_kind or classify_progress(session.reported_progress or "")
-    if kind is ProgressReportKind.NO_PROGRESS:
-        return None
-    if kind is ProgressReportKind.UNKNOWN_SCOPE:
-        return (f"確認{session.course_name} {short_date} 上課範圍",
-                "確認範圍", "確認範圍後")
-    detail = (review_summary or session.reported_progress or "").strip()
-    return (f"複習{session.course_name} {short_date}：{detail}",
-            "複習", "複習後")
-
-
 @dataclass(frozen=True)
 class CourseSlot:
     key: str

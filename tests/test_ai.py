@@ -109,21 +109,6 @@ def test_external_classday_parse_rejects_incomplete_output(monkeypatch):
         asyncio.run(ExternalAI(config()).parse_classday("明天軟體工程不上課"))
 
 
-def test_progress_summary_is_concise_english_and_preserves_numbers(monkeypatch):
-    def handler(request):
-        payload = json.loads(request.content)
-        assert payload["contents"][0]["parts"][0]["text"] == "第二章到43頁左右"
-        prompt = payload["systemInstruction"]["parts"][0]["text"]
-        assert "Preserve chapter numbers, page numbers" in prompt
-        return httpx.Response(200, json={"candidates": [{"content": {"parts": [{
-            "text": json.dumps({"summary": "Chapter 2 to around page 43"})
-        }]}}]})
-    mock_provider(monkeypatch, handler)
-    assert asyncio.run(ExternalAI(config()).summarize_progress("第二章到43頁左右")) == (
-        "Chapter 2 to around page 43"
-    )
-
-
 @pytest.mark.parametrize("content", ["not json", '{}',
     '{"title":"  ","due_at":null,"project":null}',
     '{"title":"test","due_at":"2026-09-18T17:00:00","project":null}',
