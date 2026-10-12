@@ -128,7 +128,7 @@ def course_for_weekday(weekday: int) -> tuple[CourseSlot, ...]:
 
 
 def prompt_text(course_name: str) -> str:
-    return f"<b>{escape(course_name)}</b> 今天的進度"
+    return f"<b>{escape(course_name)}</b>\n請簡述今天的進度。"
 
 
 def new_session(slot: CourseSlot, class_date: date, prompt_message_id: int) -> ProgressSession:

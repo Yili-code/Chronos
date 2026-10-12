@@ -26,9 +26,9 @@ def holiday_notices(snapshot, now):
         label = "今天" if window == "today" else "明天"
         # Do not imply course-prompt suppression has been activated here.
         checked = datetime.fromisoformat(snapshot['fetched_at']).astimezone(TAIPEI)
-        text = (f"{label}（{day:%m/%d}）放假。\n\n"
+        text = (f"<b>{label}（{day:%m/%d}）放假</b>\n\n"
                 f"<b>依據</b>\n{escape(snapshot['source_url'])}\n\n"
-                f"<b>校曆查核時間</b> {checked:%m/%d %H:%M}")
+                f"<b>校曆查核</b> {checked:%m/%d %H:%M}")
         notices.append((key, text))
     return notices
 
@@ -39,12 +39,12 @@ def calendar_advisories(snapshot, now, *, exhausted=False):
         if not exhausted:
             return []
         return [(f"calendar:health:{local.date()}:unverified",
-                 "今天的官方校曆更新已達嘗試上限，尚無當日有效資料。"
-                 "Chronos 不會根據舊資料停發課後調查；請自行確認是否停課。")]
+                 "官方校曆更新已達重試上限，今天仍無有效資料。"
+                 "Chronos 會維持原課表，不根據舊資料停發課後調查。請自行確認是否停課。")]
     events = [CalendarEvent(**row) for row in snapshot['events']]
     return [(f"calendar:health:{day}:ambiguous",
-             f"{day:%m/%d} 的官方校曆含需確認或衝突的上課資訊。"
-             "請向授課教師確認，再用 /classday 設定指定課程；尚未確認前照課表詢問。")
+             f"{day:%m/%d} 的官方校曆含有衝突或待確認資訊。"
+             "請先向授課教師確認，再用 /classday 設定指定課程；確認前仍依原課表詢問。")
             for day in (local.date(), local.date() + timedelta(days=1))
             if day_policy(events, day) == 'needs_confirmation']
 
@@ -63,7 +63,7 @@ async def tick_calendar(db, telegram, chat_id, now, *, sync_result=None):
         prior = db.get_study_delivery(f"calendar:holiday:{local.date()}:tomorrow")
         if day_policy(events, local.date()) == 'no_class' and (not prior or prior['status'] != 'sent'):
             notices.append((f"calendar:holiday:{local.date()}:late",
-                f"剛確認今天（{local:%m/%d}）放假。\n\n"
+                f"<b>今天（{local:%m/%d}）放假</b>\n剛完成校曆確認。\n\n"
                 f"<b>依據</b>\n{escape(snapshot['source_url'])}"))
     exhausted = (sync_result or {}).get('calendar_attempts', 0) >= 3
     notices += calendar_advisories(snapshot, now, exhausted=exhausted)

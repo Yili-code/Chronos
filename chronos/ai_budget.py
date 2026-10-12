@@ -37,8 +37,10 @@ async def notify_budget(db, telegram, chat_id, status, now):
     from .study_delivery import StudyDeliveryLedger
     from .study_scheduler import delivery_outcome
     from .telegram import TelegramError
-    messages = {'near_limit': '作業準備 AI 已接近設定的每日上限；不會切換付費模型。',
-                'exhausted': '作業準備 AI 已達設定的每日上限或尚未配置額度，已停止送出請求。請檢查額度設定；不會切換付費模型。'}
+    messages = {
+        'near_limit': '作業準備 AI 已接近今日上限。仍使用目前模型，不會自動切換付費方案。',
+        'exhausted': '作業準備 AI 已停止：今日上限已達，或額度尚未配置。請檢查設定；不會自動切換付費方案。',
+    }
     if status not in messages:
         raise ValueError('invalid budget notice')
     ledger = StudyDeliveryLedger(db)
@@ -61,6 +63,6 @@ def budget_report(db, now):
     day = now.astimezone(TAIPEI).date().isoformat()
     state = db.get_ai_budget(day)
     if state is None:
-        return '作業準備 AI：今日尚無用量紀錄。'
-    return (f"作業準備 AI：{state['requests']}/{state.get('request_limit', '?')} requests · "
+        return '作業準備 AI · 今日尚無用量紀錄。'
+    return (f"作業準備 AI · {state['requests']}/{state.get('request_limit', '?')} requests · "
             f"~{state['estimated_tokens']}/{state.get('token_limit', '?')} tokens")

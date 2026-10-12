@@ -91,7 +91,7 @@ async def tick_study(db, telegram, chat_id: int, now: datetime) -> dict:
                 continue
             try:
                 result = await telegram.send_message(chat_id,
-                    f"還沒收到{session.course_name}的課堂進度。請回覆原始課後訊息。",
+                    f"尚未收到 {session.course_name} 的課堂進度。請直接回覆原始訊息；我會依此整理後續。",
                     reply_to_message_id=session.prompt_message_id)
             except TelegramError:
                 ledger.finish(key, claim, now)
@@ -129,8 +129,8 @@ async def notify_study_failures(db, telegram, chat_id: int, now: datetime) -> di
             }.get(category, ('Study 通知', '請檢查課後問題及 /tasks 中的待辦。'))
             try:
                 result = await telegram.send_message(chat_id,
-                    f"一則{label}無法確認送達，或已達重試上限。"
-                    f"Chronos 已停止自動重送該則訊息；{guidance}")
+                    f"{label}的送達狀態無法確認，且已達重試上限。"
+                    f"Chronos 已停止自動重送。{guidance}")
             except TelegramError:
                 ledger.finish(key, claim, now)
             else:

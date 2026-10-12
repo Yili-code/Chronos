@@ -273,7 +273,7 @@ class MailWorkflow:
                     if error.status != 404:
                         raise
                     subject = saved.get("mail", {}).get("subject", identifier)
-                    await self.deliver(item_key, f"郵件已無法讀取：{subject}\n可能已被移除，本次未再操作。")
+                    await self.deliver(item_key, f"郵件無法讀取：{subject}\n可能已被移除，因此沒有執行任何動作。")
                     continue
                 # A journal survives a crash between the Gmail write and Telegram report.
                 pending = item.get("trash_pending", False)
@@ -304,14 +304,14 @@ class MailWorkflow:
             suffix = "（達本次上限，其餘新信留待後續整理）" if state["more"] else ""
             if backlog:
                 text = (f"歷史郵件第 {progress['number']} 批 · {len(state['ids'])} 封\n"
-                        "請選 Trash、Archive 或 Read，完成後傳 /mail_next。Read 保留於收件匣但不再列入整理。")
+                        "請選 Trash、Archive 或 Read；完成後傳 /mail_next。Read 會保留在收件匣，但不再列入整理。")
                 if not state["ids"]:
-                    text = "歷史郵件批次整理完成；選 Read 的信仍留在收件匣，新進郵件由每日排程接續。"
+                    text = "歷史郵件整理完成。選擇 Read 的信仍在收件匣；新郵件由每日排程接手。"
                 await self.deliver(day + ":end", text)
                 if not state["ids"]:
                     self.patch("backlog", enabled=False)
             elif state["ids"]:
-                await self.deliver(day + ":end", f"郵件整理完成 · {day[6:]}\n本次檢查 {len(state['ids'])} 封新增郵件{suffix}。\n不重複播報；新增任務須由你操作。")
+                await self.deliver(day + ":end", f"郵件整理完成 · {day[6:]}\n已檢查 {len(state['ids'])} 封新增郵件{suffix}。\n不重複播報；只有你能新增任務。")
             if not backlog and not state["more"]:
                 self.patch("daily-cursor", since=state["window_end"])
             self.patch(day, complete=True)
@@ -325,7 +325,7 @@ class MailWorkflow:
         self.require_config()
         saved = self.get("message:" + identifier)
         if not saved:
-            return lambda: "找不到這封已整理的信，未執行任何動作。"
+            return lambda: "找不到這封已整理的信。沒有執行任何動作。"
         instruction = instruction.strip()
         action = {"刪除": "trash", "刪掉": "trash", "移到垃圾桶": "trash", "delete": "trash",
                   "保留": "keep", "已讀": "read", "標為已讀": "read", "新增任務": "task",
@@ -341,15 +341,15 @@ class MailWorkflow:
                     if current.get("task_id") is not None:
                         return f"This email already has task #{current['task_id']}. No duplicate was added."
                     if current.get("draft_token") != token or not current.get("draft_title"):
-                        return "This confirmation has expired. Tap Task again."
+                        return "That confirmation has expired. Tap Task to prepare a fresh one."
                     if kind == "cancel":
                         self.patch("message:" + identifier, draft_title=None, draft_token=None, draft_edit=False)
-                        return "Cancelled. No task was added."
+                        return "Understood. No task was added."
                     if kind == "edit":
                         self.patch("message:" + identifier, draft_edit=True)
-                        return "Reply to this message with the new task title."
+                        return "Reply with the revised task title."
                     if current.get("draft_edit"):
-                        return "Enter the edited task title before confirming."
+                        return "Enter the revised task title before confirming."
                     title = current["draft_title"]
                     def create_confirmed(old):
                         if old.get("task_id") is not None:
@@ -365,7 +365,7 @@ class MailWorkflow:
             token = hashlib.sha256(title.encode()).hexdigest()[:8]
             def propose():
                 self.patch("message:" + identifier, draft_title=title, draft_token=token, draft_edit=False)
-                return "Add this to Tasks?\n\n" + title
+                return "Create this task?\n\n" + title
             return propose
         if action in {"封存", "archive"} or (action == "keep" and saved.get("backlog")):
             await self.gmail.verify_account()

@@ -254,7 +254,7 @@ async def test_read_action_finishes_backlog_item_without_archiving(workflow):
 async def test_task_button_requires_yes_and_supports_edit_cancel(workflow):
     workflow.patch("message:ab12", mail=message())
     preview = await workflow.prepare_action("ab12", "task")
-    assert preview().startswith("Add this to Tasks?")
+    assert preview().startswith("Create this task?")
     assert not workflow.db.list_open_tasks()
     state = workflow.get("message:ab12")
     old = state["draft_token"]

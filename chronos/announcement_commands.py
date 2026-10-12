@@ -19,7 +19,7 @@ def announcements_query(db, command):
     pages = (len(records)+2)//3
     if page > pages:
         return f'目前共 {pages} 頁。'
-    lines = ['已保存公告內容版本（非完整課程清單；同一公告可能有多個版本）']
+    lines = ['已保存公告 · 非完整課程清單；同一公告可能有多個版本']
     for key, record in records[(page-1)*3:page*3]:
         item = record['announcement']
         lines.append(f"{item['title']}\n課程：{item['course_id']}；發布：{short_datetime(item['published_at'])}\n/announcement {key}")
@@ -38,7 +38,7 @@ def announcement_query(db, command):
         return '找不到此已保存公告版本。'
     item = record['announcement']
     text = (f"{item['title']}\n課程：{item['course_id']}\n發布：{short_datetime(item['published_at'])}\n"
-            '此為已保存內容版本，不保證是最新公告；連結已移除。\n\n'+item['content'])
+            '這是已保存版本，不保證為最新公告。連結已移除。\n\n'+item['content'])
     parts = [text[i:i+1500] for i in range(0,len(text),1500)]
     page = int(match[2] or 1)
     if page > len(parts):

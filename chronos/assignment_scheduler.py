@@ -38,7 +38,7 @@ async def tick_assignments(db, telegram, chat_id, now):
         if not initial and current_key(item) != key:
             continue  # a concurrently changed deadline invalidates this claim
         deadline = (f"截止：{item.deadline:%m/%d %H:%M}（台北時間）" if item.deadline
-                    else "截止時間尚未提供。請用 /tasks 找到此作業，再用 /edit 清單順位 ... 補上。")
+                    else "截止時間尚未提供。請先用 /tasks 定位，再以 /edit 清單順位 ... 補上。")
         label = '新作業' if initial else ('作業來源更新' if ':source:' in key else '作業截止提醒')
         source_deadline = ''
         if label == '作業來源更新' and (item.deadline_owner_override or item.deadline_origin == 'owner'):
@@ -51,7 +51,7 @@ async def tick_assignments(db, telegram, chat_id, now):
                    else "TronClass 繳交狀態尚未確認。\n") +
                 f"已觀察到 PDF 附件：{len(item.attachments)} 個（僅部分清單，未代表已下載）。\n"
                 f"說明：{item.description[:1000] or '尚未提供'}\n"
-                "完成後請在 /tasks 找到此作業，再用 /done 清單順位 結案。")
+                "完成後，用 /tasks 定位，再以 /done 清單順位 結案。")
         try:
             response = await telegram.send_message(chat_id, text)
         except TelegramError:

@@ -26,7 +26,7 @@ def test_web_and_telegram_use_external_ai(task_service, monkeypatch):
     task = asyncio.run(main.create_natural_task(main.NaturalTask(text="工作")))
     assert task["title"] == "Review external analysis"
     assert asyncio.run(main.handle_message("新增 工作")) == (
-        "<b>Created</b>\n<b>Review external analysis</b>"
+        "<b>Task created</b>\n<b>Review external analysis</b>"
     )
     assert parse.await_count == 2
     due = datetime(2026, 9, 20, 12, tzinfo=main.settings.tz)
@@ -50,11 +50,11 @@ def test_failure_does_not_change_tasks(task_service, monkeypatch):
     assert "External AI failed" in asyncio.run(main.handle_message("新增 工作"))
     edit_failure = asyncio.run(main.handle_message("/edit 1 改到明天"))
     assert "External AI failed" in edit_failure
-    assert "No changes were made to Task 1" in edit_failure
+    assert "Task 1 is unchanged" in edit_failure
     assert asyncio.run(main.handle_message("/reschedule 1 明天")) == "Unknown command. Use /help to see available commands."
     assert task_service.list_open() == before
     assert "Original task" in asyncio.run(main.handle_message("/tasks"))
-    assert asyncio.run(main.handle_message("/done 1")) == "Completed: Original task\n\nNo open tasks."
+    assert asyncio.run(main.handle_message("/done 1")) == "Completed: Original task\n\nNo open tasks. All clear."
 
 
 def test_edit_uses_natural_language_and_returns_latest_list(task_service, monkeypatch):
@@ -78,5 +78,5 @@ def test_edit_uses_natural_language_and_returns_latest_list(task_service, monkey
 def test_edit_missing_position_skips_ai(task_service, monkeypatch):
     edit = AsyncMock()
     monkeypatch.setattr(main.ai, "edit", edit)
-    assert asyncio.run(main.handle_message("/edit 1 rename it")) == "Task 1 not found.\n\nNo open tasks."
+    assert asyncio.run(main.handle_message("/edit 1 rename it")) == "Task 1 not found.\n\nNo open tasks. All clear."
     edit.assert_not_awaited()

@@ -44,7 +44,9 @@ def test_edited_messages_are_explicitly_not_replayed(system, text):
     for _ in range(2):
         assert send(client, 1100, text, edited=True).status_code == 200
     assert tasks.list_open() == before
-    assert "Editing a sent message does not change tasks" in bot.send_message.call_args.args[1]
+    reply = bot.send_message.call_args.args[1]
+    assert "Editing a sent message does not replay its command" in reply
+    assert "Nothing changed" in reply
     assert bot.send_message.await_count == 1
     main.ai.parse.assert_not_awaited()
 

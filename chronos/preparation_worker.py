@@ -100,9 +100,9 @@ async def notify_preparation_failures(db, telegram, chat_id, now):
         if claim is None:
             continue
         reason = '額度不足或尚未配置' if state.get('last_error') == 'budget_exhausted' else '生成或傳送未能確認完成'
-        text = f"作業 #{state['task_id']} 準備已停止：{reason}。不會自動重跑 AI。"
+        text = f"作業 #{state['task_id']} 的準備已停止：{reason}。Chronos 不會自動重跑 AI。"
         if state.get('draft'):
-            text += f"已保存草稿，可用 /draft {state['task_id']} 查閱。"
+            text += f" 草稿已保存，可用 /draft {state['task_id']} 查閱。"
         try:
             response = await telegram.send_message(chat_id, text)
         except TelegramError:

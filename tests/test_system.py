@@ -219,7 +219,7 @@ def test_webhook_auth_and_commands(system):
     assert send('/start').status_code == 200
     help_text = bot.send_message.call_args.args[1]
     assert help_text == main.HELP_TEXT
-    assert help_text == '<b>Help</b>\nChoose a category.'
+    assert help_text == '<b>Chronos</b>\nReady, YiLi. Choose a category.'
     assert '/tasks' not in help_text
     assert '/reschedule' not in help_text
     assert '/postpone' not in help_text
@@ -239,7 +239,7 @@ def test_webhook_auth_and_commands(system):
     assert bot.send_message.call_args.kwargs == {'parse_mode': None}
     assert service.list_open() == []
     assert send('新增工作').status_code == 200
-    assert bot.send_message.call_args.args[1] == '<b>Created</b>\n<b>Test task</b>'
+    assert bot.send_message.call_args.args[1] == '<b>Task created</b>\n<b>Test task</b>'
     assert bot.send_message.call_args.kwargs['parse_mode'] == 'HTML'
     assert bot.send_message.call_args.kwargs['reply_markup']['inline_keyboard'][0][0]['callback_data'] == 'task:edit:1'
     assert send('/tasks').status_code == 200
@@ -253,10 +253,10 @@ def test_webhook_auth_and_commands(system):
     assert bot.send_message.await_args_list[-2].args[1].startswith('<b>Updated · Task 1</b>')
     assert bot.send_message.await_args_list[-1].args[1].startswith('<b>Tasks</b>')
     assert send('/done 1').status_code == 200
-    assert bot.send_message.call_args.args[1] == 'Completed: Test task\n\nNo open tasks.'
+    assert bot.send_message.call_args.args[1] == 'Completed: Test task\n\nNo open tasks. All clear.'
     assert service.list_open() == []
     assert send('/done 3').status_code == 200
-    assert bot.send_message.call_args.args[1] == 'Task 3 not found.\n\nNo open tasks.'
+    assert bot.send_message.call_args.args[1] == 'Task 3 not found.\n\nNo open tasks. All clear.'
     parse_count = main.ai.parse.await_count
     assert send('/reschedule 4 tomorrow').status_code == 200
     assert bot.send_message.call_args.args[1] == 'Unknown command. Use /help to see available commands.'
@@ -356,8 +356,8 @@ def test_failed_edit_is_saved_and_can_be_retried_by_stable_task_id(system):
     error_message = bot.send_message.await_args_list[-1]
     assert error_message.args[1] == (
         '<b>Update failed · Task 1</b>\n'
-        'provider unavailable\nNo changes were made to Task 1. '
-        'Your command has been saved; use the button below to retry it.'
+        'provider unavailable\nTask 1 is unchanged. '
+        'The command is saved; use the button below to retry.'
     )
     assert error_message.kwargs['parse_mode'] == 'HTML'
     assert error_message.kwargs['reply_markup']['inline_keyboard'][0][0] == {
@@ -621,7 +621,7 @@ def test_clear_requires_button_confirmation_and_deletes_every_task(system):
         'id': 'clear-1', 'data': 'clear:confirm', 'message': {'chat': {'id': 123}}}}
     assert client.post('/telegram/webhook', headers=headers, json=callback).status_code == 200
     assert service.list_open() == []
-    assert bot.send_message.call_args.args[1] == 'Deleted 2 tasks.\n\nNo open tasks.'
+    assert bot.send_message.call_args.args[1] == 'Deleted 2 tasks.\n\nNo open tasks. All clear.'
     bot.answer_callback_query.assert_awaited_with('clear-1')
     for _ in range(2):
         assert client.post('/telegram/webhook', headers=headers, json=callback).status_code == 200
@@ -636,7 +636,7 @@ def test_clear_can_be_cancelled(system):
             'id': 'cancel-1', 'data': 'clear:cancel', 'message': {'chat': {'id': 123}}}})
     assert response.status_code == 200
     assert len(service.list_open()) == 1
-    assert bot.send_message.call_args.args[1] == 'Clear cancelled.'
+    assert bot.send_message.call_args.args[1] == 'Understood. Nothing was deleted.'
 
 
 @pytest.mark.parametrize('payload', [

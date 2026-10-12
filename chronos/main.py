@@ -49,7 +49,7 @@ telegram = TelegramClient(settings.telegram_bot_token)
 gmail = GmailClient(settings)
 scheduler = AsyncIOScheduler(timezone=settings.tz)
 
-HELP_TEXT = "<b>Help</b>\nChoose a category."
+HELP_TEXT = "<b>Chronos</b>\nReady, YiLi. Choose a category."
 HELP_SECTIONS = {
     "tasks": (
         "<b>Tasks</b>\n"
@@ -88,7 +88,7 @@ HELP_BACK_KEYBOARD = {
     "inline_keyboard": [[{"text": "Back to categories", "callback_data": "help:index"}]]
 }
 
-CLEAR_CONFIRM_TEXT = "Delete all tasks? This cannot be undone."
+CLEAR_CONFIRM_TEXT = "Delete every task? This cannot be undone."
 CLEAR_KEYBOARD = {
     "inline_keyboard": [
         [{"text": "Delete all tasks", "callback_data": "clear:confirm"}],
@@ -189,7 +189,7 @@ def clear_tasks_reply() -> str:
     # The clear operation runs inside the same Firestore transaction as the
     # update receipt. Firestore forbids reads after the first write, and the
     # post-clear state is already known without another query.
-    return f"Deleted {deleted} {noun}.\n\nNo open tasks."
+    return f"Deleted {deleted} {noun}.\n\nNo open tasks. All clear."
 
 
 async def send_daily_tasks() -> None:
@@ -487,8 +487,8 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                 result = await mail.daily(backlog=True, request_key=str(update_id))
             except GmailError as error:
                 raise HTTPException(status_code=503, detail=str(error)) from None
-            reply = (f"本批還有 {result['waiting']} 封，請先封存、刪除或標為已讀，再傳 /mail_next。"
-                     if result.get("waiting") else "批次已送出，請查看上方郵件卡片。")
+            reply = (f"本批仍有 {result['waiting']} 封待處理。請先封存、刪除或標為已讀，再傳 /mail_next。"
+                     if result.get("waiting") else "下一批已送出。請查看上方郵件卡片。")
             receipt = db.process_update(update_id, lambda: reply)
         if not receipt["delivered"]:
             result = await telegram.send_message(chat_id, receipt["reply"])
@@ -510,7 +510,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         receipt = db.get_update(update_id)
         if receipt is None:
             if update.edited_message is not None:
-                action = lambda: "編輯舊訊息不會重新執行郵件動作，請傳送新指令。"
+                action = lambda: "編輯舊訊息不會重新執行郵件動作。請傳送一則新指令。"
             elif mail_callback:
                 if not callback_match or not active_binding or active_binding["mail_id"] != callback_match.group(2):
                     raise HTTPException(status_code=403, detail="Mail callback is not bound to this card")
@@ -527,8 +527,8 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         if receipt["reply"] in {"已移到垃圾桶。", "已標為已讀。"} or receipt["reply"].startswith("已封存，可在 Gmail 所有郵件找到"):
             card_id = source_message.message_id if mail_callback else source_message.reply_to_message.message_id
             await delete_telegram_messages(chat_id, card_id)
-        is_proposal = receipt["reply"].startswith("Add this to Tasks?\n\n")
-        is_edit = receipt["reply"] == "Reply to this message with the new task title."
+        is_proposal = receipt["reply"].startswith("Create this task?\n\n")
+        is_edit = receipt["reply"] == "Reply with the revised task title."
         task_resolved = (receipt["reply"].startswith("Added task #")
                          or receipt["reply"].startswith("This email already has task #"))
         callback_action = callback_match.group(1) if callback_match else None
@@ -580,15 +580,15 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             if data == "clear:confirm":
                 action = clear_tasks_reply
             elif data == "clear:cancel":
-                action = lambda: "Clear cancelled."
+                action = lambda: "Understood. Nothing was deleted."
             elif data and re.fullmatch(r"edit:(?:retry|cancel):\d+", data):
                 action = await prepare_pending_edit(data)
             elif data and re.fullmatch(r"task:edit:\d+", data):
                 selected = tasks.get_open_by_id(int(data.rsplit(":", 1)[1]))
                 if selected is None:
-                    action = lambda: "This task is no longer open. Use /tasks to select another task."
+                    action = lambda: "That task is no longer open. Use /tasks to select another."
                 else:
-                    card = task_card(selected, "Reply to this message with your changes.\n\n" +
+                    card = task_card(selected, "Send the changes you want applied.\n\n" +
                                      "\n".join(format_task_block(selected, settings.tz)))
                     card["reply_markup"] = {"force_reply": True, "selective": True}
                     action = lambda: message_bundle(card)
@@ -606,7 +606,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                     "reply_markup": HELP_BACK_KEYBOARD,
                 })
             else:
-                action = lambda: "This action is no longer available."
+                action = lambda: "That action is no longer available. Nothing changed."
             receipt = db.process_update(update_id, action)
     else:
         text = (source_message.text or "").strip()
@@ -618,9 +618,8 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                           if source_message.reply_to_message is not None else None)
             if update.edited_message is not None:
                 action = lambda: (
-                    "Editing a sent message does not change tasks or replay commands. "
-                    "No task was changed. Send /edit 1 your changes as a new message, "
-                    "or use /tasks → Edit and reply to the task card."
+                    "Editing a sent message does not replay its command. Nothing changed. "
+                    "Send /edit 1 your changes as a new message, or use /tasks → Edit."
                 )
             elif bound_task is not None:
                 instruction = re.sub(r"^/edit\s*", "", text, flags=re.IGNORECASE).strip()
@@ -723,17 +722,17 @@ def _legacy_parse_mode(reply: str) -> str | None:
 async def prepare_pending_edit(data: str) -> Callable[[], str | dict]:
     match = re.fullmatch(r"edit:(retry|cancel):(\d+)", data)
     if not match:
-        return lambda: "This saved edit is no longer available."
+        return lambda: "That saved edit is no longer available."
     action_name, pending_id_text = match.groups()
     pending_id = int(pending_id_text)
     pending = db.get_pending_task_edit(pending_id)
     if pending is None:
-        return lambda: "This saved edit is no longer available. No task was changed."
+        return lambda: "That saved edit is no longer available. Nothing changed."
     position = int(pending["position"])
     if action_name == "cancel":
         def cancel() -> str:
             db.delete_pending_task_edit(pending_id)
-            return f"The saved edit for Task {position} was cancelled. The task was not changed."
+            return f"Understood. The saved edit for Task {position} was cancelled; the task is unchanged."
         return cancel
 
     current_items = tasks.list_open()
@@ -741,7 +740,7 @@ async def prepare_pending_edit(data: str) -> Callable[[], str | dict]:
     if current is None:
         def stale() -> str:
             db.delete_pending_task_edit(pending_id)
-            return "The target task is no longer open. The saved command was cancelled."
+            return "The target task is no longer open. I cancelled the saved command."
         return stale
     current_position = next(
         index for index, item in enumerate(current_items, start=1) if item["id"] == current["id"]
@@ -761,8 +760,8 @@ async def prepare_pending_edit(data: str) -> Callable[[], str | dict]:
             return lambda reason=reason: message_bundle({
                 "text": (
                     f"<b>Update failed · Task {current_position}</b>\n"
-                    f"{reason}\nNo changes were made to Task {current_position}. "
-                    "Your command is still saved; use the button below to retry it later."
+                    f"{reason}\nTask {current_position} is unchanged. "
+                    "The command remains saved; use the button below when you are ready to retry."
                 ),
                 "parse_mode": "HTML",
                 "reply_markup": pending_edit_keyboard(pending_id, current_position),
@@ -775,13 +774,13 @@ async def prepare_pending_edit(data: str) -> Callable[[], str | dict]:
         aliases = tasks.project_aliases()
         if edit_conflict(before, current):
             return message_bundle({"text": "This task changed while the edit was being prepared. "
-                                   "No changes were applied. Retry the saved edit to use its latest values.",
+                                   "Nothing was applied. Retry the saved edit to use the latest values.",
                                    "reply_markup": pending_edit_keyboard(pending_id, current_position)})
         task = tasks.edit(current["id"], parsed.title, parsed.due_at, parsed.project, parsed.timing)
         if task is None:
             db.delete_pending_task_edit(pending_id)
             return message_bundle({
-                "text": "The target task is no longer open. No changes were applied.",
+                "text": "The target task is no longer open. Nothing was applied.",
                 "parse_mode": None,
             })
         if tag_alias:
@@ -909,8 +908,7 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
                 reason = escape(str(error))
                 if update_id is None:
                     return lambda reason=reason: (
-                        f"{reason}\nNo changes were made to Task {position}. "
-                        "Please try again later."
+                        f"{reason}\nTask {position} is unchanged. Please try again later."
                     )
                 def save_failed_edit() -> dict:
                     db.save_pending_task_edit(
@@ -922,8 +920,8 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
                     )
                     text = (
                         f"<b>Update failed · Task {position}</b>\n"
-                        f"{reason}\nNo changes were made to Task {position}. "
-                        "Your command has been saved; use the button below to retry it."
+                        f"{reason}\nTask {position} is unchanged. "
+                        "The command is saved; use the button below to retry."
                     )
                     return message_bundle({
                         "text": text,
@@ -939,11 +937,11 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
             aliases = tasks.project_aliases()
             if edit_conflict(before, current):
                 return message_bundle({"text": "This task changed while the edit was being prepared. "
-                                       "No changes were applied. Use /tasks and send your changes again."})
+                                       "Nothing was applied. Use /tasks, then send the changes again."})
             task = tasks.edit(task_id, parsed.title, parsed.due_at, parsed.project, parsed.timing)
             if task is None:
                 return message_bundle({
-                    "text": f"Task {position} is no longer open. No changes were applied.",
+                    "text": f"Task {position} is no longer open. Nothing was applied.",
                     "parse_mode": None,
                 })
             if tag_alias:
@@ -987,7 +985,7 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
         details = "\n".join(format_task_block(
             task, settings.tz, project_aliases=aliases
         ))
-        return message_bundle(task_card(task, f"<b>Created</b>\n{details}"))
+        return message_bundle(task_card(task, f"<b>Task created</b>\n{details}"))
     return create
 
 

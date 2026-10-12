@@ -13,9 +13,9 @@ async def tick_announcements(db, telegram, chat_id, now, limit=10):
         if attempted >= limit:
             break
         item = record['announcement']
-        text = (f"課程公告內容版本：{item['title']}\n課程：{item['course_id']}\n"
+        text = (f"課程公告 · 已保存版本\n{item['title']}\n課程：{item['course_id']}\n"
                 f"發布：{short_datetime(item['published_at'])}\n"
-                '來源未提供穩定識別碼，可能是新公告或既有公告修改；連結已移除。\n\n'
+                '來源沒有穩定識別碼，可能是新公告，也可能是既有公告更新。連結已移除。\n\n'
                 + item['content'])
         parts = [text[i:i+1500] for i in range(0, len(text), 1500)]
         for index, part in enumerate(parts):
@@ -28,7 +28,7 @@ async def tick_announcements(db, telegram, chat_id, now, limit=10):
                 break
             attempted += 1
             try:
-                response = await telegram.send_message(chat_id, f'{part}\n\n公告分段 {index+1}/{len(parts)}')
+                response = await telegram.send_message(chat_id, f'{part}\n\n公告 {index+1}/{len(parts)}')
             except TelegramError:
                 ledger.finish(key, claim, now)
                 break

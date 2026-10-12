@@ -35,9 +35,9 @@ def test_tomorrow_notice_uses_compact_spaced_html_sections():
     now = clock()
     _, text = holiday_notices(snapshot(now), now)[0]
     assert text == (
-        "明天（10/09）放假。\n\n"
+        "<b>明天（10/09）放假</b>\n\n"
         f"<b>依據</b>\n{OFFICIAL_CALENDAR_URL}\n\n"
-        "<b>校曆查核時間</b> 10/08 12:00"
+        "<b>校曆查核</b> 10/08 12:00"
     )
 
 
@@ -128,7 +128,7 @@ def test_health_waits_for_exhaustion_and_deduplicates(tmp_path):
         asyncio.run(tick_calendar(db, bot, 123, now,
                                 sync_result={'calendar_attempts': attempts}))
     assert bot.send_message.await_count == 1
-    assert '尚無當日有效資料' in bot.send_message.call_args.args[1]
+    assert '今天仍無有效資料' in bot.send_message.call_args.args[1]
 
 
 def test_early_late_discovery_notifies_immediately_then_at_eight(tmp_path):

@@ -568,17 +568,17 @@ class Database:
                 "SELECT * FROM course_sessions WHERE prompt_message_id = ?", (prompt_id,)
             ).fetchone()
             if row is None:
-                return "這則訊息不是課後進度問題，請回覆原始課後訊息。"
+                return "這則回覆未對應到課後進度問題。請直接回覆原始訊息。"
             session = session_from_firestore(dict(row))
             if local_date is not None:
                 expired = mark_missed_at_day_end(session, local_date=local_date)
                 if expired != session:
                     self.save_course_session(expired)
-                    return "這堂課的回覆期限已結束，未變更進度。"
+                    return "這堂課的回覆期限已結束。進度未變更。"
             answered = accept_reply(session, reply_to_message_id=prompt_id,
                                     reply_message_id=message_id, text=text)
             if answered is None:
-                return "這堂課已記錄或已結束，未變更進度。"
+                return "這堂課已記錄或結束。進度未變更。"
             review = None
             followup = progress_followup(answered, review_summary)
             if session.survey_task_id is not None:
@@ -589,13 +589,13 @@ class Database:
                     review = self.create_task(title, None, session.course_name, now)
             self.save_course_session(answered)
             if answered.report_kind is ProgressReportKind.NO_PROGRESS:
-                return (f"已記錄{session.course_name}（{session.class_date:%m/%d}）今日無課或無進度。"
+                return (f"已記錄 {session.course_name}（{session.class_date:%m/%d}）：今天無課或沒有進度。\n"
                         "沒有新增複習代辦。")
             if review is not None:
-                return (f"已記錄{session.course_name}的進度，填寫進度代辦已完成。\n"
-                        f"新增{kind}代辦。\n"
-                        f"{completion}先用 /tasks 查看目前清單，再輸入 /done 清單順位 完成。")
-            return f"已記錄{session.course_name}（{session.class_date:%m/%d}）的進度。"
+                return (f"已記錄 {session.course_name} 的進度。填寫進度代辦已完成。\n"
+                        f"已新增{kind}代辦。\n"
+                        f"{completion}，用 /tasks 定位，再以 /done 清單順位 完成。")
+            return f"已記錄 {session.course_name}（{session.class_date:%m/%d}）的進度。"
 
     def get_course_session(self, session_id: str) -> ProgressSession | None:
         with self.connect() as connection:

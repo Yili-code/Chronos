@@ -258,7 +258,7 @@ def canonical_project(value: str) -> str:
 
 def format_tasks(tasks: list[dict], tz, project_aliases: dict[str, str] | None = None, *, now: datetime | None = None) -> str:
     if not tasks:
-        return "No open tasks."
+        return "No open tasks. All clear."
     lines = ["<b>Tasks</b>"]
     for position, task in enumerate(tasks, start=1):
         lines.append("")

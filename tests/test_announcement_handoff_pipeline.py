@@ -47,7 +47,7 @@ def test_real_http_handoff_import_delivery_and_replay(tmp_path, monkeypatch, bac
             if iteration == 0:
                 sends = bot.send_message.await_count
                 assert sends > 1
-                reconstructed = ''.join(call.args[1].rsplit('\n\n公告分段 ',1)[0]
+                reconstructed = ''.join(call.args[1].rsplit('\n\n公告 ',1)[0]
                                         for call in bot.send_message.call_args_list)
                 assert reconstructed.endswith(content)
             else:

@@ -64,12 +64,12 @@ def prepare_action(db, command, now):
                          and preparation_key(state['assignment']) == key]
         if previous_jobs:
             state = max(previous_jobs, key=lambda job: job['requested_at'])
-            return (f"作業 #{task_id} 準備狀態：{state['status']}。"
-                    '相同文字要求已有準備紀錄，不會重複生成；已保存草稿可用 /draft 查閱。')
+            return (f"作業 #{task_id} · 準備狀態 {state['status']}。"
+                    '相同文字要求已有紀錄，因此不會重複生成。已保存草稿可用 /draft 查閱。')
         state = db.mutate_preparation(key, lambda previous: previous or {
             'status': 'queued', 'assignment': source, 'task_id': task_id,
             'requested_at': now.isoformat(), 'version': 'prepare-v1', 'draft': None,
             'last_error': None, 'attempt_count': 0})
-        return (f"作業 #{task_id} 準備狀態：{state['status']}。"
-                '由已配置額度的工作程式處理；目前只保存文字要求，未讀取附件，不會自動提交。')
+        return (f"作業 #{task_id} · 準備狀態 {state['status']}。"
+                '工作程式將使用既有額度處理。目前只保存文字要求；不讀取附件，也不會自動提交。')
     return enqueue
