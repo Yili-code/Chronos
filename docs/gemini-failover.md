@@ -17,7 +17,9 @@ An identical key in both fields is deduplicated. Either field alone is sufficien
 
 ## Runtime behavior
 
-- The primary is preferred whenever it is available.
+- The credential bound to `CHRONOS_GEMINI_API_KEY` is preferred whenever it is
+  available. Production deployment promotes the separately provisioned key to
+  that runtime slot and keeps the original key as the fallback.
 - HTTP 429, 500/502/503/504, 401/403, and an explicit `API_KEY_INVALID` rejection
   allow failover. Ordinary request errors such as 400/404/422 do not.
 - With two distinct keys configured, one operation makes at most one attempt per
@@ -65,13 +67,16 @@ when the first response was lost.
 environment or `.env`. When supplied, it stores the value as
 `chronos-gemini-api-key-secondary` in the deployment project's Secret Manager,
 grants the runtime service account access, and binds that secret version to the
-Cloud Run environment. The key can belong to a different project from the one
-hosting the secret and service.
+preferred `CHRONOS_GEMINI_API_KEY` runtime slot. The original
+`chronos-gemini-api-key` secret is retained in the
+`CHRONOS_GEMINI_API_KEY_SECONDARY` fallback slot. The key can belong to a
+different project from the one hosting the secret and service.
 
 If the local secondary is omitted, the script preserves the service's existing
-secondary secret reference. To disable it, remove the environment binding from
-Cloud Run and clear the local value before the next deployment. Do not leave a
-revoked key configured as a working backup.
+`chronos-gemini-api-key-secondary` secret reference even after it has been
+promoted to the preferred runtime slot. To disable it, remove the environment
+binding from Cloud Run and clear the local value before the next deployment. Do
+not leave a revoked key configured as the preferred credential.
 
 For an existing deployment, configure the secret with the actual secondary key
 and deploy the new code. Merely updating a local `.env` does not configure Cloud

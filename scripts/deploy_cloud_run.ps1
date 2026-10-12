@@ -211,7 +211,6 @@ $secretVersions["scheduler"] = Set-CloudSecret "chronos-scheduler-secret" $sched
 $secretVersions["webPassword"] = Set-CloudSecret "chronos-web-password" $webPassword
 
 $secretBindings = @(
-    "CHRONOS_GEMINI_API_KEY=chronos-gemini-api-key:$($secretVersions.gemini)",
     "CHRONOS_TELEGRAM_BOT_TOKEN=chronos-telegram-bot-token:$($secretVersions.telegramToken)",
     "CHRONOS_TELEGRAM_CHAT_ID=chronos-telegram-chat-id:$($secretVersions.telegramChat)",
     "CHRONOS_TELEGRAM_WEBHOOK_SECRET=chronos-telegram-webhook-secret:$($secretVersions.telegramWebhook)",
@@ -225,20 +224,31 @@ if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($existingServiceJ
     $existingService = $existingServiceJson | ConvertFrom-Json
 }
 $secondaryGeminiKey = Get-OptionalLocalValue "CHRONOS_GEMINI_API_KEY_SECONDARY"
+$secondaryVersion = ""
 if (-not [string]::IsNullOrWhiteSpace($secondaryGeminiKey)) {
     $secondaryVersion = Set-CloudSecret "chronos-gemini-api-key-secondary" $secondaryGeminiKey
-    $secretBindings += "CHRONOS_GEMINI_API_KEY_SECONDARY=chronos-gemini-api-key-secondary:$secondaryVersion"
 }
 else {
-    # Keep an already configured secondary when the local .env omits it.
+    # Keep the separately provisioned credential when the local .env omits it,
+    # regardless of which runtime slot currently references that secret.
     if ($null -ne $existingService) {
-        $secondaryBinding = $existingService.spec.template.spec.containers[0].env |
-            Where-Object { $_.name -eq "CHRONOS_GEMINI_API_KEY_SECONDARY" } | Select-Object -First 1
-        $secondaryRef = $secondaryBinding.valueFrom.secretKeyRef
+        $secondaryRef = $existingService.spec.template.spec.containers[0].env |
+            ForEach-Object { $_.valueFrom.secretKeyRef } |
+            Where-Object { $_.name -eq "chronos-gemini-api-key-secondary" } |
+            Select-Object -First 1
         if ($secondaryRef -and $secondaryRef.name -and $secondaryRef.key) {
-            $secretBindings += "CHRONOS_GEMINI_API_KEY_SECONDARY=$($secondaryRef.name):$($secondaryRef.key)"
+            $secondaryVersion = $secondaryRef.key
         }
     }
+}
+if (-not [string]::IsNullOrWhiteSpace($secondaryVersion)) {
+    # The separately provisioned credential is the preferred runtime key. Keep
+    # the original key as the bounded fallback without copying either secret.
+    $secretBindings += "CHRONOS_GEMINI_API_KEY=chronos-gemini-api-key-secondary:$secondaryVersion"
+    $secretBindings += "CHRONOS_GEMINI_API_KEY_SECONDARY=chronos-gemini-api-key:$($secretVersions.gemini)"
+}
+else {
+    $secretBindings += "CHRONOS_GEMINI_API_KEY=chronos-gemini-api-key:$($secretVersions.gemini)"
 }
 $studyTrackingValue = "false"
 if ($EnableStudyTracking) {
