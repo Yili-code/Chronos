@@ -19,6 +19,8 @@ def main():
     paths = sorted(set(result.stdout.decode("utf-8").split("\0")) - {""})
     for name in paths:
         path = ROOT / name
+        if not path.is_file():
+            continue
         text = path.read_text(encoding="utf-8")
         # Code examples are not links; skip fenced blocks before examining prose.
         text = re.sub(r"(?ms)^```[^\n]*\n.*?^```[^\n]*$", "", text)

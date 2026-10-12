@@ -142,8 +142,9 @@ async def test_slow_primary_leaves_time_for_secondary():
 
 
 @pytest.mark.asyncio
-async def test_summary_failover_reserves_budget_for_each_attempt():
-    from chronos.gemini_summary import GeminiSummary
+async def test_preparation_failover_reserves_budget_for_each_attempt():
+    from chronos.preparation_ai import GeminiPreparationProvider
+    from chronos.assignment_preparation import PreparationDraft
     from chronos.ai_budget import BudgetExceeded
     seen = []
     def handler(request):
@@ -157,9 +158,15 @@ async def test_summary_failover_reserves_budget_for_each_attempt():
             raise BudgetExceeded('limit')
         return {'near_limit': False}
     budget.reserve = reserve
-    generator = GeminiSummary(dual_config(), transport=httpx.MockTransport(handler), budget=budget)
+    settings = dual_config()
+    settings.gemini_api_base = 'https://generativelanguage.googleapis.com/v1beta'
+    generator = GeminiPreparationProvider(
+        settings,
+        free_tier_confirmed=True,
+        transport=httpx.MockTransport(handler), budget=budget,
+    )
     with pytest.raises(BudgetExceeded):
-        await generator._request({}, 'test-model')
+        await generator.request({}, 'test-model', output_type=PreparationDraft)
     assert seen == ['test-secret']
     assert count[0] == 2
 
@@ -182,32 +189,6 @@ def test_explicit_invalid_key_400_can_fail_over(monkeypatch):
     mock_provider(monkeypatch, handler)
     assert asyncio.run(ExternalAI(dual_config()).parse('Synthetic task')).title == 'Submit report'
     assert seen == ['test-secret', 'secondary-secret']
-
-
-@pytest.mark.asyncio
-async def test_summary_secondary_success_and_review_both_count_against_budget():
-    from chronos.gemini_summary import GeminiSummary
-    from test_gemini_summary import args
-    from test_study_notes import payload
-    seen, reservations = [], []
-    def handler(request):
-        key = request.headers['x-goog-api-key']
-        seen.append(key)
-        if key == 'test-secret':
-            return httpx.Response(429)
-        return httpx.Response(200, json={'candidates': [{'finishReason': 'STOP', 'content': {
-            'parts': [{'text': json.dumps(payload())}]}}]})
-    def reserve(*values):
-        reservations.append(values)
-        return {'near_limit': False}
-    settings = dual_config()
-    settings.gemini_api_base = 'https://generativelanguage.googleapis.com/v1beta'
-    generator = GeminiSummary(settings, free_tier_confirmed=True, transport=httpx.MockTransport(handler),
-                              budget=SimpleNamespace(reserve=reserve))
-    result = await generator.generate(**args())
-    assert result['concepts']
-    assert seen == ['test-secret', 'secondary-secret', 'secondary-secret']
-    assert len(reservations) == 3
 
 
 def test_failover_and_duplicate_receipt_create_only_one_task(tmp_path, monkeypatch):

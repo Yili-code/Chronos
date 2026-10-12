@@ -8,7 +8,7 @@ def test_announcement_handoff_is_origin_checked_and_durable(tmp_path):
     import threading
     from test_announcements import payload
     extension = 'a' * 32
-    server = LocalObservationServer(0, catalog_path=tmp_path / 'catalog.sqlite3', extension_id=extension)
+    server = LocalObservationServer(0, data_dir=tmp_path, extension_id=extension)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         for origin, body, expected, count in [
@@ -33,58 +33,27 @@ def test_announcement_handoff_is_origin_checked_and_durable(tmp_path):
         server.server_close()
 
 
-def test_pdf_handoff_requires_catalog_and_persists_bytes(tmp_path):
-    import base64
-    import threading
-    server = LocalObservationServer(0, pdf_directory=tmp_path)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    data = b"%PDF-1.7\n" + b"x" * 40 + b"\n%%EOF"
-    payload = {"course_id": "2", "download": {"status": "downloaded", "source_id": "1",
-               "byte_count": len(data), "data_base64": base64.b64encode(data).decode()}}
-    try:
-        for expected in (400, 202):
-            connection = HTTPConnection("127.0.0.1", server.server_port)
-            connection.request("POST", "/v1/browser-pdf", body=json.dumps(payload),
-                               headers={"X-Chronos-Bridge": "1", "Content-Type": "application/json"})
-            response = connection.getresponse()
-            assert response.status == expected
-            receipt = json.loads(response.read())
-            connection.close()
-            if expected == 400:
-                assert list(tmp_path.iterdir()) == []
-                server.material_store.put({"status": "observed", "materials": [{
-                    "source_id": "1", "course_id": "2", "activity_id": "3",
-                    "filename": "lecture.pdf", "uploaded_at": None}]})
-            else:
-                assert receipt["status"] == "persisted"
-                assert (tmp_path / f"{receipt['sha256']}.pdf").read_bytes() == data
-    finally:
-        server.shutdown()
-        server.server_close()
-
-
-def test_material_http_rejection_preserves_previous_snapshot():
+def test_removed_material_and_session_endpoints_are_absent():
     import threading
 
     server = LocalObservationServer(0)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    payload = {"status": "observed", "materials": [{
-        "source_id": "1", "course_id": "2", "activity_id": "3",
-        "filename": "lecture.pdf", "uploaded_at": None,
-    }]}
+    threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        for value, expected in ((payload, 202), ({**payload, "cookies": "rejected"}, 400)):
+        for endpoint in (
+            "/v1/browser-materials",
+            "/v1/browser-pdf",
+            "/v1/browser-native-pdf",
+            "/v1/cloud-session",
+        ):
             connection = HTTPConnection("127.0.0.1", server.server_port)
             connection.request(
-                "POST", "/v1/browser-materials", body=json.dumps(value),
+                "POST", endpoint, body="{}",
                 headers={"Content-Type": "application/json", "X-Chronos-Bridge": "1"},
             )
             response = connection.getresponse()
-            assert response.status == expected
+            assert response.status == 404
             response.read()
             connection.close()
-        assert server.material_store.course_materials("2") == payload["materials"]
     finally:
         server.shutdown()
         server.server_close()

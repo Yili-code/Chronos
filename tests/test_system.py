@@ -55,10 +55,6 @@ def test_course_reply_is_correlated_and_receipt_deduplicated(system):
     assert bot.send_message.await_count == 1
     main.ai.parse.assert_not_awaited()
     assert service.list_open() == []
-    polls = main.db.list_study_polls()
-    assert len(polls) == 1
-    assert polls[0][0] == 'poll:reply:900:189717'
-    assert polls[0][1]['status'] == 'queued'
 
 
 def test_unknown_reply_never_creates_task(system):
@@ -92,7 +88,7 @@ def test_course_reply_preserves_evidence_and_stores_english_review_label(system,
     summary.assert_awaited_once_with('第二章到43頁左右')
 
 
-def test_no_class_reply_skips_ai_review_task_and_material_poll(system, monkeypatch):
+def test_no_class_reply_skips_ai_review_task(system, monkeypatch):
     from chronos.course_tracking import COURSE_SCHEDULE, ProgressReportKind, new_session
     client, service, bot, config = system
     today = datetime.now(config.tz).date()
@@ -110,7 +106,6 @@ def test_no_class_reply_skips_ai_review_task_and_material_poll(system, monkeypat
     saved = main.db.get_course_session(session.session_id)
     assert saved.report_kind is ProgressReportKind.NO_PROGRESS
     assert service.list_open() == []
-    assert main.db.list_study_polls() == []
     summary.assert_not_awaited()
     sent = bot.send_message.await_args.args[1]
     assert '沒有新增複習代辦' in sent
@@ -124,7 +119,6 @@ def test_study_scheduler_endpoint_requires_secret_and_is_disabled_by_default(sys
     response = client.post('/internal/study', headers={'X-Chronos-Scheduler-Secret': 'test-scheduler'})
     assert response.status_code == 200
     assert response.json() == {'enabled': False}
-    assert main.db.list_study_polls() == []
     bot.send_message.assert_not_awaited()
 
 
@@ -152,12 +146,8 @@ def test_study_endpoint_refreshes_calendar_before_course_policy(system, monkeypa
     assert response.json()['calendar_sync'] == 'updated'
     assert response.json()['course_prompts_suppressed'] is True
     assert response.json()['holiday_notices_sent'] == 1
-    assert response.json()['collection_slots_ensured'] == 7
-    assert len(main.db.list_study_polls()) == 7
-    assert all(state['status']=='queued' for _,state in main.db.list_study_polls())
     repeated = client.post('/internal/study', headers={'X-Chronos-Scheduler-Secret': 'test-scheduler'})
     assert repeated.status_code == 200
-    assert len(main.db.list_study_polls()) == 7
     assert main.db.get_course_session('security:2026-10-05') is None
     assert bot.send_message.await_count == 1
 

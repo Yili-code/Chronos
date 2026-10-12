@@ -36,7 +36,7 @@ def test_reply_to_created_card_edits_original_task_after_reorder(system, monkeyp
     edit.assert_not_awaited()
 
 
-@pytest.mark.parametrize("text", ["/edit 1 移除期限", "/done 1", "/clear", "finish lecture", "/export " + "a" * 64])
+@pytest.mark.parametrize("text", ["/edit 1 移除期限", "/done 1", "/clear", "finish lecture", "/unknown"])
 def test_edited_messages_are_explicitly_not_replayed(system, text):
     client, tasks, bot, config = system
     tasks.create("Keep me", datetime(2026, 10, 10, 9, tzinfo=config.tz))

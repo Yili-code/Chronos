@@ -9,7 +9,7 @@ from pydantic import ValidationError
 from chronos.assignment_preparation import PreparationDraft, generate_preparation, render_preparation
 from chronos.assignments import Assignment
 from chronos.course_tracking import TAIPEI
-from chronos.gemini_summary import GeminiSummary
+from chronos.preparation_ai import GeminiPreparationProvider
 
 
 def payload(kind='report'):
@@ -36,7 +36,9 @@ async def test_preparation_uses_bounded_provider_without_submission():
             'content': {'parts': [{'text': json.dumps(payload())}]}}]})
     config = SimpleNamespace(gemini_api_key='test', gemini_model='test-model', ai_timeout=5,
         gemini_api_base='https://generativelanguage.googleapis.com/v1beta')
-    provider = GeminiSummary(config, free_tier_confirmed=True, transport=httpx.MockTransport(handler))
+    provider = GeminiPreparationProvider(
+        config, free_tier_confirmed=True, transport=httpx.MockTransport(handler)
+    )
     item = Assignment('course', 'source', 'Report', 'Explain algorithm', datetime.now(TAIPEI))
     result = await generate_preparation(provider, item)
     assert result.kind == 'report'

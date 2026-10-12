@@ -64,7 +64,7 @@ async def generate_preparation(provider, assignment):
                 'attachments': 'not supplied'}, ensure_ascii=False)}]}],
             'generationConfig': {'responseMimeType': 'application/json',
                 'responseJsonSchema': PreparationDraft.model_json_schema()}}
-    result = await provider._request(body, config.gemini_model, output_type=PreparationDraft)
+    result = await provider.request(body, config.gemini_model, output_type=PreparationDraft)
     return PreparationDraft.model_validate(result)
 
 

@@ -12,7 +12,6 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 from .course_tracking import ProgressReportKind, ProgressSession, accept_reply, mark_missed_at_day_end
 from .course_tracking import progress_followup
 from .course_tracking_store import session_from_firestore, session_to_firestore
-from .note_record import NoteRecord
 from .assignments import Assignment, to_record, from_record, set_deadline, owner_deadline_edit
 from .task_timing import normalize_timing, task_sort_key
 
@@ -33,14 +32,10 @@ class FirestoreDatabase:
         self.mail_state = self.client.collection(f"{collection_prefix}_mail_state")
         self.course_sessions = self.client.collection(f"{collection_prefix}_course_sessions")
         self.study_deliveries = self.client.collection(f"{collection_prefix}_study_deliveries")
-        self.study_notes = self.client.collection(f"{collection_prefix}_study_notes")
-        self.summary_jobs = self.client.collection(f"{collection_prefix}_summary_jobs")
-        self.material_selections = self.client.collection(f"{collection_prefix}_material_selections")
         self.assignments = self.client.collection(f"{collection_prefix}_assignments")
         self.exams = self.client.collection(f"{collection_prefix}_exams")
         self.preparation_jobs = self.client.collection(f"{collection_prefix}_preparation_jobs")
         self.announcements = self.client.collection(f"{collection_prefix}_announcements")
-        self.study_poll_jobs = self.client.collection(f"{collection_prefix}_study_poll_jobs")
         self.ai_daily_budget = self.client.collection(f"{collection_prefix}_ai_daily_budget")
         self.ai_usage = self.client.collection(f"{collection_prefix}_ai_usage")
         self.course_day_decisions = self.client.collection(f"{collection_prefix}_course_day_decisions")
@@ -68,64 +63,6 @@ class FirestoreDatabase:
             transaction.set(reference, state)
             return state
         return self._run_transaction(mutate)
-
-    def save_study_note(self, note: NoteRecord) -> NoteRecord:
-        """First completed result wins; retries never overwrite canonical content."""
-        data = NoteRecord.model_validate(note.model_dump()).model_dump(mode="json")
-        def save(transaction):
-            reference = self.study_notes.document(note.content_fingerprint)
-            snapshot = reference.get(transaction=transaction)
-            if snapshot.exists:
-                return NoteRecord.model_validate(snapshot.to_dict())
-            transaction.create(reference, data)
-            return NoteRecord.model_validate(data)
-        return self._run_transaction(save)
-
-    def mutate_summary_job(self, key: str, transition: Callable) -> dict:
-        def mutate(transaction):
-            reference = self.summary_jobs.document(key)
-            snapshot = reference.get(transaction=transaction)
-            state = transition(snapshot.to_dict() if snapshot.exists else None)
-            transaction.set(reference, state)
-            return state
-        return self._run_transaction(mutate)
-
-    def get_summary_job(self, key: str) -> dict | None:
-        snapshot = self.summary_jobs.document(key).get()
-        return snapshot.to_dict() if snapshot.exists else None
-
-    def mutate_material_selection(self, key: str, transition: Callable) -> dict:
-        def mutate(transaction):
-            reference = self.material_selections.document(key)
-            snapshot = reference.get(transaction=transaction)
-            state = transition(snapshot.to_dict() if snapshot.exists else None)
-            transaction.set(reference, state)
-            return state
-        return self._run_transaction(mutate)
-
-    def get_material_selection(self, key: str) -> dict | None:
-        snapshot = self.material_selections.document(key).get()
-        return snapshot.to_dict() if snapshot.exists else None
-
-    def list_material_selections(self) -> list[tuple[str, dict]]:
-        return sorted([(snapshot.id, snapshot.to_dict()) for snapshot in self.material_selections.stream()])
-
-    def get_study_note(self, fingerprint: str) -> NoteRecord | None:
-        if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
-            return None
-        snapshot = self.study_notes.document(fingerprint).get()
-        return NoteRecord.model_validate(snapshot.to_dict()) if snapshot.exists else None
-
-    def list_study_notes(self, course: str | None = None, limit: int = 20) -> list[NoteRecord]:
-        if not 1 <= limit <= 100:
-            raise ValueError("invalid note limit")
-        query = self.study_notes
-        if course is not None:
-            query = query.where(filter=FieldFilter("course", "==", course))
-        # Filtering first avoids exposing unrelated course results. Server-side
-        # ordering/limits and indexes are needed before a large notes archive.
-        notes = [NoteRecord.model_validate(s.to_dict()) for s in query.stream()]
-        return sorted(notes, key=lambda n: (n.created_at, n.content_fingerprint), reverse=True)[:limit]
 
     def mutate_study_delivery(self, key: str, transition: Callable) -> dict:
         """Transaction callbacks must be pure: Firestore can replay them."""
@@ -289,19 +226,6 @@ class FirestoreDatabase:
 
     def list_announcements(self):
         return sorted((snapshot.id, snapshot.to_dict()) for snapshot in self.announcements.stream())
-
-    def mutate_study_poll(self, key, transition):
-        def mutate(transaction):
-            ref = self.study_poll_jobs.document(key)
-            previous = ref.get(transaction=transaction)
-            state = transition(previous.to_dict() if previous.exists else None)
-            if not previous.exists or state != previous.to_dict():
-                transaction.set(ref,state)
-            return state
-        return self._run_transaction(mutate)
-
-    def list_study_polls(self):
-        return sorted((snapshot.id,snapshot.to_dict()) for snapshot in self.study_poll_jobs.stream())
 
     def mutate_ai_budget(self, day, transition):
         def mutate(transaction):
@@ -565,7 +489,7 @@ class FirestoreDatabase:
         return session_from_firestore(snapshots[0].to_dict()) if len(snapshots) == 1 else None
 
     def record_course_reply(self, prompt_id: int, message_id: int, text: str, *, local_date=None,
-                            update_id=None, received_at=None, review_summary=None) -> str:
+                            review_summary=None) -> str:
         """Read state and write progress inside the webhook receipt transaction."""
         def record(transaction):
             query = self.course_sessions.where(filter=FieldFilter("prompt_message_id", "==", prompt_id))
@@ -583,15 +507,6 @@ class FirestoreDatabase:
                                     reply_message_id=message_id, text=text)
             if answered is None:
                 return "這堂課已記錄或已結束，未變更進度。"
-            poll = None
-            if update_id is not None and answered.report_kind is not ProgressReportKind.NO_PROGRESS:
-                from .study_poll_plan import COURSE_SOURCE_IDS, reply_request
-                from .study_poll_queue import initial_poll_state
-                request = reply_request(COURSE_SOURCE_IDS[session.course_key], update_id, received_at)
-                ref = self.study_poll_jobs.document(request.key)
-                existing = ref.get(transaction=transaction)
-                if not existing.exists:
-                    poll = (ref, initial_poll_state(request))
             review = None
             followup = progress_followup(answered, review_summary)
             if session.survey_task_id is not None:
@@ -605,8 +520,6 @@ class FirestoreDatabase:
                 if survey.exists and survey.get("status") == "open":
                     transaction.update(task_ref, {"status": "done", "completed_at": now.isoformat()})
             transaction.update(snapshot.reference, session_to_firestore(answered))
-            if poll is not None:
-                transaction.set(*poll)
             if answered.report_kind is ProgressReportKind.NO_PROGRESS:
                 return (f"已記錄{session.course_name}（{session.class_date:%m/%d}）今日無課或無進度。"
                         "沒有新增複習代辦。")

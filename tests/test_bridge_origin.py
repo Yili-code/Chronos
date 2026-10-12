@@ -17,8 +17,8 @@ def test_receiver_accepts_only_exact_configured_extension(origin, expected):
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         connection = HTTPConnection("127.0.0.1", server.server_port)
-        connection.request("POST", "/v1/browser-materials",
-            body=json.dumps({"status": "unknown", "materials": []}),
+        connection.request("POST", "/v1/browser-observation",
+            body=json.dumps({"url": "https://tronclass.ntou.edu.tw/user/index", "visible_text": "課程首頁"}),
             headers={"Origin": origin, "X-Chronos-Bridge": "1", "Content-Type": "application/json"})
         response = connection.getresponse()
         assert response.status == expected

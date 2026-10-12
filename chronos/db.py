@@ -1,6 +1,5 @@
 import sqlite3
 import json
-import re
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime
@@ -11,7 +10,6 @@ from typing import Callable, Iterator
 from .course_tracking import ProgressReportKind, ProgressSession, accept_reply, mark_missed_at_day_end
 from .course_tracking import progress_followup
 from .course_tracking_store import session_from_firestore, session_to_firestore
-from .note_record import NoteRecord
 from .assignments import Assignment, to_record, from_record, set_deadline, owner_deadline_edit
 from .task_timing import normalize_timing, task_sort_key
 
@@ -68,20 +66,12 @@ CREATE TABLE IF NOT EXISTS study_deliveries (
     delivery_key TEXT PRIMARY KEY,
     state_json TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS study_notes (
-    fingerprint TEXT PRIMARY KEY,
-    course TEXT NOT NULL,
-    created_epoch REAL NOT NULL,
-    record_json TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS summary_jobs (fingerprint TEXT PRIMARY KEY, state_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS assignments (source_key TEXT PRIMARY KEY, task_id INTEGER NOT NULL UNIQUE, record_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS calendar_snapshot (id INTEGER PRIMARY KEY CHECK(id=1), record_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS calendar_sync (id INTEGER PRIMARY KEY CHECK(id=1), record_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS exams (source_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS preparation_jobs (source_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS announcements (source_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS study_poll_jobs (source_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS ai_daily_budget (day TEXT PRIMARY KEY, record_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS ai_usage (
     day TEXT NOT NULL,
@@ -91,10 +81,14 @@ CREATE TABLE IF NOT EXISTS ai_usage (
 );
 CREATE TABLE IF NOT EXISTS course_day_decisions (source_key TEXT PRIMARY KEY, decision TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS exam_notice_plans (source_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS material_selections (selection_key TEXT PRIMARY KEY, state_json TEXT NOT NULL);
-CREATE INDEX IF NOT EXISTS idx_study_notes_recent ON study_notes(created_epoch DESC, fingerprint DESC);
-CREATE INDEX IF NOT EXISTS idx_study_notes_course ON study_notes(course, created_epoch DESC, fingerprint DESC);
 """
+
+REMOVED_MATERIAL_TABLES = (
+    "study_notes",
+    "summary_jobs",
+    "material_selections",
+    "study_poll_jobs",
+)
 
 
 class Database:
@@ -121,6 +115,8 @@ class Database:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as connection:
             connection.executescript(SCHEMA)
+            for table in REMOVED_MATERIAL_TABLES:
+                connection.execute(f"DROP TABLE IF EXISTS {table}")
             task_columns = {row[1] for row in connection.execute("PRAGMA table_info(tasks)")}
             if "timing_json" not in task_columns:
                 connection.execute("ALTER TABLE tasks ADD COLUMN timing_json TEXT NOT NULL DEFAULT '{}'")
@@ -140,70 +136,6 @@ class Database:
     def check_ready(self) -> None:
         with self.connect() as connection:
             connection.execute("SELECT 1").fetchone()
-
-    def save_study_note(self, note: NoteRecord) -> NoteRecord:
-        validated = NoteRecord.model_validate(note.model_dump())
-        with self.connect() as connection:
-            connection.execute(
-                "INSERT INTO study_notes VALUES (?, ?, ?, ?) ON CONFLICT(fingerprint) DO NOTHING",
-                (validated.content_fingerprint, validated.course, validated.created_at.timestamp(),
-                 validated.model_dump_json()),
-            )
-            row = connection.execute("SELECT record_json FROM study_notes WHERE fingerprint=?",
-                                     (validated.content_fingerprint,)).fetchone()
-        return NoteRecord.model_validate_json(row[0])
-
-    def mutate_summary_job(self, key: str, transition: Callable) -> dict:
-        with self.transaction() as connection:
-            row = connection.execute("SELECT state_json FROM summary_jobs WHERE fingerprint=?", (key,)).fetchone()
-            state = transition(json.loads(row[0]) if row else None)
-            connection.execute("INSERT INTO summary_jobs VALUES (?, ?) ON CONFLICT(fingerprint) DO UPDATE SET state_json=excluded.state_json",
-                               (key, json.dumps(state)))
-            return state
-
-    def get_summary_job(self, key: str) -> dict | None:
-        with self.connect() as connection:
-            row = connection.execute("SELECT state_json FROM summary_jobs WHERE fingerprint=?", (key,)).fetchone()
-        return json.loads(row[0]) if row else None
-
-    def mutate_material_selection(self, key: str, transition: Callable) -> dict:
-        with self.transaction() as connection:
-            row = connection.execute("SELECT state_json FROM material_selections WHERE selection_key=?", (key,)).fetchone()
-            state = transition(json.loads(row[0]) if row else None)
-            connection.execute("INSERT INTO material_selections VALUES (?, ?) ON CONFLICT(selection_key) DO UPDATE SET state_json=excluded.state_json",
-                               (key, json.dumps(state)))
-            return state
-
-    def get_material_selection(self, key: str) -> dict | None:
-        with self.connect() as connection:
-            row = connection.execute("SELECT state_json FROM material_selections WHERE selection_key=?", (key,)).fetchone()
-        return json.loads(row[0]) if row else None
-
-    def list_material_selections(self) -> list[tuple[str, dict]]:
-        with self.connect() as connection:
-            rows = connection.execute("SELECT selection_key, state_json FROM material_selections ORDER BY selection_key").fetchall()
-        return [(row[0], json.loads(row[1])) for row in rows]
-
-    def get_study_note(self, fingerprint: str) -> NoteRecord | None:
-        if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
-            return None
-        with self.connect() as connection:
-            row = connection.execute("SELECT record_json FROM study_notes WHERE fingerprint=?", (fingerprint,)).fetchone()
-        return NoteRecord.model_validate_json(row[0]) if row else None
-
-    def list_study_notes(self, course: str | None = None, limit: int = 20) -> list[NoteRecord]:
-        if not 1 <= limit <= 100:
-            raise ValueError("invalid note limit")
-        query = "SELECT record_json FROM study_notes"
-        values = []
-        if course is not None:
-            query += " WHERE course=?"
-            values.append(course)
-        query += " ORDER BY created_epoch DESC, fingerprint DESC LIMIT ?"
-        values.append(limit)
-        with self.connect() as connection:
-            rows = connection.execute(query, values).fetchall()
-        return [NoteRecord.model_validate_json(row[0]) for row in rows]
 
     def mutate_study_delivery(self, key: str, transition: Callable) -> dict:
         """Atomically apply a pure delivery-state transition; never send here."""
@@ -438,22 +370,6 @@ class Database:
         with self.connect() as connection:
             return [(row[0], json.loads(row[1])) for row in connection.execute('SELECT source_key, record_json FROM announcements ORDER BY source_key')]
 
-    def mutate_study_poll(self, key, transition):
-        from contextlib import nullcontext
-        active = self._transaction.get()
-        with (nullcontext(active) if active is not None else self.transaction()) as connection:
-            row = connection.execute('SELECT record_json FROM study_poll_jobs WHERE source_key=?',(key,)).fetchone()
-            previous = json.loads(row[0]) if row else None
-            state = transition(previous)
-            if row and state == previous:
-                return state
-            connection.execute('INSERT INTO study_poll_jobs VALUES (?, ?) ON CONFLICT(source_key) DO UPDATE SET record_json=excluded.record_json',(key,json.dumps(state)))
-            return state
-
-    def list_study_polls(self):
-        with self.connect() as connection:
-            return [(row[0],json.loads(row[1])) for row in connection.execute('SELECT source_key,record_json FROM study_poll_jobs ORDER BY source_key')]
-
     def mutate_ai_budget(self, day, transition):
         with self.transaction() as connection:
             row = connection.execute("SELECT record_json FROM ai_daily_budget WHERE day=?", (day,)).fetchone()
@@ -645,7 +561,7 @@ class Database:
         return session_from_firestore(dict(row)) if row else None
 
     def record_course_reply(self, prompt_id: int, message_id: int, text: str, *, local_date=None,
-                            update_id=None, received_at=None, review_summary=None) -> str:
+                            review_summary=None) -> str:
         """Called inside process_update, sharing the webhook receipt transaction."""
         with self.connect() as connection:
             row = connection.execute(
@@ -663,12 +579,6 @@ class Database:
                                     reply_message_id=message_id, text=text)
             if answered is None:
                 return "這堂課已記錄或已結束，未變更進度。"
-            if update_id is not None and answered.report_kind is not ProgressReportKind.NO_PROGRESS:
-                from .study_poll_plan import COURSE_SOURCE_IDS, reply_request
-                from .study_poll_queue import initial_poll_state
-                request = reply_request(COURSE_SOURCE_IDS[session.course_key], update_id, received_at)
-                connection.execute('INSERT OR IGNORE INTO study_poll_jobs VALUES (?, ?)',
-                                   (request.key,json.dumps(initial_poll_state(request))))
             review = None
             followup = progress_followup(answered, review_summary)
             if session.survey_task_id is not None:

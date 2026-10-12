@@ -91,7 +91,7 @@ def test_http_assignment_handoff_checks_origin_and_persists(tmp_path):
     import threading
     from http.client import HTTPConnection
     from chronos.local_observation_server import LocalObservationServer
-    server = LocalObservationServer(0, catalog_path=tmp_path / "catalog.sqlite3", extension_id="a" * 32)
+    server = LocalObservationServer(0, data_dir=tmp_path, extension_id="a" * 32)
     payload = deepcopy(PAYLOAD)
     payload["assignment"]["course_id"] = "188571"
     threading.Thread(target=server.serve_forever, daemon=True).start()

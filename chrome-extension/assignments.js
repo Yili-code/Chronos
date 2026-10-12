@@ -1,5 +1,28 @@
 // Visible homework detail only. No cookies, application state or bearer URLs.
 (function (root) {
+  function extractAttachments(document, page) {
+    const attachments = [];
+    const seen = new Set();
+    for (const row of document.querySelectorAll(".attachment-row")) {
+      const nameColumn = row.querySelector?.(".attachment-column");
+      const name = nameColumn?.querySelector?.(".file-name");
+      const extension = nameColumn?.querySelector?.(".file-extension");
+      const filename = name && extension
+        ? name.textContent.trim() + extension.textContent.trim()
+        : (nameColumn?.innerText || "").replace(/\s*\n\s*(\.[A-Za-z0-9]+)\s*$/, "$1").trim();
+      if (!filename || filename.length > 255 || /[\r\n/\\\0]/.test(filename)) continue;
+      for (const anchor of row.querySelectorAll?.("a[href]") || []) {
+        let url;
+        try { url = new URL(anchor.getAttribute("href"), page.origin); } catch { continue; }
+        const reference = url.pathname.match(/^\/api\/uploads\/reference\/(\d+)\/blob$/);
+        if (url.origin !== page.origin || url.username || url.password || !reference || seen.has(reference[1])) continue;
+        seen.add(reference[1]);
+        attachments.push({source_id: reference[1], filename});
+      }
+    }
+    return attachments;
+  }
+
   function extractAssignment(document, pageUrl) {
     const unknown = {status: "unknown", assignment: null};
     let page;
@@ -29,10 +52,7 @@
       if (!Number.isFinite(date.getTime()) || local.toISOString().slice(0,16) !== deadline.slice(0,16)) return unknown;
     }
     const submission = one('.section-prompt-message.homework') || "";
-    const catalog = root.ChronosMaterials?.extractMaterials(document, pageUrl);
-    const attachments = catalog?.status === "observed" ? catalog.materials.map(row => ({
-      source_id: row.source_id, filename: row.filename
-    })) : [];
+    const attachments = extractAttachments(document, page);
     return {status: "observed", assignment: {
       course_id: course[1], source_id: activity[1], title, description,
       deadline, submission_status: submission.startsWith("已繳交") ? "submitted" : "unknown",

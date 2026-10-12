@@ -102,17 +102,15 @@ def test_no_progress_phrases_with_real_scope_are_not_suppressed(text):
     assert not progress_is_no_progress(text)
 
 
-def test_no_class_reply_completes_survey_without_review_or_poll(db):
+def test_no_class_reply_completes_survey_without_review(db):
     session = new_session(COURSE_SCHEDULE[0], date(2026, 10, 5), 501)
     stored = db.create_course_session(session, create_tasks=True)
     receipt = db.process_update(29, lambda: db.record_course_reply(
         501, 502, "今天沒上課", local_date=date(2026, 10, 5),
-        update_id=29, received_at=datetime(2026, 10, 5, 12, 11, tzinfo=TAIPEI),
         review_summary="No class today",
     ))
 
     assert not db.list_open_tasks()
-    assert not db.list_study_polls()
     assert "沒有新增複習代辦" in receipt["reply"]
     saved = db.get_course_session(session.session_id)
     assert saved.status.value == "answered"

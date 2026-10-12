@@ -19,7 +19,7 @@ from test_firestore import database as firestore_fake
 @pytest.mark.parametrize('backend', ['sqlite', 'firestore'])
 def test_real_http_handoff_import_delivery_and_replay(tmp_path, monkeypatch, backend):
     extension_id = 'a' * 32
-    server = LocalObservationServer(0, catalog_path=tmp_path/'catalog.sqlite3', extension_id=extension_id)
+    server = LocalObservationServer(0, data_dir=tmp_path, extension_id=extension_id)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     db = firestore_fake(monkeypatch) if backend == 'firestore' else Database(tmp_path/'canonical.sqlite3')

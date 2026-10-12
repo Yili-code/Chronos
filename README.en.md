@@ -8,7 +8,7 @@
 
 Chronos is a self-hosted, single-user task assistant. Gemini handles natural-language task input; SQLite stores local data, with Firestore available for Cloud Run deployments. Telegram is the main interface, with a Web dashboard for viewing, adding and completing tasks.
 
-Version `0.1.0` is in development. There is no License file or GitHub Release yet; clarify licensing before redistribution or code contributions. There is no shared public bot or hosted demo. The Study integration contains NTOU / TronClass-specific course and cloud settings and is disabled by default.
+Version `0.1.0` is in development. There is no License file or GitHub Release yet; clarify licensing before redistribution or code contributions. There is no shared public bot or hosted demo. The optional Study integration retains NTOU / TronClass-specific progress, assignment, and announcement workflows; it does not download course materials or generate AI notes from PDFs.
 
 ## Preview without an API key
 
@@ -102,6 +102,6 @@ Confirm position `1` before each action: open tasks are sorted by deadline. List
 | Telegram does not reply | Check HTTPS webhook, all four bot settings, chat ID and whether the bot is blocked. |
 | Port 8000 is occupied | Use `--port 8001` and open port 8001 instead. |
 
-Detailed setup, Docker, command semantics, deployment and Study records are currently in Traditional Chinese: [setup](docs/getting-started.md), [commands](docs/usage.md), [deployment](docs/deployment.md), [document index](docs/README.md). Read the [extension's English data-flow guide](chrome-extension/README.md) before enabling Study browser capture or session handoff.
+Detailed setup, Docker, command semantics, deployment and Study boundaries are currently in Traditional Chinese: [setup](docs/getting-started.md), [commands](docs/usage.md), [deployment](docs/deployment.md), [Study](docs/study.md). Read the [extension data-flow guide](chrome-extension/README.md) before enabling browser observation.
 
 Report reproducible setup problems or documentation errors with your OS, Python version, commit and sanitized steps. Never attach `.env`, tokens, cookies, personal tasks or school materials. See [CONTRIBUTING](CONTRIBUTING.md) for the current licensing status. If Chronos is useful to you, a Star can help you find it later.

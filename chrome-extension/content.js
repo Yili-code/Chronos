@@ -13,28 +13,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     sendResponse(globalThis.ChronosAssignments.extractAssignment(document, location.href));
     return false;
   }
-  if (message?.type === "chronos.list_course_materials") {
-    sendResponse(globalThis.ChronosMaterials.extractCourseMaterials(document, location.href));
-    return false;
-  }
-  if (message?.type === "chronos.list_visible_activities") {
-    sendResponse(globalThis.ChronosMaterials.extractActivities(document, location.href));
-    return false;
-  }
-  if (message?.type === "chronos.download_visible_pdf") {
-    let catalog = globalThis.ChronosMaterials.extractMaterials(document, location.href);
-    if (catalog.status === "unsupported_page") {
-      const course = globalThis.ChronosMaterials.extractCourseMaterials(document, location.href);
-      const materials = course.snapshots.flatMap(snapshot => snapshot.materials);
-      catalog = {status: materials.length ? "observed" : "unknown", materials};
-    }
-    globalThis.ChronosPdfDownload.downloadVisiblePdf(message.source_id, catalog).then(sendResponse);
-    return true;
-  }
-  if (message?.type === "chronos.list_visible_materials") {
-    sendResponse(globalThis.ChronosMaterials.extractMaterials(document, location.href));
-    return false;
-  }
   if (message?.type !== "chronos.observe_read_only") {
     return false;
   }

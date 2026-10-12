@@ -3,8 +3,7 @@
   "name": "Chronos Study Read-only Bridge",
   "version": "0.1.0",
   "description": "Expose redacted, read-only TronClass page observations to Chronos.",
-  "permissions": ["activeTab", "downloads", "alarms"],
-  "optional_permissions": ["cookies"],
+  "permissions": ["activeTab", "alarms"],
   "background": {"service_worker": "background.js"},
   "action": {
     "default_title": "Chronos read-only observation",
@@ -21,7 +20,7 @@
         "https://tronclass.ntou.edu.tw/*",
         "https://tccas.ntou.edu.tw/*"
       ],
-      "js": ["observation.js", "materials.js", "assignments.js", "announcements.js", "pdf-download.js", "content.js"],
+      "js": ["observation.js", "assignments.js", "announcements.js", "content.js"],
       "run_at": "document_idle"
     }
   ]

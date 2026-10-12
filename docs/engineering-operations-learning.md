@@ -58,7 +58,7 @@ Reusable sentence: **The artifact under test must be the artifact you ship.**
 
 ### Why you need this
 
-Chronos grew from a Telegram task bot into a system with Web, Gmail, Study, Firestore, PDF and scheduler paths. Large modules are a signal that boundaries need clarification, but a rewrite would discard working transaction and idempotency behavior.
+Chronos grew from a Telegram task bot into a system with Web, Gmail, Study, Firestore and scheduler paths. Large modules are a signal that boundaries need clarification, but a rewrite would discard working transaction and idempotency behavior.
 
 The safer sequence is:
 
@@ -120,7 +120,7 @@ Use four levels:
 3. **Deployment evidence:** revision, traffic, readiness, environment and scheduler readback.
 4. **Live outcome evidence:** the real external action or user-visible result.
 
-For this change, local evidence includes the full Python suite passing, 48 passing extension tests, a successful isolated demo, valid documentation links, valid PowerShell syntax and a verified dependency lock. Production and Telegram attachment delivery must be reported separately after they actually succeed.
+For a release, local evidence can include the Python and extension suites, an isolated demo, valid documentation links, valid PowerShell syntax and a verified dependency lock. Production deployment and Telegram delivery must still be reported separately after they actually succeed.
 
 Reusable sentence: **Name the evidence level before stating the conclusion.**
 

@@ -6,7 +6,6 @@ from chronos.chrome_bridge import (
     parse_observation,
     safe_origin_path,
 )
-from chronos.study_adapter import ChromeBrowserConnector, ConnectorSignal
 
 
 def test_observation_strips_query_and_fragment_before_app_use():
@@ -55,14 +54,3 @@ def test_bridge_tab_transport_returns_redacted_observation():
     assert transport.current_url() == "https://tronclass.ntou.edu.tw/user/index"
     assert transport.visible_text() == "張壹理 學生 我的課程"
     assert bridge.requested_tab == "tab-1"
-
-
-def test_bridge_transport_feeds_chrome_connector_without_secrets():
-    bridge = FakeBridge({
-        "url": "https://tronclass.ntou.edu.tw/user/index?ticket=secret",
-        "visible_text": "張壹理 學生 我的課程",
-    })
-
-    signal = ChromeBrowserConnector(BridgeTabTransport(bridge, "tab-1")).observe()
-
-    assert signal is ConnectorSignal.AUTHENTICATED_PAGE

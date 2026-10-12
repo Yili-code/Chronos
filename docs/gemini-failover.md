@@ -46,15 +46,14 @@ requests. Provider quotas and billing remain authoritative.
 ## Covered features and persistence
 
 Task creation/editing, course-day interpretation, progress summaries and mail
-summaries use `ExternalAI` and therefore share its routing. Study PDF summaries
-and assignment drafting use the same routing policy for explicit HTTP failures.
-Study deliberately retains its no-inline-retry behavior for uncertain transport
-failures/timeouts; those continue through the existing job recovery workflow.
+summaries use `ExternalAI` and therefore share its routing. Explicit assignment
+preparation uses the same key router but retains no-inline-retry behavior for
+uncertain transport failures.
 
-Every actual Study provider attempt, including a secondary attempt and the review
-pass, must reserve from the existing daily Study budget. Failover does not bypass
-that limit. Task AI has no new project-level spend cap; configure provider-side
-quotas/billing controls separately.
+Every actual assignment-preparation provider attempt, including a secondary
+attempt, must reserve from its configured daily preparation budget. Failover does
+not bypass that limit. Task AI has no new project-level spend cap; configure
+provider-side quotas and billing controls separately.
 
 Failover occurs before task persistence. It does not rerun Telegram commands or
 create an additional task. Telegram update deduplication and edit conflict checks

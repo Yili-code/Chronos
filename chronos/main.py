@@ -64,7 +64,7 @@ HELP_SECTIONS = {
         "<b>Study</b>\n"
         "/classday &lt;instruction&gt; — confirm a course-specific instruction day\n"
         "/classday YYYY-MM-DD &lt;course-code&gt; class|off|auto — save an exact decision\n"
-        "/study_budget — inspect study AI usage\n"
+        "/preparation_budget — inspect assignment-preparation AI usage\n"
         "/ai_usage — inspect today's core AI requests\n"
         "/announcements [page] — list saved announcements\n"
         "/announcement &lt;version-id&gt; [page] — read a saved announcement"
@@ -74,12 +74,6 @@ HELP_SECTIONS = {
         "/prepare &lt;assignment-id&gt; — request an editable assignment draft\n"
         "/draft &lt;assignment-id&gt; [page] — read a saved draft without generating"
     ),
-    "notes": (
-        "<b>Notes</b>\n"
-        "/notes [course] — list saved study notes\n"
-        "/note &lt;full-note-id&gt; [section] — read a saved note\n"
-        "/export &lt;full-note-id&gt; — download canonical Markdown"
-    ),
 }
 HELP_KEYBOARD = {
     "inline_keyboard": [
@@ -87,10 +81,7 @@ HELP_KEYBOARD = {
             {"text": "Tasks", "callback_data": "help:tasks"},
             {"text": "Study", "callback_data": "help:study"},
         ],
-        [
-            {"text": "Assignments", "callback_data": "help:assignments"},
-            {"text": "Notes", "callback_data": "help:notes"},
-        ],
+        [{"text": "Assignments", "callback_data": "help:assignments"}],
     ]
 }
 HELP_BACK_KEYBOARD = {
@@ -293,8 +284,6 @@ async def run_study_tick() -> dict:
     if not settings.telegram_chat_id or not telegram.enabled:
         raise HTTPException(status_code=503, detail="Study delivery is not configured")
     now = datetime.now(settings.tz)
-    from .study_poll_queue import enqueue_scheduled_polls
-    collection_slots = enqueue_scheduled_polls(db, now)
     from .calendar_sync import sync_calendar
     from .calendar_scheduler import tick_calendar
     calendar_sync_result = await sync_calendar(db, now)
@@ -306,8 +295,8 @@ async def run_study_tick() -> dict:
     from .announcement_scheduler import tick_announcements
     announcement_result = await tick_announcements(db, telegram, settings.telegram_chat_id, now)
     notices = await notify_study_failures(db, telegram, settings.telegram_chat_id, now)
-    return {**result, **assignment_result, **announcement_result, **notices, **calendar_sync_result, **calendar_result,
-            'collection_slots_ensured': collection_slots}
+    return {**result, **assignment_result, **announcement_result, **notices,
+            **calendar_sync_result, **calendar_result}
 
 
 @app.post("/internal/study")
@@ -584,33 +573,6 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             if not result.get("ok"):
                 raise HTTPException(status_code=502, detail="Mail callback acknowledgement pending")
         return {"ok": True}
-    if update.callback_query and (update.callback_query.data or "").startswith("pdf:"):
-        from .selection_buttons import apply_callback
-        try:
-            text, markup = apply_callback(db, chat_id, update.callback_query.data, message_id=source_message.message_id)
-        except ValueError:
-            await telegram.request("answerCallbackQuery", {"callback_query_id": update.callback_query.id,
-                                   "text": "Invalid selection, no file selected, or this list has expired."})
-            return {"ok": True}
-        if source_message.message_id is None:
-            raise HTTPException(status_code=422, detail="Selection message id required")
-        result = await telegram.request("editMessageText", {"chat_id": chat_id, "message_id": source_message.message_id,
-                                         "text": text, "reply_markup": markup})
-        # Duplicate callbacks may result in an unchanged-message rejection;
-        # state transitions remain revision-idempotent regardless of rendering.
-        if not result.get("ok") and "message is not modified" not in str(result.get("description", "")).lower():
-            raise HTTPException(status_code=502, detail="Selection display update failed")
-        await telegram.answer_callback_query(update.callback_query.id)
-        return {"ok": True}
-    export_match = re.fullmatch(r"/export\s+([0-9a-f]{64})", (source_message.text or "").strip())
-    if update.edited_message is None and update.callback_query is None and source_message.reply_to_message is None and export_match:
-        from .note_delivery import export_note
-        status = await export_note(db, telegram, chat_id=chat_id, update_id=update_id,
-                                   fingerprint=export_match.group(1), now=datetime.now(settings.tz))
-        if status != "not_found":
-            if status in {"retry", "sending"}:
-                raise HTTPException(status_code=503, detail="Document delivery pending")
-            return {"ok": True, "document_status": status}
     receipt = db.get_update(update_id)
     if update.callback_query:
         if receipt is None:
@@ -636,7 +598,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                     "parse_mode": "HTML",
                     "reply_markup": HELP_KEYBOARD,
                 })
-            elif data and re.fullmatch(r"help:(?:tasks|study|assignments|notes)", data):
+            elif data and re.fullmatch(r"help:(?:tasks|study|assignments)", data):
                 section = data.split(":", 1)[1]
                 action = lambda section=section: message_bundle({
                     "text": HELP_SECTIONS[section],
@@ -681,8 +643,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                             pass
                 action = lambda: db.record_course_reply(
                     source_message.reply_to_message.message_id, source_message.message_id, text,
-                    local_date=received_date, update_id=update_id, received_at=received_at,
-                    review_summary=review_summary,
+                    local_date=received_date, review_summary=review_summary,
                 )
             else:
                 action = await prepare_message(text, update_id=update_id)
@@ -690,7 +651,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
     help_callback = (
         update.callback_query is not None
         and re.fullmatch(
-            r"help:(?:index|tasks|study|assignments|notes)",
+            r"help:(?:index|tasks|study|assignments)",
             update.callback_query.data or "",
         )
     )
@@ -866,7 +827,7 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
     if command is not None and (command == 'prepare' or command.startswith('prepare ')):
         from .preparation_commands import prepare_action
         return prepare_action(db, command, datetime.now(settings.tz))
-    if command == 'study_budget':
+    if command == 'preparation_budget':
         from .ai_budget import budget_report
         return lambda: budget_report(db, datetime.now(settings.tz))
     if command is not None and (command == 'classday' or command.startswith('classday ')):
@@ -879,23 +840,13 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
         except (AIError, ValueError) as error:
             return lambda reply=str(error): reply
         return save_classday_action(db, record)
-    if command == "export" or (command is not None and command.startswith("export ")):
-        return lambda: (
-            "No exportable note was found, or the ID is invalid. "
-            "Usage: /export full-note-id. Use /notes to find an ID first."
-        )
-    if command is not None and (command == "notes" or command.startswith("notes ") or command == "note" or command.startswith("note ")):
-        from .note_commands import note_command
-        return lambda: note_command(db, command) or (
-            "Usage: /notes [course] or /note full-note-id [section]."
-        )
     if command in {"start", "help"}:
         return lambda: message_bundle({
             "text": HELP_TEXT,
             "parse_mode": "HTML",
             "reply_markup": HELP_KEYBOARD,
         })
-    help_section = re.fullmatch(r"help\s+(tasks|study|assignments|notes)", command or "", re.IGNORECASE)
+    help_section = re.fullmatch(r"help\s+(tasks|study|assignments)", command or "", re.IGNORECASE)
     if help_section:
         section = help_section.group(1).lower()
         return lambda: message_bundle({

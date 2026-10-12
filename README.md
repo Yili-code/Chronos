@@ -26,7 +26,7 @@ A self-hosted, single-user Telegram task assistant with Gemini-powered natural-l
 | Gmail 郵件整理 | 選用；08:00 過濾明確促銷並移到垃圾桶、Telegram 摘要與按鈕／回覆新增任務。需獨立 OAuth，無寄信入口。[授權與啟用](docs/gmail.md)。 |
 | Web 儀表板 | 查看、新增及完成代辦；沒有 Gemini key 時可先看空白介面。 |
 | SQLite / Firestore | 本機預設 SQLite；Firestore 是選用的雲端設定。 |
-| Study 模組 | 預設關閉；包含特定 NTOU / TronClass 課表、教材、作業與筆記流程，需額外設定，尚非跨校即用功能。 |
+| Study 模組 | 預設關閉；保留特定 NTOU / TronClass 課表、進度、作業與公告。沒有教材下載、PDF AI 摘要或筆記匯出。 |
 
 這是個人用途，沒有多使用者帳號隔離。`#Chronos` 是代辦分類標籤，不會追蹤 Git repository。AI 文字會送到 Gemini；詳細資料流及失敗行為見 [指令參考](docs/usage.md)。
 
@@ -74,7 +74,7 @@ if (!(Test-Path .env)) { Copy-Item .env.example .env }
 - [本機啟動與第一筆代辦](docs/getting-started.md)：安裝、預期畫面、設定與故障排除。
 - [Gemini 與 Telegram 指令參考](docs/usage.md)：自然語言、動態位置、編輯重試及資料保存。
 - [Cloud Run + Firestore](docs/deployment.md)：選用部署，需要自己的 GCP project，可能產生費用。
-- [Study 文件入口](docs/README.md)：區分目前入口、歷史設計與驗證紀錄。
+- [Study 課程追蹤](docs/study.md)：支援範圍、明確排除項目與啟用方式。
 - [驗證報告](TEST_REPORT.md)：既有測試與 production 證據，並列有尚未部署項目；CI 通過不代表雲端已更新。
 
 程式在 `chronos/`，Python 測試在 `tests/`，Study Chrome extension 在 `chrome-extension/`，部署及驗證工具在 `scripts/`。部分 Study 工具含維護者專用設定，閱讀後再執行。

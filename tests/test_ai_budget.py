@@ -53,11 +53,11 @@ def test_concurrent_sqlite_workers_cannot_overspend(tmp_path):
 
 
 def test_budget_query_does_not_create_or_change_state(db):
-    assert budget_report(db, NOW) == 'Study AI：今日尚無用量紀錄。'
+    assert budget_report(db, NOW) == '作業準備 AI：今日尚無用量紀錄。'
     assert db.get_ai_budget('2026-10-05') is None
     DailyAIBudget(db, request_limit=5, token_limit=100).reserve(NOW, 10)
     before = db.get_ai_budget('2026-10-05')
-    assert budget_report(db, NOW) == 'Study AI：1/5 requests · ~10/100 tokens'
+    assert budget_report(db, NOW) == '作業準備 AI：1/5 requests · ~10/100 tokens'
     assert db.get_ai_budget('2026-10-05') == before
 
 
