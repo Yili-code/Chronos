@@ -33,13 +33,14 @@ def test_session_prompt_and_reply_require_telegram_correlation():
 
 def test_reminders_are_limited_to_two_and_stop_after_answer():
     session = new_session(COURSE_SCHEDULE[0], date(2026, 10, 5), prompt_message_id=101)
-    sent = datetime(2026, 10, 5, 12, 10, tzinfo=timezone.utc)
-    assert due_reminder(session, now=sent + timedelta(minutes=59), prompt_sent_at=sent) is None
-    assert due_reminder(session, now=sent + timedelta(hours=1), prompt_sent_at=sent) == 1
+    sent = datetime(2026, 10, 5, 4, 10, tzinfo=timezone.utc)
+    assert due_reminder(session, now=sent + timedelta(hours=1, minutes=59), prompt_sent_at=sent) is None
+    assert due_reminder(session, now=sent + timedelta(hours=2), prompt_sent_at=sent) == 1
     session = record_reminder(session, 1)
-    assert due_reminder(session, now=sent + timedelta(hours=2), prompt_sent_at=sent) == 2
+    assert due_reminder(session, now=sent + timedelta(hours=3, minutes=59), prompt_sent_at=sent) is None
+    assert due_reminder(session, now=sent + timedelta(hours=4), prompt_sent_at=sent) == 2
     session = record_reminder(session, 2)
-    assert due_reminder(session, now=sent + timedelta(hours=3), prompt_sent_at=sent) is None
+    assert due_reminder(session, now=sent + timedelta(hours=6), prompt_sent_at=sent) is None
     answered = accept_reply(session, reply_to_message_id=101, reply_message_id=303, text="第五頁")
     assert answered is not None
     assert answered.status is ProgressStatus.ANSWERED

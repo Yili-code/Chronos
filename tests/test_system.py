@@ -52,7 +52,9 @@ def test_course_reply_is_correlated_and_receipt_deduplicated(system):
         assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 200
     assert main.db.get_course_session(session.session_id).reported_progress == 'Chapter 4'
     assert main.db.get_update(900)['delivered']
-    assert bot.send_message.await_count == 1
+    assert bot.send_message.await_count == 2
+    assert '已記錄' in bot.send_message.await_args_list[-2].args[1]
+    assert bot.send_message.await_args_list[-1].args[1] == 'No open tasks. All clear.'
     main.ai.parse.assert_not_awaited()
     assert service.list_open() == []
 
@@ -82,7 +84,8 @@ def test_course_reply_preserves_evidence_without_creating_a_task(system):
     assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 200
     assert service.list_open() == []
     assert main.db.get_course_session(session.session_id).reported_progress == '我已新增待辦'
-    assert '其他代辦保持不變' in bot.send_message.await_args.args[1]
+    assert '其他代辦保持不變' in bot.send_message.await_args_list[-2].args[1]
+    assert bot.send_message.await_args_list[-1].args[1] == 'No open tasks. All clear.'
     main.ai.parse.assert_not_awaited()
 
 
@@ -102,9 +105,10 @@ def test_no_class_reply_skips_followup_task(system):
     saved = main.db.get_course_session(session.session_id)
     assert saved.report_kind is ProgressReportKind.NO_PROGRESS
     assert service.list_open() == []
-    sent = bot.send_message.await_args.args[1]
+    sent = bot.send_message.await_args_list[-2].args[1]
     assert '其他代辦保持不變' in sent
     assert 'No class today' not in sent
+    assert bot.send_message.await_args_list[-1].args[1] == 'No open tasks. All clear.'
 
 
 def test_study_scheduler_endpoint_requires_secret_and_is_disabled_by_default(system):
@@ -239,7 +243,7 @@ def test_webhook_auth_and_commands(system):
     assert bot.send_message.call_args.kwargs['parse_mode'] == 'HTML'
     assert bot.send_message.call_args.kwargs['reply_markup']['inline_keyboard'][0][0]['callback_data'] == 'task:edit:1'
     assert send('/tasks').status_code == 200
-    assert bot.send_message.call_args.args[1] == '<b>Tasks</b>\n\n1. <b>Test task</b>'
+    assert bot.send_message.call_args.args[1] == '<b>Tasks</b>\n1. <b>Test task</b>'
     assert bot.send_message.call_args.kwargs['parse_mode'] == 'HTML'
     assert 'reply_markup' not in bot.send_message.call_args.kwargs
     main.ai.edit = AsyncMock(return_value=ParsedTask(
@@ -267,7 +271,7 @@ def test_webhook_auth_and_commands(system):
     assert send('/edit 1 改成完成 roadmap 並移到 10/03 18:00').status_code == 200
     assert bot.send_message.await_args_list[-2].args[1].startswith('<b>Updated · Task 1</b>')
     assert bot.send_message.await_args_list[-1].args[1] == (
-        '<b>Tasks</b>\n\n'
+        '<b>Tasks</b>\n'
         '1. 🚨 <b>Finalize roadmap</b>\n'
         '<b>Due:</b> 10-03 18:00\n'
         '<b>#Chronos</b>')
@@ -452,7 +456,7 @@ def test_persistence_order_and_reschedule(tmp_path):
     reopened = TaskService(Database(db.path), tz)
     assert [x['id'] for x in reopened.list_open()] == [earlier['id'], later['id'], no_due['id']]
     formatted = format_tasks(reopened.list_open(), tz, now=datetime(2026, 9, 14, tzinfo=tz))
-    assert formatted.startswith('<b>Tasks</b>\n\n1. <b>較早</b>\n<b>Due:</b> 09-19 10:00')
+    assert formatted.startswith('<b>Tasks</b>\n1. <b>較早</b>\n<b>Due:</b> 09-19 10:00')
     assert '#Chronos' in formatted
     assert reopened.complete(earlier['id'])
     assert not reopened.postpone(earlier['id'], datetime.now(tz))

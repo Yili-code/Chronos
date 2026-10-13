@@ -29,7 +29,7 @@ def test_reply_and_reminder_share_the_original_prompt_message():
     service = CourseTrackingService(InMemoryCourseSessionStore(), messenger)
     session = service.open_session(COURSE_SCHEDULE[0], date(2026, 10, 5))
     sent = datetime(2026, 10, 5, 12, 10, tzinfo=timezone.utc)
-    reminded = service.send_due_reminder(session.session_id, now=sent + timedelta(hours=1), prompt_sent_at=sent)
+    reminded = service.send_due_reminder(session.session_id, now=sent + timedelta(hours=2), prompt_sent_at=sent)
     assert reminded.status is ProgressStatus.REMINDED_ONCE
     assert messenger.sent[-1][2] == session.prompt_message_id
     answered = service.handle_reply(

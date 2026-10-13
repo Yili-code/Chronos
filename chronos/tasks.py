@@ -261,7 +261,8 @@ def format_tasks(tasks: list[dict], tz, project_aliases: dict[str, str] | None =
         return "No open tasks. All clear."
     lines = ["<b>Tasks</b>"]
     for position, task in enumerate(tasks, start=1):
-        lines.append("")
+        if position > 1:
+            lines.append("")
         lines.extend(format_task_block(task, tz, position=position, project_aliases=project_aliases, now=now))
     return "\n".join(lines)
 

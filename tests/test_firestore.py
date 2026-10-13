@@ -159,14 +159,35 @@ def test_firestore_scheduler_reply_and_stop_reminders(monkeypatch):
     db = database(monkeypatch)
     bot = AsyncMock()
     bot.send_message.return_value = {"ok": True, "result": {"message_id": 701}}
-    for hour in (12, 13):
+    for hour in (12, 14):
         asyncio.run(tick_study(db, bot, 123, datetime(2026, 10, 5, hour, 10, tzinfo=TZ)))
     assert db.get_course_session("security:2026-10-05").reminder_count == 1
     assert bot.send_message.await_count == 2
     db.process_update(9000, lambda: db.record_course_reply(701, 702, "Chapter 5"))
-    asyncio.run(tick_study(db, bot, 123, datetime(2026, 10, 5, 14, 10, tzinfo=TZ)))
+    asyncio.run(tick_study(db, bot, 123, datetime(2026, 10, 5, 16, 10, tzinfo=TZ)))
     assert db.get_course_session("security:2026-10-05").status.value == "answered"
     assert bot.send_message.await_count == 2
+
+
+def test_firestore_progress_reply_includes_updated_tasks_without_post_write_reads(monkeypatch):
+    from datetime import date
+    from chronos.course_tracking import COURSE_SCHEDULE, new_session
+
+    db = database(monkeypatch)
+    service = TaskService(db, TZ)
+    service.create("Keep this task")
+    session = new_session(COURSE_SCHEDULE[0], date(2026, 10, 5), 801)
+    db.create_course_session(session, create_tasks=True)
+    monkeypatch.setattr(main, "db", db)
+    monkeypatch.setattr(main, "tasks", service)
+
+    receipt = db.process_update(9001, lambda: main.record_course_progress_reply(
+        801, 802, "Chapter 5", local_date=date(2026, 10, 5),
+    ))
+
+    assert len(receipt["messages"]) == 2
+    assert receipt["messages"][1]["text"] == "<b>Tasks</b>\n1. <b>Keep this task</b>"
+    assert [task["title"] for task in service.list_open()] == ["Keep this task"]
 
 
 def test_firestore_scheduler_expires_unanswered_sessions(monkeypatch):

@@ -69,7 +69,7 @@ def test_edit_uses_natural_language_and_returns_latest_list(task_service, monkey
     assert "Before: Draft launch plan" in reply
     assert "After: Finalize launch plan" in reply
     assert "After: 10-03 18:00" in reply
-    assert "<b>Tasks</b>\n\n1. 🚨 <b>Finalize launch plan</b>" in reply
+    assert "<b>Tasks</b>\n1. 🚨 <b>Finalize launch plan</b>" in reply
     stored = task_service.list_open()[0]
     assert stored["title"] == "Finalize launch plan"
     assert stored["project"] is None

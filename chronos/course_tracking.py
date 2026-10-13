@@ -149,8 +149,8 @@ def accept_reply(session: ProgressSession, *, reply_to_message_id: int, reply_me
 def due_reminder(session: ProgressSession, *, now: datetime, prompt_sent_at: datetime) -> int | None:
     """Return reminder number 1/2 when due, otherwise None.
 
-    A reminder is due one hour after the prompt and one more hour later.  No
-    reminder is due once the session is answered/missed or after two reminders.
+    Under regular polling, reminders are due two and four hours after the prompt.
+    No reminder is due once the session is answered/missed or after two reminders.
     """
     if session.status in {ProgressStatus.ANSWERED, ProgressStatus.MISSED}:
         return None
@@ -159,9 +159,9 @@ def due_reminder(session: ProgressSession, *, now: datetime, prompt_sent_at: dat
         raise ValueError("reminder timestamps must be timezone-aware")
     if now.astimezone(TAIPEI).date() != session.class_date:
         return None
-    if session.reminder_count < 1 and elapsed >= timedelta(hours=1):
+    if session.reminder_count < 1 and elapsed >= timedelta(hours=2):
         return 1
-    if session.reminder_count < 2 and elapsed >= timedelta(hours=2):
+    if session.reminder_count < 2 and elapsed >= timedelta(hours=4):
         return 2
     return None
 

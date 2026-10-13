@@ -47,7 +47,7 @@ def test_dynamic_positions_hide_permanent_ids(tmp_path):
 
     assert [task["id"] for task in tasks.list_open()] == [earlier["id"], later["id"], no_due["id"]]
     assert format_tasks(tasks.list_open(), TZ, now=NOW) == (
-        "<b>Tasks</b>\n\n"
+        "<b>Tasks</b>\n"
         "1. <b>Earlier</b>\n"
         "<b>Due:</b> 09-19 10:00\n"
         "<b>#Chronos</b>\n\n"
@@ -69,7 +69,7 @@ def test_course_tasks_use_separate_layers_and_html_escaping():
          "due_at": None, "project": "計算機結構"},
     ], TZ)
     assert rendered == (
-        "<b>Tasks</b>\n\n"
+        "<b>Tasks</b>\n"
         "1. <b>確認資訊安全實務與管理今日上課範圍（10-05）</b>\n"
         "<b>#ISPM</b>\n\n"
         "2. <b>複習計算機結構 10/06：Chapter 2 to around page 43 &amp; examples</b>\n"

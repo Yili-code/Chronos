@@ -108,6 +108,28 @@ def message_bundle(*messages: dict) -> dict:
     return {"messages": list(messages)}
 
 
+def record_course_progress_reply(
+    prompt_id: int, message_id: int, text: str, *, local_date
+) -> str | dict:
+    """Record progress and snapshot the resulting task list before any writes."""
+    session = db.get_course_session_by_prompt(prompt_id)
+    if session is None:
+        return db.record_course_reply(prompt_id, message_id, text, local_date=local_date)
+    before = tasks.list_open()
+    aliases = tasks.project_aliases()
+    reply = db.record_course_reply(prompt_id, message_id, text, local_date=local_date)
+    if not reply.startswith("已記錄 "):
+        return reply
+    remaining = [item for item in before if item["id"] != session.survey_task_id]
+    return message_bundle(
+        {"text": reply},
+        {
+            "text": format_tasks(remaining, settings.tz, project_aliases=aliases),
+            "parse_mode": "HTML",
+        },
+    )
+
+
 def task_edit_keyboard(items: list[dict]) -> dict:
     return {"inline_keyboard": [[{"text": f"Edit #{task['id']} · {task['title'][:40]}",
                                   "callback_data": f"task:edit:{task['id']}"}] for task in items[:50]]}
@@ -628,7 +650,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                     raise HTTPException(status_code=422, detail="Reply message id is required")
                 received_at = datetime.now(settings.tz)
                 received_date = received_at.date()
-                action = lambda: db.record_course_reply(
+                action = lambda: record_course_progress_reply(
                     source_message.reply_to_message.message_id, source_message.message_id, text,
                     local_date=received_date,
                 )

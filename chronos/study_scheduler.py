@@ -79,7 +79,7 @@ async def tick_study(db, telegram, chat_id: int, now: datetime) -> dict:
         if not previous or previous["status"] != "sent":
             continue
         sent_at = datetime.fromisoformat(previous.get("sent_at", previous["claimed_at"]))
-        if now < sent_at + timedelta(hours=1):
+        if now < sent_at + timedelta(hours=2):
             continue
         key = f"{session.session_id}:reminder:{number}"
         claim = ledger.claim(key, now)

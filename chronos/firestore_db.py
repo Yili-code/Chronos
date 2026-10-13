@@ -454,9 +454,11 @@ class FirestoreDatabase:
         return self._run_transaction(create)
 
     def get_course_session_by_prompt(self, prompt_id: int) -> ProgressSession | None:
-        snapshots = list(self.course_sessions.where(
+        query = self.course_sessions.where(
             filter=FieldFilter("prompt_message_id", "==", prompt_id)
-        ).stream())
+        )
+        active = self._transaction.get()
+        snapshots = list(query.stream(transaction=active) if active is not None else query.stream())
         return session_from_firestore(snapshots[0].to_dict()) if len(snapshots) == 1 else None
 
     def record_course_reply(self, prompt_id: int, message_id: int, text: str, *, local_date=None) -> str:
