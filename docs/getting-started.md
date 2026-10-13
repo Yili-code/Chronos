@@ -44,7 +44,7 @@ Invoke-RestMethod http://127.0.0.1:8000/api/tasks
 
 ```dotenv
 CHRONOS_GEMINI_API_KEY=你的金鑰
-CHRONOS_GEMINI_MODEL=gemini-3.8-flash
+CHRONOS_GEMINI_MODEL=gemini-3.5-flash-lite
 ```
 
 模型名稱須在你的帳號可用；可查 [Google 官方模型清單](https://ai.google.dev/gemini-api/docs/models)。費用、配額與區域支援依供應商規定，專案沒有保證免費使用。

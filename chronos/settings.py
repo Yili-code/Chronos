@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     gemini_api_key: str = Field(default="", repr=False)
     gemini_api_key_secondary: str = Field(default="", repr=False)
     gemini_key_cooldown_seconds: float = Field(default=60, ge=1, le=86400)
-    gemini_model: str = "gemini-3.8-flash"
+    gemini_model: str = "gemini-3.5-flash-lite"
     ai_timeout: float = Field(default=30, gt=0)
     web_username: str = "chronos"
     web_password: str = ""

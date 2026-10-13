@@ -7,7 +7,7 @@ Web 與 Telegram 的自然語言新增、Telegram 改期共用 Gemini API，不�
 ```dotenv
 CHRONOS_GEMINI_API_BASE=https://generativelanguage.googleapis.com/v1beta
 CHRONOS_GEMINI_API_KEY=你的Gemini API金鑰
-CHRONOS_GEMINI_MODEL=gemini-3.8-flash
+CHRONOS_GEMINI_MODEL=gemini-3.5-flash-lite
 CHRONOS_AI_TIMEOUT=30
 ```
 

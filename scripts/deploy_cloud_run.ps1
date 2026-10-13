@@ -4,7 +4,7 @@ param(
     [string]$ProjectId,
     [string]$Region = "asia-east1",
     [string]$Service = "chronos",
-    [string]$GeminiModel = "gemini-3.8-flash",
+    [string]$GeminiModel = "gemini-3.5-flash-lite",
     [switch]$EnableGmail,
     [switch]$EnableStudyTracking,
     [switch]$DisableStudyTracking

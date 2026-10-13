@@ -58,7 +58,7 @@ Get your own key from [Google AI Studio](https://aistudio.google.com/apikey), th
 
 ```dotenv
 CHRONOS_GEMINI_API_KEY=YOUR_API_KEY
-CHRONOS_GEMINI_MODEL=gemini-3.8-flash
+CHRONOS_GEMINI_MODEL=gemini-3.5-flash-lite
 ```
 
 The model must be available to your account; see [Google's model list](https://ai.google.dev/gemini-api/docs/models). Provider fees and limits apply. Restart the regular app, enter `Finish the report tomorrow at 17:00 #Chronos`, and select **Add**. Check the interpreted date, then select **Complete**.
