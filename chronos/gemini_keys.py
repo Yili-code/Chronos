@@ -5,6 +5,7 @@ from email.utils import parsedate_to_datetime
 import hashlib
 import logging
 import math
+import random
 import time
 
 import httpx
@@ -82,49 +83,93 @@ class GeminiKeyRouter:
                 if self._blocked_until.get(self._identity(key, url), 0) <= time.monotonic()]
         if not keys:
             raise GeminiKeysUnavailable("No available Gemini key")
-        # With two configured keys, at most one attempt per key. A single-key
-        # deployment retains bounded transient retries, but never retries a 429 inline.
-        per_key_attempts = 1 if len(configured) > 1 else attempts
         deadline = time.monotonic() + self.settings.ai_timeout
         cooldown = getattr(self.settings, "gemini_key_cooldown_seconds", 60)
-        for index, (label, key) in enumerate(keys):
-            for attempt in range(per_key_attempts):
-                if before_attempt:
-                    await before_attempt()
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise httpx.ReadTimeout("AI request timed out")
-                # Reserve time for the secondary even if the primary hangs.
-                allowance = remaining / (len(keys) - index)
-                headers = {**request.get("headers", {}), "x-goog-api-key": key}
+        active = list(keys)
+        max_attempts = max(attempts, len(active))
+        transient_failures: dict[tuple[str, str], tuple[str, httpx.Response | None]] = {}
+        last_response = None
+        last_transport_error = None
+        key_index = 0
+        attempt = 0
+        retry_round = 0
+
+        async def wait_before_retry() -> None:
+            nonlocal retry_round
+            retry_round += 1
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise httpx.ReadTimeout("AI request timed out")
+            base = min(2 ** (retry_round - 1), 8.0)
+            delay = base * (0.5 + random.random() * 0.5)
+            if delay >= remaining:
+                raise httpx.ReadTimeout("AI request timed out")
+            logger.warning("Gemini transient failure across available keys; retrying after backoff")
+            await asyncio.sleep(delay)
+
+        while active and attempt < max_attempts:
+            if key_index >= len(active):
+                key_index = 0
+            label, key = active[key_index]
+            attempt += 1
+            if before_attempt:
+                await before_attempt()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise httpx.ReadTimeout("AI request timed out")
+            # Preserve time for another available key and the final bounded retry.
+            remaining_attempts = max_attempts - attempt + 1
+            allowance = remaining / max(1, min(len(active), remaining_attempts))
+            headers = {**request.get("headers", {}), "x-goog-api-key": key}
+            try:
                 try:
-                    try:
-                        async with asyncio.timeout(allowance):
-                            response = await client.post(url, **{**request, "headers": headers})
-                    except TimeoutError:
-                        raise httpx.ReadTimeout("AI request timed out") from None
-                except httpx.TransportError:
-                    if not failover_on_transport:
-                        raise
-                    if attempt + 1 < per_key_attempts:
-                        await asyncio.sleep(2 ** attempt)
-                        continue
-                    self._block(key, url, cooldown)
-                    if index + 1 == len(keys):
-                        raise
-                    logger.warning("Gemini %s transport unavailable; trying secondary", label)
+                    async with asyncio.timeout(allowance):
+                        response = await client.post(url, **{**request, "headers": headers})
+                except TimeoutError:
+                    raise httpx.ReadTimeout("AI request timed out") from None
+            except httpx.TransportError as error:
+                if not failover_on_transport:
+                    raise
+                last_transport_error = error
+                transient_failures[self._identity(key, url)] = (key, None)
+                key_index += 1
+                if attempt >= max_attempts:
                     break
-                failover = (response.status_code == 429 or credential_rejected(response)
-                            or response.status_code in TRANSIENT_CODES)
-                if not failover:
-                    return response
-                if response.status_code in TRANSIENT_CODES and attempt + 1 < per_key_attempts:
-                    await asyncio.sleep(2 ** attempt)
-                    continue
+                if key_index >= len(active):
+                    key_index = 0
+                    await wait_before_retry()
+                elif len(active) > 1:
+                    logger.warning("Gemini %s transport unavailable; trying next key", label)
+                continue
+
+            failover = (response.status_code == 429 or credential_rejected(response)
+                        or response.status_code in TRANSIENT_CODES)
+            if not failover:
+                return response
+            last_response = response
+            if response.status_code not in TRANSIENT_CODES:
                 delay = retry_delay(response, cooldown) if response.status_code == 429 else cooldown
                 self._block(key, url, delay)
-                if index + 1 == len(keys):
-                    return response
-                logger.warning("Gemini %s returned HTTP %s; trying secondary", label, response.status_code)
+                active.pop(key_index)
+                if active:
+                    logger.warning("Gemini %s returned HTTP %s; trying next key", label, response.status_code)
+                continue
+
+            transient_failures[self._identity(key, url)] = (key, response)
+            key_index += 1
+            if attempt >= max_attempts:
                 break
+            if key_index >= len(active):
+                key_index = 0
+                await wait_before_retry()
+            elif len(active) > 1:
+                logger.warning("Gemini %s returned HTTP %s; trying next key", label, response.status_code)
+
+        for key, response in transient_failures.values():
+            delay = retry_delay(response, cooldown) if response is not None else cooldown
+            self._block(key, url, delay)
+        if last_response is not None:
+            return last_response
+        if last_transport_error is not None:
+            raise last_transport_error
         raise GeminiKeysUnavailable("No available Gemini key")

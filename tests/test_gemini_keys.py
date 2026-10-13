@@ -30,6 +30,38 @@ def test_primary_failure_uses_secondary_once(monkeypatch, caplog, status):
     assert 'test-secret' not in caplog.text and 'secondary-secret' not in caplog.text
 
 
+def test_dual_key_transient_failure_retries_after_failover(monkeypatch, caplog):
+    seen = []
+    async def no_wait(_seconds):
+        return None
+    monkeypatch.setattr('chronos.gemini_keys.asyncio.sleep', no_wait)
+    def handler(request):
+        key = request.headers['x-goog-api-key']
+        seen.append(key)
+        return valid_response() if len(seen) == 3 else httpx.Response(503)
+    mock_provider(monkeypatch, handler)
+    result = asyncio.run(ExternalAI(dual_config()).parse('Synthetic task'))
+    assert result.title == 'Submit report'
+    assert seen == ['test-secret', 'secondary-secret', 'test-secret']
+    assert 'retrying after backoff' in caplog.text
+
+
+def test_dual_key_transient_failures_are_bounded_and_cool_down(monkeypatch):
+    seen = []
+    async def no_wait(_seconds):
+        return None
+    monkeypatch.setattr('chronos.gemini_keys.asyncio.sleep', no_wait)
+    def handler(request):
+        seen.append(request.headers['x-goog-api-key'])
+        return httpx.Response(503)
+    mock_provider(monkeypatch, handler)
+    ai = ExternalAI(dual_config())
+    for _ in range(2):
+        with pytest.raises(AIError, match='temporarily unavailable'):
+            asyncio.run(ai.parse('Synthetic task'))
+    assert seen == ['test-secret', 'secondary-secret', 'test-secret']
+
+
 def test_primary_success_does_not_use_secondary(monkeypatch):
     seen = []
     def handler(request):
