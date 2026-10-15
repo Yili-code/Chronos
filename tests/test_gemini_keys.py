@@ -158,19 +158,19 @@ def test_secondary_only_configuration_and_secret_repr(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_slow_primary_leaves_time_for_secondary():
+async def test_slow_primary_can_use_the_full_remaining_deadline():
     seen = []
     async def handler(request):
         key = request.headers['x-goog-api-key']
         seen.append(key)
         if key == 'test-secret':
-            await asyncio.sleep(5)
+            await asyncio.sleep(0.2)
         return valid_response()
     settings = dual_config(ai_timeout=0.3)
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         response = await GeminiKeyRouter(settings).post(client, 'https://example.invalid/generate', json={})
     assert response.status_code == 200
-    assert seen == ['test-secret', 'secondary-secret']
+    assert seen == ['test-secret']
 
 
 def test_environment_loads_secondary_key(monkeypatch):

@@ -117,9 +117,11 @@ class GeminiKeyRouter:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise httpx.ReadTimeout("AI request timed out")
-            # Preserve time for another available key and the final bounded retry.
-            remaining_attempts = max_attempts - attempt + 1
-            allowance = remaining / max(1, min(len(active), remaining_attempts))
+            # ai_timeout is the end-to-end deadline. Do not divide it among
+            # hypothetical retries: a healthy but slow request must be able to
+            # use the remaining budget. Fast failures still leave time for
+            # credential failover or a bounded transient retry.
+            allowance = remaining
             headers = {**request.get("headers", {}), "x-goog-api-key": key}
             try:
                 try:
