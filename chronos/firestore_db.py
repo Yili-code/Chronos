@@ -309,6 +309,26 @@ class FirestoreDatabase(TaskActions):
             return snapshot
         return self._run_transaction(save)
 
+    def get_calendar_overrides(self):
+        snapshot = self.meta.document("calendar_overrides").get(transaction=self._transaction.get())
+        return snapshot.to_dict() if snapshot.exists else None
+
+    def save_calendar_overrides(self, record):
+        from .calendar_overrides import CalendarOverrides
+        value = CalendarOverrides.from_record(record).to_record()
+        self._run_transaction(lambda transaction: transaction.set(self.meta.document("calendar_overrides"), value))
+        return value
+
+    def get_assignment_scan_state(self):
+        snapshot = self.meta.document("assignment_scan_state").get(transaction=self._transaction.get())
+        return snapshot.to_dict() if snapshot.exists else None
+
+    def save_assignment_scan_state(self, record):
+        from .assignment_scan_state import AssignmentScanState
+        value = AssignmentScanState.from_record(record).to_record()
+        self._run_transaction(lambda transaction: transaction.set(self.meta.document("assignment_scan_state"), value))
+        return value
+
     def _update_open_task(self, task_id: int, values: dict) -> bool:
         def update(transaction):
             reference = self.tasks.document(str(task_id))

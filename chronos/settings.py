@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     ai_timeout: float = Field(default=30, gt=0)
     timezone: str = Field(default="Asia/Taipei")
     release_sha: str = ""
+    tronclass_username: str = Field(default="", repr=False)
+    tronclass_password: str = Field(default="", repr=False)
+    tronclass_excluded_course_ids: str = ""
 
     @property
     def tz(self) -> ZoneInfo:

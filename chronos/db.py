@@ -70,6 +70,8 @@ CREATE TABLE IF NOT EXISTS study_deliveries (
 CREATE TABLE IF NOT EXISTS assignments (source_key TEXT PRIMARY KEY, task_id INTEGER NOT NULL UNIQUE, record_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS calendar_snapshot (id INTEGER PRIMARY KEY CHECK(id=1), record_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS calendar_sync (id INTEGER PRIMARY KEY CHECK(id=1), record_json TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS calendar_overrides (id INTEGER PRIMARY KEY CHECK(id=1), record_json TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS assignment_scan_state (id INTEGER PRIMARY KEY CHECK(id=1), record_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS exams (source_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS announcements (source_key TEXT PRIMARY KEY, record_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS ai_usage (
@@ -453,6 +455,32 @@ class Database(TaskActions):
                 return current
             connection.execute("INSERT INTO calendar_snapshot VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET record_json=excluded.record_json", (json.dumps(snapshot),))
         return snapshot
+
+    def get_calendar_overrides(self):
+        with self.connect() as connection:
+            row = connection.execute("SELECT record_json FROM calendar_overrides WHERE id=1").fetchone()
+        return json.loads(row[0]) if row else None
+
+    def save_calendar_overrides(self, record):
+        from .calendar_overrides import CalendarOverrides
+        value = CalendarOverrides.from_record(record).to_record()
+        scope = self.connect() if self._transaction.get() is not None else self.transaction()
+        with scope as connection:
+            connection.execute("INSERT INTO calendar_overrides VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET record_json=excluded.record_json", (json.dumps(value),))
+        return value
+
+    def get_assignment_scan_state(self):
+        with self.connect() as connection:
+            row = connection.execute("SELECT record_json FROM assignment_scan_state WHERE id=1").fetchone()
+        return json.loads(row[0]) if row else None
+
+    def save_assignment_scan_state(self, record):
+        from .assignment_scan_state import AssignmentScanState
+        value = AssignmentScanState.from_record(record).to_record()
+        scope = self.connect() if self._transaction.get() is not None else self.transaction()
+        with scope as connection:
+            connection.execute("INSERT INTO assignment_scan_state VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET record_json=excluded.record_json", (json.dumps(value),))
+        return value
 
     def complete_task(self, task_id: int, completed_at: datetime) -> bool:
         with self.connect() as connection:
