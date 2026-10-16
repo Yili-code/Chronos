@@ -851,6 +851,25 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
             "parse_mode": "HTML",
             "reply_markup": HELP_KEYBOARD,
         })
+    if command is not None and (command == "calendar" or command.startswith("calendar ")):
+        from .calendar_overrides import CalendarOverrides, apply_calendar_override, render_calendar_overrides
+        suffix = command.removeprefix("calendar").strip()
+        if not suffix:
+            return lambda: message_bundle({
+                "text": render_calendar_overrides(CalendarOverrides.from_record(db.get_calendar_overrides())),
+                "parse_mode": "HTML",
+            })
+        try:
+            apply_calendar_override(CalendarOverrides(), suffix)
+        except ValueError as error:
+            return lambda reply=str(error): reply
+        def update_calendar():
+            current = CalendarOverrides.from_record(db.get_calendar_overrides())
+            updated = apply_calendar_override(current, suffix)
+            db.save_calendar_overrides(updated.to_record())
+            return message_bundle({"text": "掃描校曆已更新。\n\n" + render_calendar_overrides(updated),
+                                   "parse_mode": "HTML"})
+        return update_calendar
     help_section = re.fullmatch(r"help\s+(tasks|study|assignments)", command or "", re.IGNORECASE)
     if help_section:
         section = help_section.group(1).lower()

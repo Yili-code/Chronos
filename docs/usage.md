@@ -75,6 +75,12 @@ Undo 還原標題、期限、分類及全部時間欄位；若編輯改了 tag �
 
 Telegram 明確拒絕時可於下一輪重試；timeout、5xx 或發送後尚未記錄就中斷，保留 `sending/uncertain`，不盲目重送，也不宣稱送達。內部端點回覆 503，其他任務仍會繼續檢查。需管理者核對 Telegram 及 `task_action_state` 的 `deadline-*` 紀錄後處理；目前沒有自動解除不明狀態的使用者入口。提醒紀錄不自動到期，`/clear` 確認後清除。
 
+### TronClass 掃描校曆
+
+`/calendar` 查詢每天 06:00（Asia/Taipei）的掃描期間與例外日期；可用 `/calendar disable YYYY-MM-DD`、`enable YYYY-MM-DD`、`reset YYYY-MM-DD`，或 `/calendar term START END` 設定學期掃描區間。讀取不寫資料，更新與 webhook receipt 同一 transaction 保存；重送同一 update 不會重複操作，同時準備的不同指令會依最新設定合併。
+
+校曆只控制「哪天掃描」，不更換課程 roster 或 TronClass 學期。scanner 目前保留已部署的 `1151` 學期及七門課程範圍；下學期須核對 `TRACKED_SEMESTER` 與 `TRACKED_COURSES` 後另外發布。詳細維運流程見 [TronClass scanner](tronclass-scanner.md)。
+
 ### Study 指令範例（需額外設定）
 
 Study 預設關閉，包含 NTOU / TronClass 特定課表與課程 ID；不是跨校通用 LMS 整合。它不下載教材或產生 PDF 摘要，完整邊界見 [Study 課程追蹤](study.md)。

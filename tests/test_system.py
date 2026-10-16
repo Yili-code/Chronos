@@ -70,6 +70,20 @@ def test_unknown_reply_never_creates_task(system):
     assert service.list_open() == []
 
 
+def test_calendar_command_shows_and_persists_owner_override(system):
+    client, _, bot, _ = system
+    headers = {'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}
+    response = client.post('/telegram/webhook', headers=headers, json={
+        'update_id': 991, 'message': {'message_id': 590, 'chat': {'id': 123},
+                                      'text': '/calendar disable 2026-10-25'},
+    })
+    assert response.status_code == 200
+    assert main.db.get_calendar_overrides()['disabled_dates'] == ['2026-10-25']
+    text = bot.send_message.await_args.args[1]
+    assert '掃描校曆已更新' in text
+    assert '2026-10-25' in text
+
+
 def test_course_reply_preserves_evidence_without_creating_a_task(system):
     from chronos.course_tracking import COURSE_SCHEDULE, new_session
     client, service, bot, config = system
