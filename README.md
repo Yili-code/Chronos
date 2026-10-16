@@ -31,9 +31,24 @@ A self-hosted, single-user Telegram task assistant with Gemini-powered natural-l
 
 這是個人用途，沒有多使用者帳號隔離。`#Chronos` 是代辦分類標籤，不會追蹤 Git repository。AI 文字會送到 Gemini；詳細資料流及失敗行為見 [指令參考](docs/usage.md)。
 
-## TronClass 掃描排程
+## TronClass 每日作業掃描
 
-既有雲端作業掃描排程為每天 06:00（Asia/Taipei），電腦關機時仍可執行。2026-10-16 已讀回確認排程啟用；本次服務部署不更動此獨立 Job。
+可選用的 Cloud Run Job 會在每天 06:00（`Asia/Taipei`）以新 CAS session 讀取 `1151` 學期七門追蹤課程的作業清單，不需要電腦開機。它不繳交作業、不標記已讀，也不產生 draft。
+
+- 同一作業只在首次出現時通知，附 `Open in TronClass` 與 `Edit task` 按鈕。
+- 只納入 TronClass 明確顯示未繳交且尚未逾期的作業；過期項目保存 baseline，不建立任務。已繳交或繳交狀態不明的項目不納入。
+- 正常但沒有新作業時會通知；相同失敗第一次安靜記錄、連續第二次才通知一次。
+- Telegram 內可輸入 `/calendar` 查看與編輯掃描期間，例如 `/calendar disable 2026-10-25`、`/calendar term 2026-09-07 2027-01-31`。
+
+部署 isolated Job 後，明確啟用 schedule：
+
+```powershell
+.\scripts\deploy_tronclass_assignment_scan.ps1
+.\scripts\deploy_tronclass_assignment_scan.ps1 -ExecuteNow
+.\scripts\deploy_tronclass_assignment_scan.ps1 -EnableSchedule
+```
+
+Job 使用獨立的 `chronos-collector` service account，只取得 CAS、Telegram 與 Firestore 所需權限；公開 Chronos service 不取得學校帳密。
 
 ## 從一筆代辦開始
 

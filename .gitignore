@@ -18,3 +18,12 @@ chronos.db
 .study-data/
 tmp/pdfs/
 output/pdf/
+
+# Local validation and deployment diagnostics; never ship test databases or logs.
+.dashboard*/
+.scope-tests*/
+.test-tmp*/
+.scope-*.patch
+*-job.out.log
+*-job.err.log
+enable-scheduler.*.log

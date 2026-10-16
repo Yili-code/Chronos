@@ -11,6 +11,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "cloud_job_release.ps1")
 if ($EnableStudyTracking -and $DisableStudyTracking) {
     throw "EnableStudyTracking and DisableStudyTracking cannot be used together"
 }
@@ -317,12 +318,8 @@ $environment = @(
     "CHRONOS_RELEASE_SHA=$releaseSha"
 ) -join ','
 
-$releaseDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ("chronos-release-" + [guid]::NewGuid().ToString('N'))
-$releaseArchive = "$releaseDirectory.zip"
-& git -C $projectRoot archive --format=zip --output $releaseArchive HEAD
-if ($LASTEXITCODE -ne 0) { throw "Unable to create release archive" }
-New-Item -ItemType Directory -Path $releaseDirectory | Out-Null
-Expand-Archive -LiteralPath $releaseArchive -DestinationPath $releaseDirectory
+$releaseSource = New-ChronosJobSource -Root $projectRoot -Dockerfile "Dockerfile"
+$releaseDirectory = $releaseSource.Directory
 
 Push-Location $releaseDirectory
 try {
@@ -334,8 +331,7 @@ try {
 }
 finally {
     Pop-Location
-    Remove-Item -LiteralPath $releaseDirectory -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $releaseArchive -Force -ErrorAction SilentlyContinue
+    Remove-ChronosJobSource $releaseSource
 }
 
 $serviceUrl = (& $gcloudCommand run services describe $Service --region $Region --project $ProjectId `
@@ -345,6 +341,32 @@ if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($serviceUrl)) {
 }
 Invoke-Gcloud run services update $Service --region $Region --project $ProjectId `
     --update-env-vars "CHRONOS_PUBLIC_BASE_URL=$serviceUrl" --quiet
+
+# Production traffic can be pinned to a prior named revision. Verify the new
+# candidate before promoting it explicitly rather than trusting deploy output.
+$releaseRevision = (& $gcloudCommand run services describe $Service --region $Region --project $ProjectId `
+    --format "value(status.latestCreatedRevisionName)").Trim()
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($releaseRevision)) { throw "Release revision is missing" }
+Invoke-Gcloud run services update-traffic $Service --region $Region --project $ProjectId `
+    --update-tags "chronos-release-check=$releaseRevision" --quiet | Out-Null
+try {
+    $candidateJson = (& $gcloudCommand run services describe $Service --region $Region --project $ProjectId `
+        --format "json(status.traffic)" --quiet) -join "`n"
+    if ($LASTEXITCODE -ne 0) { throw "Could not read candidate route" }
+    $candidate = ($candidateJson | ConvertFrom-Json).status.traffic |
+        Where-Object { $_.tag -eq "chronos-release-check" } | Select-Object -First 1
+    if (-not $candidate.url) { throw "Candidate route is missing" }
+    $candidateReady = Invoke-RestMethod -Uri "$($candidate.url)/ready" -TimeoutSec 60
+    if ($candidateReady.status -ne "ready" -or $candidateReady.release -ne $releaseSha) {
+        throw "Candidate readiness or release identity mismatch"
+    }
+    Invoke-Gcloud run services update-traffic $Service --region $Region --project $ProjectId `
+        --to-revisions "$releaseRevision=100" --quiet | Out-Null
+}
+finally {
+    Invoke-Gcloud run services update-traffic $Service --region $Region --project $ProjectId `
+        --remove-tags chronos-release-check --quiet | Out-Null
+}
 
 $jobName = "$Service-daily-tasks"
 $dailyUri = "$serviceUrl/internal/daily"
