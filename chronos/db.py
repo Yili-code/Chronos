@@ -552,10 +552,18 @@ class Database:
                                     reply_message_id=message_id, text=text)
             if answered is None:
                 return "這堂課已記錄或結束。進度未變更。"
+            if answered.report_kind is ProgressReportKind.UNKNOWN_SCOPE:
+                self.create_task(
+                    f"Check {session.course_key.replace('-', ' ').replace('operating systems', 'operating system')} {session.class_date:%m/%d} scope",
+                    None, None, datetime.now().astimezone(),
+                )
             if session.survey_task_id is not None:
                 now = datetime.now().astimezone()
                 self.complete_task(session.survey_task_id, now)
             self.save_course_session(answered)
+            if answered.report_kind is ProgressReportKind.UNKNOWN_SCOPE:
+                return (f"已記錄 {session.course_name}（{session.class_date:%m/%d}）：範圍尚待確認。\n"
+                        "填寫進度代辦已完成，已新增確認上課範圍代辦。")
             if answered.report_kind is ProgressReportKind.NO_PROGRESS:
                 return (f"已記錄 {session.course_name}（{session.class_date:%m/%d}）：今天無課或沒有進度。\n"
                         "填寫進度代辦已完成，其他代辦保持不變。")

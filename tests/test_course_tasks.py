@@ -112,14 +112,14 @@ def test_no_class_reply_completes_survey_without_review(db):
     assert stored.survey_task_id is not None
 
 
-def test_unknown_reply_is_saved_without_creating_confirmation_task(db):
+def test_unknown_reply_creates_one_confirmation_task(db):
     session = new_session(COURSE_SCHEDULE[0], date(2026, 10, 5), 501)
     db.create_course_session(session, create_tasks=True)
     action = lambda: db.record_course_reply(501, 502, "我也不知道")
     receipt = db.process_update(30, action)
     db.process_update(31, action)
-    assert not db.list_open_tasks()
-    assert "其他代辦保持不變" in receipt["reply"]
+    assert [task["title"] for task in db.list_open_tasks()] == ["Check security 10/05 scope"]
+    assert "已新增確認上課範圍代辦" in receipt["reply"]
     saved = db.get_course_session(session.session_id)
     assert saved.status.value == "answered"
     assert saved.report_kind is ProgressReportKind.UNKNOWN_SCOPE

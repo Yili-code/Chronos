@@ -482,10 +482,19 @@ class FirestoreDatabase:
             if session.survey_task_id is not None:
                 task_ref = self.tasks.document(str(session.survey_task_id))
                 survey = task_ref.get(transaction=transaction)
+            if answered.report_kind is ProgressReportKind.UNKNOWN_SCOPE:
+                self.create_task(
+                    f"Check {session.course_key.replace('-', ' ').replace('operating systems', 'operating system')} {session.class_date:%m/%d} scope",
+                    None, None, datetime.now().astimezone(),
+                )
+            if session.survey_task_id is not None:
                 now = datetime.now().astimezone()
                 if survey.exists and survey.get("status") == "open":
                     transaction.update(task_ref, {"status": "done", "completed_at": now.isoformat()})
             transaction.update(snapshot.reference, session_to_firestore(answered))
+            if answered.report_kind is ProgressReportKind.UNKNOWN_SCOPE:
+                return (f"已記錄 {session.course_name}（{session.class_date:%m/%d}）：範圍尚待確認。\n"
+                        "填寫進度代辦已完成，已新增確認上課範圍代辦。")
             if answered.report_kind is ProgressReportKind.NO_PROGRESS:
                 return (f"已記錄 {session.course_name}（{session.class_date:%m/%d}）：今天無課或沒有進度。\n"
                         "填寫進度代辦已完成，其他代辦保持不變。")
