@@ -1,4 +1,4 @@
-"""Durable assignment notices. No upstream fetching, AI or submission here."""
+"""Durable first-seen assignment notices. No upstream fetching, AI or submission here."""
 from .study_delivery import StudyDeliveryLedger
 from .study_scheduler import delivery_outcome
 from .telegram import TelegramError
@@ -15,16 +15,7 @@ async def tick_assignments(db, telegram, chat_id, now):
         notice_key = f"assignment:{source_key}:discovered"
         notice = db.get_study_delivery(notice_key)
         initial = not notice or notice["status"] != "sent"
-        def current_key(value):
-            if value.source_revision:
-                update_key = f'assignment:{source_key}:source:{value.source_revision}'
-                update = db.get_study_delivery(update_key)
-                if not update or update['status'] != 'sent':
-                    return update_key
-            if value.status == "deadline_pending" and value.deadline_revision > 0:
-                return f"assignment:{source_key}:deadline:{value.deadline_revision}:pending"
-            return None  # Timed reminders use deadline_reminders for every task.
-        key = notice_key if initial else current_key(item)
+        key = notice_key if initial else None
         if key is None:
             continue
         claim = ledger.claim(key, now)
@@ -34,25 +25,24 @@ async def tick_assignments(db, telegram, chat_id, now):
         if not current or not current["task_exists"] or current["assignment"].status == "done":
             continue
         item = current["assignment"]
-        if not initial and current_key(item) != key:
-            continue  # a concurrently changed deadline invalidates this claim
         deadline = (f"截止：{item.deadline:%m/%d %H:%M}（台北時間）" if item.deadline
                     else "截止時間尚未提供。請先用 /tasks 定位，再以 /edit 清單順位 ... 補上。")
-        label = '新作業' if initial else ('作業來源更新' if ':source:' in key else '作業截止提醒')
-        source_deadline = ''
-        if label == '作業來源更新' and (item.deadline_owner_override or item.deadline_origin == 'owner'):
-            source_deadline = (f"來源截止：{item.source_deadline:%m/%d %H:%M}（台北時間）\n" if item.source_deadline
-                               else '來源截止：尚未提供\n') + '保留你的手動截止設定，未自動覆蓋。\n'
+        label = '新作業'
         text = (f"{label} #{task_id}：{item.title[:500]}\n"
                 f"課程：{item.course_id[:100]}\n{deadline}\n"
-                f"{source_deadline}"
                 + ("TronClass 頁面顯示已繳交；是否結案仍由你確認。\n" if item.submission_status == 'submitted'
                    else "TronClass 繳交狀態尚未確認。\n") +
                 f"已觀察到 PDF 附件：{len(item.attachments)} 個（僅部分清單，未代表已下載）。\n"
                 f"說明：{item.description[:1000] or '尚未提供'}\n"
                 "完成後，用 /tasks 定位，再以 /done 清單順位 結案。")
         try:
-            response = await telegram.send_message(chat_id, text)
+            markup = None
+            if initial:
+                markup = {"inline_keyboard": [[
+                    {"text": "Open in TronClass", "url": f"https://tronclass.ntou.edu.tw/course/{item.course_id}/learning-activity#/{item.source_id}"},
+                    {"text": "Edit task", "callback_data": f"task:edit:{task_id}"},
+                ]]}
+            response = await telegram.send_message(chat_id, text, reply_markup=markup)
         except TelegramError:
             ledger.finish(key, claim, now)
             continue

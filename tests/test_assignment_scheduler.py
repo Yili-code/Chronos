@@ -21,17 +21,17 @@ def setup(tmp_path, deadline=True):
     return db, now, task, bot
 
 
-def test_discovery_dedup_and_completion_without_legacy_timed_reminders(tmp_path):
+def test_discovery_is_sent_once_and_completion_suppresses_future_delivery(tmp_path):
     db, now, task, bot = setup(tmp_path)
     for _ in range(4):
         asyncio.run(tick_assignments(db, bot, 123, now))
-    assert bot.send_message.await_count == 1  # Timed reminders are delivered by the unified scheduler.
+    assert bot.send_message.await_count == 1
     db.complete_task(task["task_id"], now)
     asyncio.run(tick_assignments(db, bot, 123, now + timedelta(hours=22)))
     assert bot.send_message.await_count == 1
 
 
-def test_missing_deadline_asks_once_without_timed_reminders(tmp_path):
+def test_missing_deadline_is_still_a_single_first_seen_notice(tmp_path):
     db, now, task, bot = setup(tmp_path, False)
     for hours in (0, 1, 24):
         asyncio.run(tick_assignments(db, bot, 123, now + timedelta(hours=hours)))
@@ -50,17 +50,16 @@ def test_unknown_delivery_never_blindly_resends(tmp_path):
     assert bot.send_message.await_count == 1
 
 
-def test_removed_deadline_gets_one_new_confirmation_question(tmp_path):
+def test_deadline_edits_do_not_generate_followup_notifications(tmp_path):
     db, now, task, bot = setup(tmp_path)
     asyncio.run(tick_assignments(db, bot, 123, now))
     db.edit_task(task["task_id"], "Report", None, "course")
     for _ in range(3):
         asyncio.run(tick_assignments(db, bot, 123, now))
-    assert bot.send_message.await_count == 2
-    assert "截止時間尚未提供" in bot.send_message.call_args.args[1]
+    assert bot.send_message.await_count == 1
 
 
-def test_source_changes_notify_once_but_identical_refresh_does_not(tmp_path):
+def test_source_changes_do_not_create_a_second_notification(tmp_path):
     from dataclasses import replace
     db, now, task, bot = setup(tmp_path)
     asyncio.run(tick_assignments(db, bot, 123, now))
@@ -68,11 +67,19 @@ def test_source_changes_notify_once_but_identical_refresh_does_not(tmp_path):
     changed = replace(old, description='Updated instructions', discovered_at=now + timedelta(minutes=1))
     db.refresh_assignment(changed)
     asyncio.run(tick_assignments(db, bot, 123, now + timedelta(minutes=1)))
-    assert '作業來源更新' in bot.send_message.call_args.args[1]
+    assert bot.send_message.await_count == 1
     assert db.get_assignment(old.key)['assignment'].source_revision == 1
     db.refresh_assignment(replace(changed, discovered_at=now + timedelta(minutes=2)))
     assert db.get_assignment(old.key)['assignment'].source_revision == 1
     for minute in (2, 3, 4):
         asyncio.run(tick_assignments(db, bot, 123, now + timedelta(minutes=minute)))
-    texts = [call.args[1] for call in bot.send_message.call_args_list]
-    assert sum('作業來源更新' in text for text in texts) == 1
+    assert bot.send_message.await_count == 1
+
+
+def test_new_assignment_includes_open_and_edit_buttons(tmp_path):
+    db, now, _, bot = setup(tmp_path)
+    asyncio.run(tick_assignments(db, bot, 123, now))
+
+    markup = bot.send_message.call_args.kwargs["reply_markup"]
+    assert markup["inline_keyboard"][0][0]["text"] == "Open in TronClass"
+    assert markup["inline_keyboard"][0][1]["text"] == "Edit task"
