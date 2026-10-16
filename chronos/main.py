@@ -31,6 +31,7 @@ from .runtime_health import (
     validate_runtime_security,
 )
 from .task_actions import UndoConflict
+from .deadline_reminders import send_deadline_reminders
 from .task_timing import display_time, task_sort_key, timing_details
 from .study_scheduler import tick_study, notify_study_failures
 from .gmail import GmailClient, GmailError
@@ -235,6 +236,7 @@ async def lifespan(_: FastAPI):
         mail_workflow().require_config()
     if settings.enable_internal_scheduler:
         scheduler.add_job(send_daily_tasks, "cron", hour=8, minute=0, id="daily_tasks", replace_existing=True)
+        scheduler.add_job(run_deadline_reminders, "interval", minutes=5, id="deadline_reminders", replace_existing=True, max_instances=1)
         if settings.enable_gmail:
             scheduler.add_job(send_daily_mail, "cron", hour=7, minute=0, timezone="Asia/Taipei",
                               id="daily_mail", replace_existing=True)
@@ -422,6 +424,20 @@ async def trigger_daily_mail(x_chronos_scheduler_secret: str | None = Header(def
     if not hmac.compare_digest(x_chronos_scheduler_secret or "", settings.scheduler_secret):
         raise HTTPException(status_code=403, detail="Invalid scheduler credential")
     return await send_daily_mail()
+
+
+async def run_deadline_reminders():
+    return await send_deadline_reminders(db, telegram, settings)
+
+
+@app.post("/internal/deadlines")
+async def trigger_deadline_reminders(x_chronos_scheduler_secret: str | None = Header(default=None)) -> dict:
+    if not settings.scheduler_secret or not hmac.compare_digest(x_chronos_scheduler_secret or "", settings.scheduler_secret):
+        raise HTTPException(status_code=403, detail="Invalid scheduler credential")
+    try:
+        return await run_deadline_reminders()
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail="Deadline reminder delivery requires retry or inspection") from error
 
 
 @app.post("/internal/daily")

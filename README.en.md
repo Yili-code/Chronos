@@ -10,7 +10,7 @@ Chronos is a self-hosted, single-user task assistant. Gemini handles natural-lan
 
 Version `0.1.0` is in development. There is no License file or GitHub Release yet; clarify licensing before redistribution or code contributions. There is no shared public bot or hosted demo. The optional Study integration retains NTOU / TronClass-specific progress, assignment, and announcement workflows; it does not download course materials or generate AI notes from PDFs.
 
-Edits provide an **Undo this edit** button; `/undo` restores the latest successful edit. Completion cannot be undone.
+Edits provide an **Undo this edit** button; `/undo` restores the latest successful edit. Deadline reminders run every five minutes: 24 hours and 1 hour before a timed deadline, or at 09:00 the day before and on a date-only deadline. Completed tasks stop reminders. Cloud deployments require the separate deadline Scheduler job created by the deployment script.
 
 ## Install and start
 

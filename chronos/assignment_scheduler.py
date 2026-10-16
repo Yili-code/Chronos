@@ -1,5 +1,4 @@
 """Durable assignment notices. No upstream fetching, AI or submission here."""
-from .assignments import due_reminder
 from .study_delivery import StudyDeliveryLedger
 from .study_scheduler import delivery_outcome
 from .telegram import TelegramError
@@ -24,7 +23,7 @@ async def tick_assignments(db, telegram, chat_id, now):
                     return update_key
             if value.status == "deadline_pending" and value.deadline_revision > 0:
                 return f"assignment:{source_key}:deadline:{value.deadline_revision}:pending"
-            return due_reminder(value, now, sent_keys=set())
+            return None  # Timed reminders use deadline_reminders for every task.
         key = notice_key if initial else current_key(item)
         if key is None:
             continue

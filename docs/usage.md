@@ -61,6 +61,20 @@ AI update service 暫時不可用時，task 不會變更，原始 command 會持
 
 Undo 還原標題、期限、分類及全部時間欄位；若編輯改了 tag 顯示偏好或關聯作業期限，也一起還原。操作綁定永久 task ID，清單排序不影響目標。任務已完成、刪除，或任務／關聯作業／該 tag 偏好後來被更動時，會拒絕還原；舊 Undo 按鈕不會套用到新修改。Undo、還原點消耗與 Telegram receipt 同一 transaction 保存，重送不會重複還原。還原點會跨重啟保留，`/clear` 確認後一併刪除。
 
+### 期限提醒
+
+所有 open task（含 TronClass 作業）都使用相同提醒流程，不需要 AI：
+
+- 有明確截止時間：到期前 24 小時、1 小時各提醒一次。
+- 只有截止日期：前一天與當天 09:00（依 `CHRONOS_TIMEZONE`，預設台北時間）各提醒一次，明確顯示 time unspecified，不推測截止時刻。
+- 單純 scheduled work 或 course/event 日期不觸發 deadline 提醒；完成、刪除或移除期限後停止。已過期項目仍出現在每日清單，但不持續發送逾期提醒。
+
+本機 scheduler 每五分鐘檢查一次；Cloud Run 由部署腳本建立獨立的每五分鐘 `/internal/deadlines` Cloud Scheduler job。實際通知可能比門檻晚約五分鐘，另受服務及 Telegram 可用性影響。08:00 每日清單照常執行。服務恢復時只發當下適用的階段，不補發所有錯過階段；日期任務當天 09:00 前不補發前一天提醒。
+
+資料庫以永久 task ID、截止值與階段保存 claim 與送達紀錄；改期會使用新提醒鍵，還原到已通知的期限不重複通知。發送前再次確認任務仍 open 且期限未改。Telegram 與資料庫無法共用 transaction，因此恰好在最後確認後的並行修改仍可能遇到一則已送出的提醒。
+
+Telegram 明確拒絕時可於下一輪重試；timeout、5xx 或發送後尚未記錄就中斷，保留 `sending/uncertain`，不盲目重送，也不宣稱送達。內部端點回覆 503，其他任務仍會繼續檢查。需管理者核對 Telegram 及 `task_action_state` 的 `deadline-*` 紀錄後處理；目前沒有自動解除不明狀態的使用者入口。提醒紀錄不自動到期，`/clear` 確認後清除。
+
 ### Study 指令範例（需額外設定）
 
 Study 預設關閉，包含 NTOU / TronClass 特定課表與課程 ID；不是跨校通用 LMS 整合。它不下載教材或產生 PDF 摘要，完整邊界見 [Study 課程追蹤](study.md)。

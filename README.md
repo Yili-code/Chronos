@@ -23,12 +23,17 @@ A self-hosted, single-user Telegram task assistant with Gemini-powered natural-l
 | 自然語言新增、語意編輯代辦 | 需要可用的 Gemini API key；外部 AI 失敗時不新增或更動代辦。 |
 | `/tasks`、`/done`、明確移除期限或分類 | 查詢與完成不需要 AI；Telegram 需要自己的 bot、chat ID 與 HTTPS webhook。 |
 | 編輯撤回 | 修改成功後按 Undo，或 `/undo` 還原最近一次 edit；不撤回完成。 |
+| 期限提醒 | 有時間：前 24 小時及 1 小時；只有日期：前一天及當天 09:00。 |
 | 每日未完成清單 | 預設 `Asia/Taipei` 08:00；需要持續運行的服務或外部 scheduler，不是逐筆到期提醒。 |
 | Gmail 郵件整理 | 選用；07:00 過濾明確促銷並移到垃圾桶、Telegram 摘要與按鈕／回覆新增任務。需獨立 OAuth，無寄信入口。[授權與啟用](docs/gmail.md)。 |
 | SQLite / Firestore | 本機預設 SQLite；Firestore 是選用的雲端設定。 |
 | Study 模組 | 預設關閉；保留特定 NTOU / TronClass 課表、進度、作業與公告。沒有教材下載、PDF AI 摘要或筆記匯出。 |
 
 這是個人用途，沒有多使用者帳號隔離。`#Chronos` 是代辦分類標籤，不會追蹤 Git repository。AI 文字會送到 Gemini；詳細資料流及失敗行為見 [指令參考](docs/usage.md)。
+
+## TronClass 掃描排程
+
+既有雲端作業掃描排程為每天 06:00（Asia/Taipei），電腦關機時仍可執行。2026-10-16 已讀回確認排程啟用；本次服務部署不更動此獨立 Job。
 
 ## 從一筆代辦開始
 

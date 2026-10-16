@@ -360,6 +360,36 @@ else {
         --headers "X-Chronos-Scheduler-Secret=$schedulerSecret" --max-retry-attempts 3 --attempt-deadline 1800s --quiet | Out-Null
 }
 
+$deadlineJobName = "$Service-deadline-reminders"
+$deadlineUri = "$serviceUrl/internal/deadlines"
+& $gcloudCommand scheduler jobs describe $deadlineJobName --location $Region --project $ProjectId --quiet 2>$null | Out-Null
+if ($LASTEXITCODE -eq 0) {
+    Invoke-Gcloud scheduler jobs update http $deadlineJobName --location $Region --project $ProjectId `
+        --schedule "*/5 * * * *" --time-zone "Asia/Taipei" --uri $deadlineUri --http-method POST `
+        --update-headers "X-Chronos-Scheduler-Secret=$schedulerSecret" --max-retry-attempts 0 --attempt-deadline 240s --quiet | Out-Null
+}
+else {
+    Invoke-Gcloud scheduler jobs create http $deadlineJobName --location $Region --project $ProjectId `
+        --schedule "*/5 * * * *" --time-zone "Asia/Taipei" --uri $deadlineUri --http-method POST `
+        --headers "X-Chronos-Scheduler-Secret=$schedulerSecret" --max-retry-attempts 0 --attempt-deadline 240s --quiet | Out-Null
+}
+
+$deadlineJobJson = (& $gcloudCommand scheduler jobs describe $deadlineJobName --location $Region `
+    --project $ProjectId --format "json(schedule,timeZone,state,httpTarget.uri)" --quiet) -join "`n"
+if ($LASTEXITCODE -ne 0) { throw "Could not verify deadline reminder scheduler" }
+$deadlineJob = $deadlineJobJson | ConvertFrom-Json
+if ($deadlineJob.state -eq "PAUSED") {
+    Invoke-Gcloud scheduler jobs resume $deadlineJobName --location $Region --project $ProjectId --quiet | Out-Null
+    $deadlineJobJson = (& $gcloudCommand scheduler jobs describe $deadlineJobName --location $Region `
+        --project $ProjectId --format "json(schedule,timeZone,state,httpTarget.uri)" --quiet) -join "`n"
+    if ($LASTEXITCODE -ne 0) { throw "Could not verify resumed deadline scheduler" }
+    $deadlineJob = $deadlineJobJson | ConvertFrom-Json
+}
+if ($deadlineJob.state -ne "ENABLED" -or $deadlineJob.schedule -ne "*/5 * * * *" -or `
+    $deadlineJob.timeZone -ne "Asia/Taipei" -or $deadlineJob.httpTarget.uri -ne $deadlineUri) {
+    throw "Deadline reminder scheduler does not match the expected configuration"
+}
+
 if ($EnableGmail) {
     $mailJobName = "$Service-daily-mail"
     $mailUri = "$serviceUrl/internal/mail/daily"
@@ -415,3 +445,4 @@ Write-Output "Health: ok"
 Write-Output "Release commit: $releaseSha"
 Write-Output "Telegram webhook: configured"
 Write-Output "Study scheduler: $studySchedulerStatus"
+Write-Output "Deadline reminder scheduler: every 5 minutes, enabled"

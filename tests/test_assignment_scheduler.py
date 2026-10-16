@@ -21,14 +21,14 @@ def setup(tmp_path, deadline=True):
     return db, now, task, bot
 
 
-def test_discovery_reminder_dedup_and_completion(tmp_path):
+def test_discovery_dedup_and_completion_without_legacy_timed_reminders(tmp_path):
     db, now, task, bot = setup(tmp_path)
     for _ in range(4):
         asyncio.run(tick_assignments(db, bot, 123, now))
-    assert bot.send_message.await_count == 2  # discovery, current reminder window
+    assert bot.send_message.await_count == 1  # Timed reminders are delivered by the unified scheduler.
     db.complete_task(task["task_id"], now)
     asyncio.run(tick_assignments(db, bot, 123, now + timedelta(hours=22)))
-    assert bot.send_message.await_count == 2
+    assert bot.send_message.await_count == 1
 
 
 def test_missing_deadline_asks_once_without_timed_reminders(tmp_path):

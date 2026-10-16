@@ -62,6 +62,6 @@ Telegram token、owner chat、webhook secret 或 scheduler secret 時，applicat
 local SQLite mode 允許明確的無驗證開發環境。
 
 
-通用部署腳本只建立每日代辦 job。Study 的課表、session publisher 與部分驗證腳本包含維護者專用設定，不能直接當成通用雲端安裝步驟。
+通用部署腳本建立每日代辦 job，以及每五分鐘的 `$Service-deadline-reminders` job（`/internal/deadlines`，使用 scheduler secret，無立即自動重試）。期限提醒的 SQLite／Firestore claim 與 Undo 還原點保存於 `task_action_state`；本機測試通過不代表此雲端 job 已建立。Study 的課表、session publisher 與部分驗證腳本包含維護者專用設定，不能直接當成通用雲端安裝步驟。
 
 回到 [本機啟動](getting-started.md) 或 [README](../README.md)。
