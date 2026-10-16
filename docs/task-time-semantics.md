@@ -1,7 +1,7 @@
 # Task times and editing
 
 Tasks distinguish deadlines, planned work, and course/event dates. Telegram cards,
-the daily list, and the Web dashboard display these roles separately.
+the daily list,  display these roles separately.
 
 | Input meaning | Stored value | Display |
 | --- | --- | --- |

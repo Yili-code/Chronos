@@ -20,8 +20,7 @@ from chronos.telegram import TelegramClient, TelegramError
 def system(tmp_path, monkeypatch):
     config = Settings(_env_file=None, database_path=tmp_path / 'test.db',
                       telegram_chat_id=123,
-                      telegram_webhook_secret='test-hook', scheduler_secret='test-scheduler',
-                      web_password='test-password')
+                      telegram_webhook_secret='test-hook', scheduler_secret='test-scheduler')
     db = Database(config.database_path)
     service = TaskService(db, config.tz)
     bot = TelegramClient('test-token')
@@ -151,43 +150,15 @@ def test_study_endpoint_refreshes_calendar_before_course_policy(system, monkeypa
     assert bot.send_message.await_count == 1
 
 
-def test_web_auth_and_task_lifecycle(system):
+def test_dashboard_routes_are_removed(system):
     client, service, bot, config = system
-    assert client.get('/health').json() == {'status': 'ok'}
-    assert client.get('/live').json() == {'status': 'live'}
-    ready = client.get('/ready')
-    assert ready.status_code == 200
-    assert ready.json()['status'] == 'ready'
-    for path in ['/', '/api/tasks']:
-        assert client.get(path).status_code == 401
-        assert client.get(path, auth=('chronos', 'wrong')).status_code == 401
-    assert client.post('/api/tasks/natural', json={'text': '工作'}).status_code == 401
-    assert client.post('/api/tasks/1/complete').status_code == 401
-    client.auth = ('chronos', 'test-password')
-    homepage = client.get('/').text
-    assert 'Chronos' in homepage
-    assert 'Open tasks' in homepage
-    assert 'No open tasks.' in homepage
-    assert '>Add</button>' in homepage
-    assert '>Complete</button>' in homepage
-    assert 'const timeZone="Asia/Taipei"' in homepage
-    assert '<h2>代辦</h2>' not in homepage
-    assert '開發專案' not in homepage
-    assert client.get('/api/projects').status_code == 404
-    assert client.get('/api/tasks').json() == []
-    created = client.post('/api/tasks/natural', json={'text': '新增工作'})
-    assert created.status_code == 200
-    task_id = created.json()['id']
-    assert client.get('/api/tasks').json()[0]['title'] == 'Test task'
-    assert client.post(f'/api/tasks/{task_id}/complete').status_code == 200
-    assert client.get('/api/tasks').json() == []
-    assert client.post(f'/api/tasks/{task_id}/complete').status_code == 404
-    assert client.post('/api/tasks/natural', json={}).status_code == 422
-    main.ai.parse.side_effect = AIError('Test failure')
-    assert client.post('/api/tasks/natural', json={'text': '工作'}).status_code == 503
+    assert client.get('/live').status_code == 200
+    assert client.get('/ready').status_code == 200
+    assert client.get('/').status_code == 404
+    assert client.get('/api/tasks').status_code == 404
+    assert client.post('/api/tasks/natural', json={'text': 'Task'}).status_code == 404
+    assert client.post('/api/tasks/1/complete').status_code == 404
     assert service.list_open() == []
-    main.ai.parse.side_effect = ValueError('Empty')
-    assert client.post('/api/tasks/natural', json={'text': ''}).status_code == 422
 
 
 def test_internal_status_is_authenticated_and_side_effect_free(system):

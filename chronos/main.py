@@ -1,4 +1,3 @@
-import base64
 from html import escape
 import hmac
 import json
@@ -9,8 +8,7 @@ from contextlib import asynccontextmanager
 from collections.abc import Callable
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .db import create_database
@@ -26,7 +24,6 @@ from .tasks import (
     project_display_name,
 )
 from .telegram import TelegramClient
-from .web import render_page
 from .runtime_health import (
     RuntimeConfigurationError,
     configured_components,
@@ -329,18 +326,6 @@ async def trigger_study(x_chronos_scheduler_secret: str | None = Header(default=
     return await run_study_tick()
 
 
-def require_web_auth(authorization: str | None = Header(default=None)) -> None:
-    if not settings.web_password:
-        return
-    expected = base64.b64encode(f"{settings.web_username}:{settings.web_password}".encode()).decode()
-    if not authorization or not hmac.compare_digest(authorization, f"Basic {expected}"):
-        raise HTTPException(status_code=401, detail="Authentication required", headers={"WWW-Authenticate": "Basic"})
-
-
-class NaturalTask(BaseModel):
-    text: str
-
-
 class TelegramChat(BaseModel):
     model_config = ConfigDict(strict=True)
     id: int = Field(ge=-(2**63), le=2**63 - 1)
@@ -443,34 +428,6 @@ async def trigger_daily_tasks(x_chronos_scheduler_secret: str | None = Header(de
     if not hmac.compare_digest(x_chronos_scheduler_secret or "", settings.scheduler_secret):
         raise HTTPException(status_code=403, detail="Invalid scheduler credential")
     await send_daily_tasks()
-    return {"ok": True}
-
-
-@app.get("/", response_class=HTMLResponse, dependencies=[Depends(require_web_auth)])
-async def index() -> str:
-    return render_page(settings.timezone)
-
-
-@app.get("/api/tasks", dependencies=[Depends(require_web_auth)])
-async def list_tasks() -> list[dict]:
-    return tasks.list_open()
-
-
-@app.post("/api/tasks/natural", dependencies=[Depends(require_web_auth)])
-async def create_natural_task(body: NaturalTask) -> dict:
-    try:
-        parsed = await ai.parse(body.text)
-    except AIError as error:
-        raise HTTPException(status_code=503, detail=str(error)) from error
-    except ValueError as error:
-        raise HTTPException(status_code=422, detail=str(error)) from error
-    return tasks.create(parsed.title, parsed.due_at, parsed.project, parsed.timing)
-
-
-@app.post("/api/tasks/{task_id}/complete", dependencies=[Depends(require_web_auth)])
-async def complete_task(task_id: int) -> dict:
-    if not tasks.complete(task_id):
-        raise HTTPException(status_code=404, detail="Open task not found")
     return {"ok": True}
 
 

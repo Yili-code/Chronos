@@ -186,7 +186,6 @@ Invoke-Gcloud services enable run.googleapis.com cloudbuild.googleapis.com artif
 $geminiApiKey = Get-OrCreateGeminiApiKey
 $telegramWebhookSecret = Get-OrCreateRandomSecret "chronos-telegram-webhook-secret"
 $schedulerSecret = Get-OrCreateRandomSecret "chronos-scheduler-secret"
-$webPassword = Get-OrCreateRandomSecret "chronos-web-password"
 
 & $gcloudCommand iam service-accounts describe $runtimeAccount --project $ProjectId --quiet 2>$null | Out-Null
 if ($LASTEXITCODE -ne 0) {
@@ -208,14 +207,12 @@ $secretVersions["telegramToken"] = Set-CloudSecret "chronos-telegram-bot-token" 
 $secretVersions["telegramChat"] = Set-CloudSecret "chronos-telegram-chat-id" $telegramChatId
 $secretVersions["telegramWebhook"] = Set-CloudSecret "chronos-telegram-webhook-secret" $telegramWebhookSecret
 $secretVersions["scheduler"] = Set-CloudSecret "chronos-scheduler-secret" $schedulerSecret
-$secretVersions["webPassword"] = Set-CloudSecret "chronos-web-password" $webPassword
 
 $secretBindings = @(
     "CHRONOS_TELEGRAM_BOT_TOKEN=chronos-telegram-bot-token:$($secretVersions.telegramToken)",
     "CHRONOS_TELEGRAM_CHAT_ID=chronos-telegram-chat-id:$($secretVersions.telegramChat)",
     "CHRONOS_TELEGRAM_WEBHOOK_SECRET=chronos-telegram-webhook-secret:$($secretVersions.telegramWebhook)",
-    "CHRONOS_SCHEDULER_SECRET=chronos-scheduler-secret:$($secretVersions.scheduler)",
-    "CHRONOS_WEB_PASSWORD=chronos-web-password:$($secretVersions.webPassword)"
+    "CHRONOS_SCHEDULER_SECRET=chronos-scheduler-secret:$($secretVersions.scheduler)"
 )
 $existingService = $null
 $existingServiceJson = (& $gcloudCommand run services describe $Service --region $Region --project $ProjectId `
@@ -317,7 +314,6 @@ $environment = @(
     "CHRONOS_ENABLE_STUDY_TRACKING=$studyTrackingValue",
     "CHRONOS_ENABLE_GMAIL=$($EnableGmail.IsPresent.ToString().ToLowerInvariant())",
     "CHRONOS_TIMEZONE=Asia/Taipei",
-    "CHRONOS_WEB_USERNAME=chronos",
     "CHRONOS_RELEASE_SHA=$releaseSha"
 ) -join ','
 
@@ -419,5 +415,3 @@ Write-Output "Health: ok"
 Write-Output "Release commit: $releaseSha"
 Write-Output "Telegram webhook: configured"
 Write-Output "Study scheduler: $studySchedulerStatus"
-Write-Output "Web username: chronos"
-Write-Output "Web password is stored in Secret Manager as chronos-web-password."

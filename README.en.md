@@ -2,25 +2,13 @@
 
 **Turn Chinese or English messages into personal tasks, manage them in your own Telegram bot, and receive a daily list of unfinished tasks.**
 
-[繁體中文](README.md) · [Local demo](docs/demo.md) · [Report a problem](https://github.com/Yili-code/Chronos/issues/new/choose)
+[繁體中文](README.md) · [Report a problem](https://github.com/Yili-code/Chronos/issues/new/choose)
 
 [![CI](https://github.com/Yili-code/Chronos/actions/workflows/ci.yml/badge.svg)](https://github.com/Yili-code/Chronos/actions/workflows/ci.yml)
 
-Chronos is a self-hosted, single-user task assistant. Gemini handles natural-language task input; SQLite stores local data, with Firestore available for Cloud Run deployments. Telegram is the main interface, with a Web dashboard for viewing, adding and completing tasks.
+Chronos is a self-hosted, single-user task assistant. Gemini handles natural-language task input; SQLite stores local data, with Firestore available for Cloud Run deployments. Telegram is the interface for viewing, adding and completing tasks.
 
 Version `0.1.0` is in development. There is no License file or GitHub Release yet; clarify licensing before redistribution or code contributions. There is no shared public bot or hosted demo. The optional Study integration retains NTOU / TronClass-specific progress, assignment, and announcement workflows; it does not download course materials or generate AI notes from PDFs.
-
-## Preview without an API key
-
-![Actual Chronos Web dashboard with synthetic tasks, a deadline and completion buttons](docs/images/web-demo.png)
-
-This is the real Web interface with synthetic tasks, not evidence of live Gemini parsing or Telegram delivery. After installing the project below, run:
-
-```powershell
-.\.venv\Scripts\python.exe scripts/demo_local.py
-```
-
-On macOS / Linux, use `.venv/bin/python scripts/demo_local.py`. Open <http://127.0.0.1:8000>. You can complete the two sample tasks. **Add returns a configuration error in this demo**, because Gemini is disabled. The demo uses a temporary database and overrides external-service settings; it does not connect to services configured in your `.env`. Stop it with Ctrl+C before starting the regular app on the same port.
 
 ## Install and start
 
@@ -50,7 +38,7 @@ test -f .env || cp .env.example .env
 .venv/bin/uv run uvicorn chronos.main:app --host 127.0.0.1 --port 8000
 ```
 
-Open <http://127.0.0.1:8000>. A fresh database shows **No open tasks.**; <http://127.0.0.1:8000/live> returns `{"status":"live"}` and <http://127.0.0.1:8000/ready> reports `status: ready`. These checks do not prove external services are available.
+Check service health: <http://127.0.0.1:8000/live> returns `{"status":"live"}` and <http://127.0.0.1:8000/ready> reports `status: ready`. These checks do not prove external services are available.
 
 ## Create your first task
 
@@ -61,7 +49,7 @@ CHRONOS_GEMINI_API_KEY=YOUR_API_KEY
 CHRONOS_GEMINI_MODEL=gemini-3.5-flash-lite
 ```
 
-The model must be available to your account; see [Google's model list](https://ai.google.dev/gemini-api/docs/models). Provider fees and limits apply. Restart the regular app, enter `Finish the report tomorrow at 17:00 #Chronos`, and select **Add**. Check the interpreted date, then select **Complete**.
+The model must be available to your account; see [Google's model list](https://ai.google.dev/gemini-api/docs/models). Provider fees and limits apply. After connecting Telegram below, restart the app and send `Finish the report tomorrow at 17:00 #Chronos`. Check the interpreted date with `/tasks`, then complete it with `/done 1`.
 
 Your input and current time are sent to Gemini, without the full task list. Titles are stored in concise English; the original Chinese input for a newly created task is not retained separately. Failed parsing or unavailable AI does not create a task. There is no offline parsing fallback.
 
@@ -78,7 +66,7 @@ CHRONOS_TELEGRAM_WEBHOOK_SECRET=YOUR_LONG_RANDOM_SECRET
 CHRONOS_PUBLIC_BASE_URL=https://YOUR_PUBLIC_ENDPOINT
 ```
 
-Before exposing the Web interface, set `CHRONOS_WEB_PASSWORD` and use HTTPS. The default username is `chronos`. Restarting attempts to register `/telegram/webhook`; a running Web page does not prove registration succeeded.
+Use HTTPS for the public service. Restarting attempts to register `/telegram/webhook`; a running service does not prove registration succeeded.
 
 Try this in your own bot:
 
@@ -97,8 +85,6 @@ Confirm position `1` before each action: open tasks are sorted by deadline. List
 | Problem | Check |
 | --- | --- |
 | Missing Python module | Use the virtual environment's Python and repeat the install command. |
-| Web works but Add fails | Verify Gemini key, model availability and quota; restart after editing `.env`. |
-| Web returns 401 | Use your configured Web username and password. |
 | Telegram does not reply | Check HTTPS webhook, all four bot settings, chat ID and whether the bot is blocked. |
 | Port 8000 is occupied | Use `--port 8001` and open port 8001 instead. |
 

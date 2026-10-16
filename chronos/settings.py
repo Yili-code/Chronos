@@ -38,8 +38,6 @@ class Settings(BaseSettings):
     gemini_key_cooldown_seconds: float = Field(default=60, ge=1, le=86400)
     gemini_model: str = "gemini-3.5-flash-lite"
     ai_timeout: float = Field(default=30, gt=0)
-    web_username: str = "chronos"
-    web_password: str = ""
     timezone: str = Field(default="Asia/Taipei")
     release_sha: str = ""
 

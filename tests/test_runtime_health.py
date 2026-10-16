@@ -13,7 +13,6 @@ from chronos.runtime_health import (
     validate_runtime_security,
 )
 from chronos.settings import Settings
-from chronos.web import render_page
 
 
 TAIPEI = ZoneInfo("Asia/Taipei")
@@ -26,7 +25,6 @@ def public_settings(**changes):
         "telegram_webhook_secret": "hook",
         "telegram_chat_id": 123,
         "scheduler_secret": "scheduler",
-        "web_password": "password",
     }
     values.update(changes)
     return Settings(_env_file=None, **values)
@@ -39,7 +37,6 @@ def public_settings(**changes):
         "telegram_webhook_secret",
         "telegram_chat_id",
         "scheduler_secret",
-        "web_password",
     ],
 )
 def test_public_mode_fails_closed_when_required_security_is_missing(field):
@@ -57,13 +54,6 @@ def test_local_mode_allows_explicitly_local_insecure_setup(tmp_path):
 def test_task_repository_contract_matches_both_backends(tmp_path):
     assert missing_task_repository_methods(Database(tmp_path / "contract.db")) == set()
     assert missing_task_repository_methods(FirestoreDatabase.__new__(FirestoreDatabase)) == set()
-
-
-def test_web_page_uses_configured_timezone():
-    page = render_page("UTC")
-    assert 'const timeZone="UTC"' in page
-    assert "Loading tasks..." in page
-    assert "Retry" in page
 
 
 def test_ai_usage_is_aggregate_and_contains_no_prompt(tmp_path):

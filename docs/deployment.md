@@ -1,6 +1,6 @@
 # Cloud Run + Firestore 部署
 
-Cloud Run 使用 Firestore 保存代辦與 Telegram update receipts，不依賴 container 的暫存檔案系統。Gemini API key、Telegram bot token、Telegram chat ID、webhook secret、Web password 與 scheduler secret 由 Secret Manager 注入；secret 不會寫入 image 或 repository。
+Cloud Run 使用 Firestore 保存代辦與 Telegram update receipts，不依賴 container 的暫存檔案系統。Gemini API key、Telegram bot token、Telegram chat ID、webhook secret 與 scheduler secret 由 Secret Manager 注入；secret 不會寫入 image 或 repository。
 
 這是選用部署路徑，會建立或修改 GCP 資源並可能產生費用。使用自己的 project、bot 與憑證；維護者的私有 instance 不是公開 Demo。
 
@@ -32,7 +32,7 @@ pwsh -File .\scripts\deploy_cloud_run.ps1 -ProjectId YOUR_PROJECT_ID
 pwsh -File .\scripts\deploy_cloud_run.ps1 -ProjectId YOUR_PROJECT_ID -EnableStudyTracking
 ```
 
-部署腳本需要 PowerShell 7。重跑時會沿用既有的 Web password、webhook secret 與 scheduler secret；重新部署不等於旋轉憑證。
+部署腳本需要 PowerShell 7。重跑時會沿用既有的 webhook secret 與 scheduler secret；重新部署不等於旋轉憑證。
 
 腳本會：
 
@@ -53,11 +53,11 @@ production revision 無法對應。未追蹤的本機工具或測試暫存檔不
 部署結束時會 read back `chronos-course-progress`：存在、啟用且指向目前 `/internal/study` 才會回報
 `Study scheduler: operational`；否則部署驗證失敗並要求執行另行授權的 activation procedure。
 
-## Web 安全
+## 服務安全
 
-設定 `CHRONOS_WEB_PASSWORD` 後，Web 與 API 會啟用 Basic Auth。若公開部署，必須設定此值，並只允許 HTTPS。Telegram webhook 另以 secret header 驗證。
+公開服務使用 HTTPS。Telegram webhook 以 secret header 驗證；內部端點使用 scheduler secret。
 
-Firestore 或具有 `CHRONOS_PUBLIC_BASE_URL` 的執行環境會被視為 public mode。缺少 Web password、
+Firestore 或具有 `CHRONOS_PUBLIC_BASE_URL` 的執行環境會被視為 public mode。缺少
 Telegram token、owner chat、webhook secret 或 scheduler secret 時，application 會拒絕啟動；只有
 local SQLite mode 允許明確的無驗證開發環境。
 

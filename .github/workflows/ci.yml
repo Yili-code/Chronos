@@ -49,8 +49,6 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Verify local demo isolation and task lifecycle
-        run: uv run python scripts/check_demo.py
 
       - name: Check local documentation links
         run: uv run python scripts/check_docs.py

@@ -20,15 +20,13 @@ def task_service(tmp_path, monkeypatch):
     return service
 
 
-def test_web_and_telegram_use_external_ai(task_service, monkeypatch):
+def test_telegram_uses_external_ai(task_service, monkeypatch):
     parse = AsyncMock(return_value=ParsedTask("Review external analysis"))
     monkeypatch.setattr(main.ai, "parse", parse)
-    task = asyncio.run(main.create_natural_task(main.NaturalTask(text="工作")))
-    assert task["title"] == "Review external analysis"
     assert asyncio.run(main.handle_message("新增 工作")) == (
         "<b>Task created</b>\n<b>Review external analysis</b>"
     )
-    assert parse.await_count == 2
+    assert parse.await_count == 1
     due = datetime(2026, 9, 20, 12, tzinfo=main.settings.tz)
     edit = AsyncMock(return_value=ParsedTask("Review external analysis", due))
     monkeypatch.setattr(main.ai, "edit", edit)
@@ -44,9 +42,6 @@ def test_failure_does_not_change_tasks(task_service, monkeypatch):
     before = task_service.list_open()
     monkeypatch.setattr(main.ai, "parse", AsyncMock(side_effect=AIError("External AI failed")))
     monkeypatch.setattr(main.ai, "edit", AsyncMock(side_effect=AIError("External AI failed")))
-    with pytest.raises(HTTPException) as error:
-        asyncio.run(main.create_natural_task(main.NaturalTask(text="工作")))
-    assert error.value.status_code == 503
     assert "External AI failed" in asyncio.run(main.handle_message("新增 工作"))
     edit_failure = asyncio.run(main.handle_message("/edit 1 改到明天"))
     assert "External AI failed" in edit_failure

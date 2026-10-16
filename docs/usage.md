@@ -1,6 +1,6 @@
 # Gemini 與 Telegram 指令參考
 
-Web 與 Telegram 的自然語言新增、Telegram 改期共用 Gemini API，不啟動本地模型。程式呼叫 Gemini 原生 `generateContent` endpoint，要求 JSON response 並再次驗證輸出 schema。
+Telegram 的自然語言新增、Telegram 改期共用 Gemini API，不啟動本地模型。程式呼叫 Gemini 原生 `generateContent` endpoint，要求 JSON response 並再次驗證輸出 schema。
 
 在既有 `.env` 加入以下設定（不要覆蓋原有內容）：
 

@@ -12,7 +12,6 @@ PUBLIC_REQUIRED_SETTINGS = {
     "telegram_webhook_secret": "Telegram webhook secret",
     "telegram_chat_id": "Telegram owner chat",
     "scheduler_secret": "scheduler secret",
-    "web_password": "Web password",
 }
 
 
@@ -49,7 +48,6 @@ def configured_components(settings) -> dict:
     return {
         "database": settings.database_backend,
         "telegram": "configured" if settings.telegram_bot_token and settings.telegram_chat_id else "disabled",
-        "web_auth": "configured" if settings.web_password else "local-only",
         "scheduler_auth": "configured" if settings.scheduler_secret else "disabled",
         "study": "configured" if settings.enable_study_tracking else "disabled",
         "gmail": "configured" if settings.enable_gmail else "disabled",

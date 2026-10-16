@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "chronos-assistant"
 version = "0.1.0"
-description = "Single-user Telegram task assistant with natural-language input and a Web dashboard"
+description = "Single-user Telegram task assistant with natural-language input"
 requires-python = ">=3.11"
 dependencies = [
   "tzdata>=2024.1",

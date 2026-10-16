@@ -13,7 +13,6 @@ Repository 尚未提供 License。請先釐清授權再提出程式碼貢獻；�
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q
 .\.venv\Scripts\python.exe scripts/check_docs.py
-.\.venv\Scripts\python.exe scripts/check_demo.py
 ```
 
 有修改 Chrome extension 時，另外使用 Node.js 的內建測試執行器：

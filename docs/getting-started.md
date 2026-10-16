@@ -1,6 +1,6 @@
 # 本機啟動與第一筆代辦
 
-Chronos 是單一使用者的 Telegram task assistant，Web 是輔助介面。先用本機 SQLite 確認能啟動，再配置 Gemini 與 Telegram。無 API key 時可以開啟空白儀表板與健康檢查，但不能以自然語言建立代辦。
+Chronos 是單一使用者的 Telegram task assistant。先用本機 SQLite 確認能啟動，再配置 Gemini 與 Telegram。無 API key 時可以執行健康檢查，但不能以自然語言建立代辦。
 
 ## Windows PowerShell
 
@@ -28,15 +28,14 @@ test -f .env || cp .env.example .env
 .venv/bin/uv run uvicorn chronos.main:app --host 127.0.0.1 --port 8000
 ```
 
-開啟 <http://127.0.0.1:8000>，預期看到 **Open tasks** 與 **No open tasks.**。在另一個 PowerShell 視窗執行：
+啟動後可檢查服務健康狀態。在另一個 PowerShell 視窗執行：
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8000/live
 Invoke-RestMethod http://127.0.0.1:8000/ready
-Invoke-RestMethod http://127.0.0.1:8000/api/tasks
 ```
 
-`/live` 回傳 `status: live`，`/ready` 回傳 `status: ready`，新的 SQLite 資料庫回傳空清單。這只證明 process、設定與資料庫可用，不代表 Gemini、Telegram 或雲端已連通。`chronos.db` 是本機資料，已被 Git 忽略；停止服務後可備份該檔案。
+`/live` 回傳 `status: live`，`/ready` 回傳 `status: ready`。這只證明 process、設定與資料庫可用，不代表 Gemini、Telegram 或雲端已連通。`chronos.db` 是本機資料，已被 Git 忽略；停止服務後可備份該檔案。
 
 ## Gemini：新增第一筆代辦
 
@@ -49,7 +48,7 @@ CHRONOS_GEMINI_MODEL=gemini-3.5-flash-lite
 
 模型名稱須在你的帳號可用；可查 [Google 官方模型清單](https://ai.google.dev/gemini-api/docs/models)。費用、配額與區域支援依供應商規定，專案沒有保證免費使用。
 
-停止並重新啟動服務，在 Web 輸入 `明天 17:00 完成報告 #Chronos`，按 **Add**。成功後應出現英文標題、期限與分類；請確認解析出的日期，再按 **Complete**。相對日期依執行當下時間與 `CHRONOS_TIMEZONE` 解析。這是可嘗試的輸入例，不保證每次模型輸出相同標題。
+停止並重新啟動服務，完成下方 Telegram 設定後，在 bot 輸入 `明天 17:00 完成報告 #Chronos`。成功後應出現英文標題、期限與分類；請確認解析出的日期，再以 `/done 1` 完成。相對日期依執行當下時間與 `CHRONOS_TIMEZONE` 解析。這是可嘗試的輸入例，不保證每次模型輸出相同標題。
 
 輸入文字與目前時間會送至 Gemini；不會附帶整份代辦清單。標題儲存為精簡英文，新增代辦的原始中文不另行保存。沒有設定、解析失敗或服務錯誤時不建立代辦，沒有離線規則解析替代方案。
 
@@ -66,7 +65,7 @@ CHRONOS_TELEGRAM_WEBHOOK_SECRET=足夠長的隨機字串
 CHRONOS_PUBLIC_BASE_URL=https://你的公開入口
 ```
 
-公開 Web 前另設定 `CHRONOS_WEB_PASSWORD`，只允許 HTTPS。不要把範例 bot 或維護者帳號當成可共用服務。重啟時程式會嘗試註冊 `/telegram/webhook`；註冊失敗會記錄錯誤，Web 成功啟動不等於 webhook 成功。
+公開服務使用 HTTPS。不要把範例 bot 或維護者帳號當成可共用服務。重啟時程式會嘗試註冊 `/telegram/webhook`；註冊失敗會記錄錯誤，服務成功啟動不等於 webhook 成功。
 
 在自己的 bot 依序傳送：
 
@@ -96,8 +95,6 @@ docker compose logs --tail=50 chronos
 | 現象 | 下一步 |
 | --- | --- |
 | `No module named ...` | 確認用 `.venv` 的 Python，重新執行安裝指令。 |
-| Web 能開，Add 卻失敗 | 檢查 Gemini key、可用模型與配額；修改 `.env` 後重啟。 |
-| Web 回傳 401 | 使用 `CHRONOS_WEB_USERNAME`（預設 `chronos`）與自己設定的密碼。 |
 | Telegram 不回覆 | 確認四項設定、HTTPS webhook、chat ID，以及是否封鎖 bot。 |
 | 8000 已被占用 | 改用 `--port 8001`，同時改開 `http://127.0.0.1:8001`。 |
 | Study 沒啟動 | 預設關閉，且包含專用課表與資料來源；不是一般代辦的必要步驟。 |
