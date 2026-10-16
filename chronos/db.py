@@ -11,9 +11,11 @@ from .course_tracking import ProgressReportKind, ProgressSession, accept_reply, 
 from .course_tracking_store import session_from_firestore, session_to_firestore
 from .assignments import Assignment, to_record, from_record, set_deadline, owner_deadline_edit
 from .task_timing import normalize_timing, task_sort_key
+from .task_actions import TaskActions, task_fields
 
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS task_action_state (state_key TEXT PRIMARY KEY, state_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS mail_state (state_key TEXT PRIMARY KEY, state_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -90,7 +92,44 @@ REMOVED_STUDY_TABLES = (
 )
 
 
-class Database:
+class Database(TaskActions):
+    def _run_task_action(self, operation):
+        scope = self.connect() if self._transaction.get() is not None else self.transaction()
+        with scope:
+            return operation()
+
+    def get_task_action_state(self, key):
+        with self.connect() as connection:
+            row = connection.execute("SELECT state_json FROM task_action_state WHERE state_key=?", (key,)).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def _save_task_action_state(self, key, state):
+        with self.connect() as connection:
+            connection.execute("INSERT INTO task_action_state VALUES (?, ?) ON CONFLICT(state_key) "
+                               "DO UPDATE SET state_json=excluded.state_json", (key, json.dumps(state)))
+
+    def _load_task_action(self, task_id):
+        with self.connect() as connection:
+            row = connection.execute("SELECT * FROM tasks WHERE id=? AND status='open'", (task_id,)).fetchone()
+            if row is None:
+                return None
+            linked = connection.execute("SELECT * FROM assignments WHERE task_id=?", (task_id,)).fetchall()
+            return {"task": task_fields(self._task_data(row)), "aliases": self.list_tag_aliases(),
+                    "assignments": {r["source_key"]: {"task_id": task_id, "record": json.loads(r["record_json"])} for r in linked}}
+
+    def _write_task_action(self, task_id, state, aliases):
+        task = state["task"]
+        with self.connect() as connection:
+            connection.execute("UPDATE tasks SET title=?, due_at=?, project=?, timing_json=? WHERE id=?",
+                               (task["title"], task["due_at"], task["project"], json.dumps(task["timing"]), task_id))
+            for key, linked in state["assignments"].items():
+                connection.execute("UPDATE assignments SET record_json=? WHERE source_key=?", (json.dumps(linked["record"]), key))
+            for key, alias in state["aliases"].items():
+                if alias is None:
+                    connection.execute("DELETE FROM tag_aliases WHERE project=?", (key,))
+                else:
+                    self.save_tag_alias(key, alias)
+
     def get_mail_state(self, key):
         with self.connect() as connection:
             row = connection.execute("SELECT state_json FROM mail_state WHERE state_key=?", (key,)).fetchone()
@@ -475,6 +514,7 @@ class Database:
     def clear_tasks(self) -> int:
         with self.connect() as connection:
             cursor = connection.execute("DELETE FROM tasks")
+            connection.execute("DELETE FROM task_action_state")
         return cursor.rowcount
 
     def process_update(self, update_id: int, action: Callable[[], str | dict]) -> dict:

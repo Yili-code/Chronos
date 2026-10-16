@@ -55,6 +55,12 @@ AI update service 暫時不可用時，task 不會變更，原始 command 會持
 
 `/ai_usage` 是 read-only command，顯示今天每種核心 AI operation 的 request、provider attempt 與 provider 回報 token totals。只保存 aggregate counters，不保存 prompt、response、API key 或 task text；未回報 token usage 時會明確顯示 `not reported`，不以字元數偽裝成精確 token 成本。
 
+### Undo edit
+
+成功的 `/edit`（含回覆 task card、固定 ID 編輯與成功的 Retry）會提供 **Undo this edit** 按鈕，也可輸入 `/undo`。只保留最近一次成功修改的還原點；新的修改取代舊還原點，失敗或沒有變更的操作不取代它。不提供完成操作的 Undo，也不提供 Redo。
+
+Undo 還原標題、期限、分類及全部時間欄位；若編輯改了 tag 顯示偏好或關聯作業期限，也一起還原。操作綁定永久 task ID，清單排序不影響目標。任務已完成、刪除，或任務／關聯作業／該 tag 偏好後來被更動時，會拒絕還原；舊 Undo 按鈕不會套用到新修改。Undo、還原點消耗與 Telegram receipt 同一 transaction 保存，重送不會重複還原。還原點會跨重啟保留，`/clear` 確認後一併刪除。
+
 ### Study 指令範例（需額外設定）
 
 Study 預設關閉，包含 NTOU / TronClass 特定課表與課程 ID；不是跨校通用 LMS 整合。它不下載教材或產生 PDF 摘要，完整邊界見 [Study 課程追蹤](study.md)。

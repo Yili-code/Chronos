@@ -30,6 +30,7 @@ from .runtime_health import (
     readiness_snapshot,
     validate_runtime_security,
 )
+from .task_actions import UndoConflict
 from .task_timing import display_time, task_sort_key, timing_details
 from .study_scheduler import tick_study, notify_study_failures
 from .gmail import GmailClient, GmailError
@@ -55,12 +56,14 @@ HELP_SECTIONS = {
         "/done &lt;list-position&gt; — complete a task\n"
         "/edit &lt;list-position&gt; &lt;changes&gt; — edit by current list position\n"
         "/edit #&lt;task-id&gt; &lt;changes&gt; — edit by fixed task ID\n"
+        "/undo — undo the latest successful edit\n"
         "/clear — delete all tasks after confirmation"
     ),
     "study": (
         "<b>Study</b>\n"
         "/classday &lt;instruction&gt; — confirm a course-specific instruction day\n"
         "/classday YYYY-MM-DD &lt;course-code&gt; class|off|auto — save an exact decision\n"
+        "/calendar — view or edit TronClass scan dates\n"
         "/ai_usage — inspect today's core AI requests\n"
         "/announcements [page] — list saved announcements\n"
         "/announcement &lt;version-id&gt; [page] — read a saved announcement"
@@ -561,6 +564,8 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                 action = lambda: "Understood. Nothing was deleted."
             elif data and re.fullmatch(r"edit:(?:retry|cancel):\d+", data):
                 action = await prepare_pending_edit(data)
+            elif data and re.fullmatch(r"task:undo:[a-f0-9]{32}", data):
+                action = prepare_undo(data.rsplit(":", 1)[1])
             elif data and re.fullmatch(r"task:edit:\d+", data):
                 selected = tasks.get_open_by_id(int(data.rsplit(":", 1)[1]))
                 if selected is None:
@@ -743,15 +748,13 @@ async def prepare_pending_edit(data: str) -> Callable[[], str | dict]:
             return message_bundle({"text": "This task changed while the edit was being prepared. "
                                    "Nothing was applied. Retry the saved edit to use the latest values.",
                                    "reply_markup": pending_edit_keyboard(pending_id, current_position)})
-        task = tasks.edit(current["id"], parsed.title, parsed.due_at, parsed.project, parsed.timing)
+        task = tasks.edit_with_undo(current["id"], parsed.title, parsed.due_at, parsed.project, parsed.timing, tag_alias)
         if task is None:
             db.delete_pending_task_edit(pending_id)
             return message_bundle({
                 "text": "The target task is no longer open. Nothing was applied.",
                 "parse_mode": None,
             })
-        if tag_alias:
-            tasks.save_project_alias(*tag_alias, existing_aliases=aliases)
         db.delete_pending_task_edit(pending_id)
         return message_bundle(
             {
@@ -760,7 +763,7 @@ async def prepare_pending_edit(data: str) -> Callable[[], str | dict]:
                 ),
                 "parse_mode": "HTML",
                 "task_id": task["id"],
-                "reply_markup": task_edit_keyboard([task]),
+                "reply_markup": edited_task_keyboard(task),
             },
             {
                 "text": format_updated_tasks(before, task, aliases=aliases, tag_alias=tag_alias),
@@ -768,6 +771,35 @@ async def prepare_pending_edit(data: str) -> Callable[[], str | dict]:
             },
         )
     return retry
+
+
+def edited_task_keyboard(task):
+    keyboard = task_edit_keyboard([task])
+    if task.get("undo_token"):
+        keyboard["inline_keyboard"].append([{
+            "text": "Undo this edit", "callback_data": f"task:undo:{task['undo_token']}",
+        }])
+    return keyboard
+
+
+def prepare_undo(token=None):
+    def undo():
+        before = tasks.list_open()
+        aliases = tasks.project_aliases()
+        try:
+            restored = db.undo_task_edit(token)
+        except UndoConflict as error:
+            return str(error)
+        for key, alias in restored.pop("restored_aliases").items():
+            if alias is None:
+                aliases.pop(key, None)
+            else:
+                aliases[key] = alias
+        return message_bundle(
+            task_card(restored, "<b>Edit undone</b>\n" + "\n".join(format_task_block(restored, settings.tz, project_aliases=aliases))),
+            {"text": format_updated_tasks(before, restored, aliases=aliases), "parse_mode": "HTML"},
+        )
+    return undo
 
 
 async def handle_message(text: str) -> str:
@@ -821,6 +853,8 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
             items = tasks.list_open()
             return message_bundle({"text": task_list_text(items), "parse_mode": "HTML"})
         return list_tasks
+    if command == "undo":
+        return prepare_undo()
     if command == "clear":
         return lambda: CLEAR_CONFIRM_TEXT
     completed = re.fullmatch(r"done\s+(\d+)", command or "", re.IGNORECASE)
@@ -896,14 +930,12 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
             if edit_conflict(before, current):
                 return message_bundle({"text": "This task changed while the edit was being prepared. "
                                        "Nothing was applied. Use /tasks, then send the changes again."})
-            task = tasks.edit(task_id, parsed.title, parsed.due_at, parsed.project, parsed.timing)
+            task = tasks.edit_with_undo(task_id, parsed.title, parsed.due_at, parsed.project, parsed.timing, tag_alias)
             if task is None:
                 return message_bundle({
                     "text": f"Task {position} is no longer open. Nothing was applied.",
                     "parse_mode": None,
                 })
-            if tag_alias:
-                tasks.save_project_alias(*tag_alias, existing_aliases=aliases)
             return message_bundle(
                 {
                     "text": format_update_summary(
@@ -911,7 +943,7 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
                     ),
                     "parse_mode": "HTML",
                     "task_id": task_id,
-                    "reply_markup": task_edit_keyboard([task]),
+                    "reply_markup": edited_task_keyboard(task),
                 },
                 {
                     "text": format_updated_tasks(before, task, aliases=aliases, tag_alias=tag_alias),

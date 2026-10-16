@@ -377,8 +377,8 @@ def test_second_update_message_retries_without_resending_first(system, monkeypat
     client, service, bot, _ = system
     service.create('Original task')
     main.ai.edit = AsyncMock(return_value=ParsedTask('Renamed task'))
-    edit = Mock(wraps=service.edit)
-    monkeypatch.setattr(service, 'edit', edit)
+    edit = Mock(wraps=service.edit_with_undo)
+    monkeypatch.setattr(service, 'edit_with_undo', edit)
     bot.send_message.side_effect = [
         {'ok': True}, {'ok': False, 'error_code': 500}, {'ok': True},
     ]
@@ -566,7 +566,7 @@ def test_concurrent_duplicate_updates(system, monkeypatch):
 def test_duplicate_other_mutations(system, monkeypatch, command):
     client, service, bot, config = system
     service.create('Original task')
-    method = {'done': 'complete_position', 'edit': 'edit'}[command]
+    method = {'done': 'complete_position', 'edit': 'edit_with_undo'}[command]
     action = Mock(wraps=getattr(service, method))
     monkeypatch.setattr(service, method, action)
     if command == 'done':

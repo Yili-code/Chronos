@@ -13,9 +13,10 @@ from .course_tracking import ProgressReportKind, ProgressSession, accept_reply, 
 from .course_tracking_store import session_from_firestore, session_to_firestore
 from .assignments import Assignment, to_record, from_record, set_deadline, owner_deadline_edit
 from .task_timing import normalize_timing, task_sort_key
+from .task_actions import TaskActions, task_fields
 
 
-class FirestoreDatabase:
+class FirestoreDatabase(TaskActions):
     """Firestore-backed task and Telegram receipt repository for Cloud Run."""
 
     def __init__(self, project_id: str | None, database_id: str, collection_prefix: str, *, credentials=None):
@@ -29,6 +30,7 @@ class FirestoreDatabase:
         self.pending_task_edits = self.client.collection(f"{collection_prefix}_pending_task_edits")
         self.meta = self.client.collection(f"{collection_prefix}_meta")
         self.mail_state = self.client.collection(f"{collection_prefix}_mail_state")
+        self.task_action_state = self.client.collection(f"{collection_prefix}_task_action_state")
         self.course_sessions = self.client.collection(f"{collection_prefix}_course_sessions")
         self.study_deliveries = self.client.collection(f"{collection_prefix}_study_deliveries")
         self.assignments = self.client.collection(f"{collection_prefix}_assignments")
@@ -44,6 +46,39 @@ class FirestoreDatabase:
     def initialize(self) -> None:
         # Firestore collections are created on their first write.
         return None
+
+    def _run_task_action(self, operation):
+        return self._run_transaction(lambda transaction: operation())
+
+    def get_task_action_state(self, key):
+        snapshot = self.task_action_state.document(key).get(transaction=self._transaction.get())
+        return snapshot.to_dict() if snapshot.exists else None
+
+    def _save_task_action_state(self, key, state):
+        self._transaction.get().set(self.task_action_state.document(key), state)
+
+    def _load_task_action(self, task_id):
+        transaction = self._transaction.get()
+        snapshot = self.tasks.document(str(task_id)).get(transaction=transaction)
+        if not snapshot.exists or snapshot.get("status") != "open":
+            return None
+        linked = list(self.assignments.where(filter=FieldFilter("task_id", "==", task_id)).stream(transaction=transaction))
+        return {"task": task_fields(snapshot.to_dict()), "aliases": self.list_tag_aliases(),
+                "assignments": {item.id: item.to_dict() for item in linked}}
+
+    def _write_task_action(self, task_id, state, aliases):
+        transaction = self._transaction.get()
+        transaction.update(self.tasks.document(str(task_id)), state["task"])
+        for key, linked in state["assignments"].items():
+            transaction.set(self.assignments.document(key), linked)
+        if state["aliases"]:
+            restored = dict(aliases)
+            for key, alias in state["aliases"].items():
+                if alias is None:
+                    restored.pop(key, None)
+                else:
+                    restored[key] = alias
+            transaction.set(self.meta.document("tag_aliases"), restored)
 
     def check_ready(self) -> None:
         self.meta.document("runtime").get()
@@ -337,7 +372,10 @@ class FirestoreDatabase:
     def clear_tasks(self) -> int:
         def clear(transaction):
             snapshots = list(self.tasks.stream(transaction=transaction))
+            action_states = list(self.task_action_state.stream(transaction=transaction))
             for snapshot in snapshots:
+                transaction.delete(snapshot.reference)
+            for snapshot in action_states:
                 transaction.delete(snapshot.reference)
             return len(snapshots)
 

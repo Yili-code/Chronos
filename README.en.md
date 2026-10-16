@@ -10,6 +10,8 @@ Chronos is a self-hosted, single-user task assistant. Gemini handles natural-lan
 
 Version `0.1.0` is in development. There is no License file or GitHub Release yet; clarify licensing before redistribution or code contributions. There is no shared public bot or hosted demo. The optional Study integration retains NTOU / TronClass-specific progress, assignment, and announcement workflows; it does not download course materials or generate AI notes from PDFs.
 
+Edits provide an **Undo this edit** button; `/undo` restores the latest successful edit. Completion cannot be undone.
+
 ## Install and start
 
 Requires Git and Python 3.11 or later. CI covers Python 3.11 and 3.12. From a directory where you want to clone the project:

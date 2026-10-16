@@ -67,6 +67,9 @@ class TaskService:
     def clear(self) -> int:
         return self.db.clear_tasks()
 
+    def edit_with_undo(self, task_id, title, due_at, project, timing, tag_alias=None):
+        return self.db.edit_task_with_undo(task_id, title, due_at, project, timing, tag_alias)
+
     def project_aliases(self) -> dict[str, str]:
         return self.db.list_tag_aliases()
 

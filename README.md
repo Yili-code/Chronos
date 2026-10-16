@@ -22,6 +22,7 @@ A self-hosted, single-user Telegram task assistant with Gemini-powered natural-l
 | --- | --- |
 | 自然語言新增、語意編輯代辦 | 需要可用的 Gemini API key；外部 AI 失敗時不新增或更動代辦。 |
 | `/tasks`、`/done`、明確移除期限或分類 | 查詢與完成不需要 AI；Telegram 需要自己的 bot、chat ID 與 HTTPS webhook。 |
+| 編輯撤回 | 修改成功後按 Undo，或 `/undo` 還原最近一次 edit；不撤回完成。 |
 | 每日未完成清單 | 預設 `Asia/Taipei` 08:00；需要持續運行的服務或外部 scheduler，不是逐筆到期提醒。 |
 | Gmail 郵件整理 | 選用；07:00 過濾明確促銷並移到垃圾桶、Telegram 摘要與按鈕／回覆新增任務。需獨立 OAuth，無寄信入口。[授權與啟用](docs/gmail.md)。 |
 | SQLite / Firestore | 本機預設 SQLite；Firestore 是選用的雲端設定。 |
