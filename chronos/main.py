@@ -32,6 +32,7 @@ from .runtime_health import (
 )
 from .task_actions import UndoConflict
 from .deadline_reminders import send_deadline_reminders
+from .evening_agenda import send_evening_agenda
 from .task_timing import display_time, task_sort_key, timing_details
 from .study_scheduler import tick_study, notify_study_failures
 from .gmail import GmailClient, GmailError
@@ -244,6 +245,9 @@ async def lifespan(_: FastAPI):
     if settings.enable_internal_scheduler:
         scheduler.add_job(send_daily_tasks, "cron", hour=8, minute=0, id="daily_tasks", replace_existing=True)
         scheduler.add_job(run_deadline_reminders, "interval", minutes=5, id="deadline_reminders", replace_existing=True, max_instances=1)
+        if settings.enable_learning_calendar:
+            scheduler.add_job(run_evening_agenda, "cron", hour=21, minute=0, timezone="Asia/Taipei",
+                              id="evening_agenda", replace_existing=True)
         if settings.enable_gmail:
             scheduler.add_job(send_daily_mail, "cron", hour=7, minute=0, timezone="Asia/Taipei",
                               id="daily_mail", replace_existing=True)
@@ -481,6 +485,19 @@ async def trigger_deadline_reminders(x_chronos_scheduler_secret: str | None = He
 def require_learning_scheduler_secret(value):
     if not settings.scheduler_secret or not hmac.compare_digest(value or "", settings.scheduler_secret):
         raise HTTPException(status_code=403, detail="Invalid scheduler credential")
+
+
+async def run_evening_agenda():
+    return await send_evening_agenda(db, google_calendar, telegram, settings)
+
+
+@app.post("/internal/agenda/tomorrow")
+async def trigger_evening_agenda(x_chronos_scheduler_secret: str | None = Header(default=None)):
+    require_learning_scheduler_secret(x_chronos_scheduler_secret)
+    try:
+        return await run_evening_agenda()
+    except (CalendarError, RuntimeError):
+        raise HTTPException(status_code=503, detail="Tomorrow agenda delivery requires retry or inspection") from None
 
 
 @app.get("/internal/learning/status")

@@ -84,6 +84,35 @@ class GoogleCalendar:
     async def event(self, event_id):
         return await self.request("GET", self.events_path() + "/" + event_id, missing=True)
 
+    async def agenda(self, start, end):
+        """Read every expanded occurrence overlapping the bounded local day."""
+        ids = sorted({"primary" if value.strip().casefold() == self.settings.calendar_account.casefold()
+                      else value.strip() for value in
+                      [self.settings.calendar_id, *self.settings.calendar_busy_ids.split(",")] if value.strip()})
+        events, seen = [], set()
+        for calendar_id in ids:
+            page = None
+            while True:
+                params = {"timeMin": start.isoformat(), "timeMax": end.isoformat(),
+                          "timeZone": self.settings.timezone, "singleEvents": "true",
+                          "orderBy": "startTime", "maxResults": 250}
+                if page:
+                    params["pageToken"] = page
+                data = await self.request("GET", "calendars/" + quote(calendar_id, safe="") + "/events", params=params)
+                for event in data.get("items", []):
+                    key = (event.get("iCalUID") or calendar_id + ":" + event["id"],
+                           event.get("originalStartTime", event.get("start", {})).get("dateTime") or
+                           event.get("originalStartTime", event.get("start", {})).get("date"))
+                    declined = any(a.get("self") and a.get("responseStatus") == "declined"
+                                   for a in event.get("attendees", []))
+                    if event.get("status") != "cancelled" and not declined and key not in seen:
+                        events.append(event)
+                        seen.add(key)
+                page = data.get("nextPageToken")
+                if not page:
+                    break
+        return events
+
     async def insert(self, body):
         return await self.request("POST", self.events_path(), body=body, params={"sendUpdates": "none"})
 

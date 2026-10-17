@@ -79,6 +79,16 @@ not imply next semester has the same courses.
 
 ## Follow-up and learning
 
+Every day at 21:00 Asia/Taipei, the cloud job `chronos-evening-agenda` calls
+`/internal/agenda/tomorrow` with the scheduler secret. It sends the following
+local day's Google Calendar agenda to the owner on Telegram, including weekdays,
+times and duration, or an explicit empty-day message. Calendar reads expand
+recurring events and cover the primary plus configured conflict calendars;
+cancelled/declined events are omitted. This reminder does not write events.
+Per-day, per-part receipts prevent duplicate deliveries. Read failures retry;
+ambiguous Telegram delivery requires inspection rather than a blind resend.
+The computer can be off. The local scheduler also supports the same 21:00 job.
+
 At the end of a booked event, the next daytime tick sends one check-in. It reads
 the Calendar event again to honor a changed end time; deleted/cancelled events
 are not recreated. Follow-up is deferred outside 09:00–21:00.

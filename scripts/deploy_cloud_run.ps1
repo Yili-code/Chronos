@@ -435,6 +435,22 @@ if ($deadlineJob.state -ne "ENABLED" -or $deadlineJob.schedule -ne "*/5 * * * *"
     throw "Deadline reminder scheduler does not match the expected configuration"
 }
 
+if ($environmentValues['CHRONOS_ENABLE_LEARNING_CALENDAR'] -eq 'true') {
+    $agendaJobName = "$Service-evening-agenda"
+    $agendaUri = "$serviceUrl/internal/agenda/tomorrow"
+    & $gcloudCommand scheduler jobs describe $agendaJobName --location $Region --project $ProjectId --quiet 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        Invoke-Gcloud scheduler jobs update http $agendaJobName --location $Region --project $ProjectId `
+            --schedule "0 21 * * *" --time-zone "Asia/Taipei" --uri $agendaUri --http-method POST `
+            --update-headers "X-Chronos-Scheduler-Secret=$schedulerSecret" --max-retry-attempts 3 --max-retry-duration 3600s --attempt-deadline 240s --quiet | Out-Null
+    }
+    else {
+        Invoke-Gcloud scheduler jobs create http $agendaJobName --location $Region --project $ProjectId `
+            --schedule "0 21 * * *" --time-zone "Asia/Taipei" --uri $agendaUri --http-method POST `
+            --headers "X-Chronos-Scheduler-Secret=$schedulerSecret" --max-retry-attempts 3 --max-retry-duration 3600s --attempt-deadline 240s --quiet | Out-Null
+    }
+}
+
 if ($EnableGmail) {
     $mailJobName = "$Service-daily-mail"
     $mailUri = "$serviceUrl/internal/mail/daily"
