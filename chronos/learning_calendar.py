@@ -138,7 +138,8 @@ class LearningCalendar:
         more, lots = min(180, state["minutes"] + 30), min(180, state["minutes"] * 2)
         options = self.buttons(task_id, state, [("more", f"A bit longer · {more} min"),
             ("lots", f"Much longer · {lots} min"), ("shuffle", "Random other time"), ("manual", "Choose manually")])
-        return {"messages": [{"text": "How would you like to change this proposal?\n"
+        return {"messages": [{"text": f"Current proposal · {display_time(state['start'], self.settings.tz)} · {state['minutes']} minutes\n"
+            "How would you like to change this proposal?\n"
             "Longer blocks may move to another available time. A new Allow is still required.",
             "reply_markup": {"inline_keyboard": [[button] for button in options]},
             "learning_menu": {"task_id": task_id, "token": state["token"]}}]}
@@ -181,11 +182,28 @@ class LearningCalendar:
 
     async def callback(self, action, task_id, token, message_id):
         state = self.get(task_id)
-        if not state or state.get("token") != token or state.get("message_id") != message_id:
-            return "This study card is no longer active. Use /plan."
         task = next((t for t in self.db.list_open_tasks() if t["id"] == task_id), None)
         if not task:
             return "This task is no longer open. No event was created."
+        if not state:
+            return f"No saved proposal for this task. Use /plan {task_id}."
+        menu_action = action in {"more", "lots", "shuffle", "manual"}
+        expected_message = state.get("edit_message_id", state.get("message_id")) if menu_action else state.get("message_id")
+        if state.get("token") != token or expected_message != message_id:
+            # Old buttons may request a fresh view, but can never approve or
+            # apply an obsolete duration/time choice to a replacement proposal.
+            if state["status"] in {"proposed", "editing"}:
+                if action == "edit" or state["status"] == "editing":
+                    changed = self.update(task_id, lambda old: {**old, "status": "editing"}
+                        if old.get("token") == state["token"] and old["status"] in {"proposed", "editing"} else old)
+                    if changed.get("token") == state["token"] and changed["status"] == "editing":
+                        return self.edit_menu(task_id, changed)
+                    return "The proposal changed. Open Edit on the latest card."
+                text, buttons = self.proposal_content(task, state)
+                return {"messages": [{"text": "This proposal was updated. Review the latest version below.\n\n" + text,
+                    "parse_mode": "HTML", "reply_markup": {"inline_keyboard": [buttons]},
+                    "learning_proposal": {"task_id": task_id, "token": state["token"]}}]}
+            return "This proposal has already been handled. Check /plan for its current status."
         now = datetime.now(self.settings.tz)
         if action == "edit":
             changed = self.update(task_id, lambda old: {**old, "status": "editing"}
@@ -284,6 +302,7 @@ class LearningCalendar:
         revised = {**state, "token": uuid4().hex, "status": "proposed", "start": start.isoformat(),
             "end": end.isoformat(), "minutes": minutes, "snapshot": task_fields(task), "delivery": "proposal_pending"}
         revised.pop("message_id", None)
+        revised.pop("edit_message_id", None)
         saved = self.update(task_id, lambda old: revised if old.get("token") == token and old["status"] in {"proposed", "editing"} else old)
         return ("Updated. Review the new proposal and press Allow to book it." if saved["token"] == revised["token"]
                 else "The proposal changed while editing. Use /plan.")

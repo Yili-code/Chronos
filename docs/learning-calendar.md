@@ -74,6 +74,10 @@ alternative leaves the menu active and reports the constraint.
 duration in minutes). ISO dates also work. Invalid or conflicting times leave the
 proposal in editing mode. The replacement card has a new token; the previous
 Allow button cannot book it. Press **Allow** on the replacement to book.
+Old cards recover the latest proposal or Edit menu instead of leaving the owner
+at a dead end. An old Allow or duration/time choice only refreshes the view;
+it never approves or modifies the replacement. Proposal and Edit-menu message
+IDs are bound separately so returning to Edit on the original card still works.
 `/planedit <task-id> MM/DD HH:MM minutes` also revises a pending proposal.
 
 The 115-1 course import starts 2026-10-19 and repeats weekly through 2026-12-18.

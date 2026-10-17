@@ -307,7 +307,9 @@ def test_edit_replaces_card_and_requires_fresh_approval(setup):
     assert revised["start"] == "2026-10-20T17:00:00+08:00"
     calendar.insert.assert_not_awaited()
     asyncio.run(planner.tick(NOW))
-    assert "no longer active" in asyncio.run(planner.callback("approve", task["id"], old["token"], 50))
+    recovered = asyncio.run(planner.callback("approve", task["id"], old["token"], 50))
+    assert recovered["messages"][0]["learning_proposal"]["token"] == revised["token"]
+    calendar.insert.assert_not_awaited()
     assert "booked" in asyncio.run(planner.callback("approve", task["id"], revised["token"], 50))
     assert calendar.insert.await_count == 1
 
@@ -388,7 +390,8 @@ def test_edit_options_generate_new_safe_proposal_without_booking(setup, option, 
     assert state["status"] == "proposed"
     if option == "shuffle":
         assert state["start"] >= old["end"] or state["end"] <= old["start"]
-    assert "no longer active" in asyncio.run(planner.callback(option, task["id"], old["token"], 50))
+    recovered = asyncio.run(planner.callback(option, task["id"], old["token"], 50))
+    assert recovered["messages"][0]["learning_proposal"]["token"] == state["token"]
     calendar.insert.assert_not_awaited()
 
 
@@ -420,7 +423,8 @@ def test_edit_choice_webhook_binds_menu_and_delivers_new_approval_card(system, s
     payload = {"update_id": 99820, "callback_query": {"id": "edit", "data": f"learn:edit:{task['id']}:{old['token']}",
         "message": {"message_id": 50, "chat": {"id": 123}}}}
     assert client.post("/telegram/webhook", json=payload, headers=headers).status_code == 200
-    assert planner.get(task["id"])["message_id"] == 60
+    assert planner.get(task["id"])["edit_message_id"] == 60
+    assert planner.get(task["id"])["message_id"] == 50
     assert client.post("/telegram/webhook", json=payload, headers=headers).status_code == 200
     assert bot.send_message.await_count == 2
     payload["update_id"] = 99821
@@ -433,6 +437,49 @@ def test_edit_choice_webhook_binds_menu_and_delivers_new_approval_card(system, s
     assert client.post("/telegram/webhook", json=payload, headers=headers).status_code == 200
     assert bot.send_message.await_count == 4
     calendar.insert.assert_not_awaited()
+
+
+def test_stale_edit_recovers_latest_menu_without_applying_an_old_choice(setup):
+    planner, task, calendar, _ = setup
+    asyncio.run(planner.tick(NOW))
+    state = planner.get(task["id"])
+    menu = asyncio.run(planner.callback("edit", task["id"], "0" * 32, 999))
+    assert menu["messages"][0]["learning_menu"]["token"] == state["token"]
+    assert planner.get(task["id"])["status"] == "editing"
+    planner.update(task["id"], lambda old: {**old, "edit_message_id": 60})
+    # Returning to the original proposal can open Edit again.
+    assert "learning_menu" in asyncio.run(planner.callback("edit", task["id"], state["token"], 50))["messages"][0]
+    # A choice from an old menu only refreshes the view.
+    assert "learning_menu" in asyncio.run(planner.callback("lots", task["id"], "0" * 32, 999))["messages"][0]
+    assert planner.get(task["id"])["minutes"] == 90
+    assert "Updated" in asyncio.run(planner.callback("more", task["id"], state["token"], 60))
+    assert planner.get(task["id"])["minutes"] == 120
+    calendar.insert.assert_not_awaited()
+
+
+def test_stale_allow_webhook_refreshes_current_card_without_booking(system, setup, monkeypatch):
+    client, tasks, bot, config = system
+    _, _, calendar, _ = setup
+    config.enable_learning_calendar = True
+    config.learning_enabled_since = "2020-01-01T00:00:00+08:00"
+    monkeypatch.setattr(main, "google_calendar", calendar)
+    bot.send_message.side_effect = [{"ok": True, "result": {"message_id": n}} for n in [50, 60, 70]]
+    task = tasks.create("Study graphs", NOW + timedelta(days=3))
+    planner = main.learning_calendar()
+    asyncio.run(planner.tick(NOW))
+    state = planner.get(task["id"])
+    payload = {"update_id": 99830, "callback_query": {"id": "stale", "data": f"learn:approve:{task['id']}:" + "0" * 32,
+        "message": {"message_id": 999, "chat": {"id": 123}}}}
+    headers = {"X-Telegram-Bot-Api-Secret-Token": "test-hook"}
+    assert client.post("/telegram/webhook", json=payload, headers=headers).status_code == 200
+    assert planner.get(task["id"])["message_id"] == 60
+    assert planner.get(task["id"])["token"] == state["token"]
+    calendar.insert.assert_not_awaited()
+    payload["update_id"] = 99831
+    payload["callback_query"]["data"] = f"learn:approve:{task['id']}:{state['token']}"
+    payload["callback_query"]["message"]["message_id"] = 60
+    assert client.post("/telegram/webhook", json=payload, headers=headers).status_code == 200
+    assert calendar.insert.await_count == 1
 
 
 def test_revision_respects_daily_budget_busy_events_and_scheduler_lease(setup):

@@ -296,8 +296,15 @@ async def deliver_learning_reply(chat_id, update_id, receipt):
         if message_id is None:
             raise HTTPException(status_code=502, detail="Study edit menu ID missing")
         menu = message["learning_menu"]
-        learning_calendar().update(menu["task_id"], lambda old: {**old, "message_id": message_id}
+        learning_calendar().update(menu["task_id"], lambda old: {**old, "edit_message_id": message_id}
             if old and old.get("token") == menu["token"] and old["status"] == "editing" else old)
+    if message.get("learning_proposal"):
+        message_id = result.get("result", {}).get("message_id")
+        if message_id is None:
+            raise HTTPException(status_code=502, detail="Study proposal ID missing")
+        proposal = message["learning_proposal"]
+        learning_calendar().update(proposal["task_id"], lambda old: {**old, "message_id": message_id}
+            if old and old.get("token") == proposal["token"] and old["status"] == "proposed" else old)
     db.mark_update_delivered(update_id)
 
 
