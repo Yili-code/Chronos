@@ -991,7 +991,7 @@ def test_completion_in_edit_finishes_without_booking_or_invented_actuals(setup, 
     asyncio.run(planner.tick(NOW))
     state=planner.get(task['id'])
     reply=asyncio.run(planner.revise(task['id'],state['token'],text,NOW))
-    assert '已完成' in reply
+    assert 'Completed' in reply
     assert planner.get(task['id'])['status']=='finished'
     assert planner.get(task['id'])['feedback']['actual_minutes'] is None
     assert planner.db.list_open_tasks()==[]
@@ -1012,6 +1012,6 @@ def test_stale_completion_cannot_finish_a_changed_task(setup):
     planner,task,_,_=setup
     asyncio.run(planner.tick(NOW));state=planner.get(task['id'])
     planner.db.edit_task_with_undo(task['id'], 'Changed scope', None, None, {})
-    assert '已變更' in asyncio.run(planner.revise(task['id'],state['token'],'已完成',NOW))
+    assert 'changed' in asyncio.run(planner.revise(task['id'],state['token'],'已完成',NOW))
     assert planner.db.list_open_tasks()
     assert planner.get(task['id'])['token']==state['token']

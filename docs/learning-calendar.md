@@ -229,3 +229,7 @@ Proposal cards place date, weekday, time range and session minutes on one line
 without When/Duration labels or repeated approval text. A blank line separates
 that timing line from the AI estimate. Allow, Edit and Postpone remain unchanged;
 removing the sentence does not change the approval requirement.
+
+All Chronos-authored Telegram messages must be in English, including completion
+acknowledgements, edit prompts, errors and AI-generated progress notes. Chinese
+owner input remains supported. Keep wording concise.

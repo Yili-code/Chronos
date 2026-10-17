@@ -425,8 +425,8 @@ class LearningCalendar:
                 return "This edit menu is no longer active. Use Edit on the latest proposal."
             if action != "manual":
                 return await self.revise(task_id, token, action, now)
-            return {"messages": [{"text": "直接說想改成多久、何時開始，例如「待會花一小時，已完成部分」。\n\n"
-                "也可輸入 10/20 15:00 60 或 星期日早上。省略時長會保留目前分鐘數。\n"
+            return {"messages": [{"text": "Describe the duration and start time, e.g. \"One hour soon; partly completed.\"\n\n"
+                "Or send 10/20 15:00 60 or Sunday morning. Omit minutes to keep the current duration.\n"
                 "Continue typing here; /cancel returns to the edit menu.\n"
                 "The revised proposal still needs Allow before booking.",
                 "reply_markup": {"force_reply": True}, "learning_edit": {"task_id": task_id, "token": token}}]}
@@ -486,7 +486,7 @@ class LearningCalendar:
                 return await self.revise_window(task, state, window, now)
             if self.ai is not None:
                 return await self.revise_natural(task, state, instruction, now)
-            return "Use MM/DD HH:MM minutes or a weekday period such as 星期日早上. Keep typing here, or use /cancel."
+            return "Use MM/DD HH:MM minutes or a weekday period such as Sunday morning. Keep typing here, or use /cancel."
         try:
             day = match[1] if "-" in match[1] else f"{now.year}-{int(match[1].split('/')[0]):02d}-{int(match[1].split('/')[1]):02d}"
             start = datetime.fromisoformat(day + "T" + match[2].zfill(5)).replace(tzinfo=self.settings.tz)
@@ -590,16 +590,16 @@ class LearningCalendar:
                 self.db._save_task_action_state(pending_key, {})
             return True
         if not self.db._run_task_action(complete):
-            return "提案或任務已變更，請查看最新狀態。"
-        return f"已完成 · {task['title']}\n排程提案已撤下，沒有新增行事曆活動。"
+            return "The task or proposal changed. Review its latest status."
+        return f"Completed · {task['title']}\nProposal withdrawn. No calendar event was created."
 
     async def revise_natural(self, task, state, instruction, now):
         try:
             edit = await self.ai.parse_schedule_edit(instruction, task, state, now)
         except AIError:
-            return "目前無法理解這次修改，提案尚未更動。可以再說一次，或輸入日期、時間與分鐘數，例如 10/20 15:00 60。"
+            return "I could not interpret that edit. The proposal is unchanged. Try again or send a date, time and minutes, e.g. 10/20 15:00 60."
         if not edit.actionable:
-            return "請說明要改成幾分鐘、何時開始，或兩者。例如「待會花一小時，已完成部分」。提案尚未更動。"
+            return "Describe the duration, start time or both, e.g. \"One hour soon; partly completed.\" The proposal is unchanged."
         minutes = edit.minutes if edit.minutes is not None else state["minutes"]
         if edit.timing == "soon":
             reply = await self.revise_window(task, state, (now, now + timedelta(days=7), minutes), now)
@@ -611,7 +611,7 @@ class LearningCalendar:
                     raise ValueError
                 start = start.astimezone(self.settings.tz)
             except (ValueError, TypeError, KeyError):
-                return "請補充明確的日期與時間，提案尚未更動。"
+                return "Please provide an exact date and time. The proposal is unchanged."
             reply = await self._revise(task["id"], state["token"], f"{start:%Y-%m-%d %H:%M} {minutes}", now)
         current = self.get(task["id"])
         if current and current.get("token") != state["token"] and current.get("status") == "proposed":
