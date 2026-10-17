@@ -356,6 +356,24 @@ def test_firestore_persists_pending_edits_aliases_and_multi_message_progress(mon
     assert db.get_pending_task_edit(700) is None
 
 
+def test_keyboard_receipts_are_serialized_and_replayed_without_repeating_action(monkeypatch):
+    import json
+    db = database(monkeypatch)
+    keyboard = {"inline_keyboard": [[{"text": "Undo", "callback_data": "undo:1"}]]}
+    messages = [{"text": "Updated", "reply_markup": keyboard}, {"text": "Tasks"}]
+    receipt = db.process_update(702, lambda: {"messages": messages})
+    stored = db.updates.document("702").get().to_dict()
+    assert json.loads(stored["messages"][0]["reply_markup"]) == keyboard
+    assert receipt["messages"] == messages
+    assert db.get_update(702) == receipt
+    assert db.process_update(702, lambda: (_ for _ in ()).throw(AssertionError("replayed"))) == receipt
+    assert isinstance(db.updates.document("702").get().to_dict()["messages"][0]["reply_markup"], str)
+    db.mark_update_message_delivered(702, 1)
+    assert db.get_update(702)["delivered"] is False
+    db.mark_update_message_delivered(702, 2)
+    assert db.get_update(702)["delivered"] is True
+
+
 def test_firestore_collection_prefix_is_validated(monkeypatch):
     monkeypatch.setattr(firestore_db.firestore, "Client", FakeClient)
     try:

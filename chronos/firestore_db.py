@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from contextvars import ContextVar
 from datetime import datetime
@@ -402,11 +403,21 @@ class FirestoreDatabase(TaskActions):
         active = self._transaction.get()
         return clear(active) if active is not None else self._run_transaction(clear)
 
+    @staticmethod
+    def _decode_receipt(receipt: dict) -> dict:
+        receipt = dict(receipt)
+        if "messages" in receipt:
+            receipt["messages"] = [dict(message) for message in receipt["messages"]]
+        for message in receipt.get("messages", []):
+            if isinstance(message.get("reply_markup"), str):
+                message["reply_markup"] = json.loads(message["reply_markup"])
+        return receipt
+
     def get_update(self, update_id: int) -> dict | None:
         reference = self.updates.document(str(update_id))
         active = self._transaction.get()
         snapshot = reference.get(transaction=active) if active is not None else reference.get()
-        return snapshot.to_dict() if snapshot.exists else None
+        return self._decode_receipt(snapshot.to_dict()) if snapshot.exists else None
 
     def save_pending_task_edit(
         self, update_id: int, task_id: int, position: int, instruction: str, created_at: datetime
@@ -462,7 +473,7 @@ class FirestoreDatabase(TaskActions):
             reference = self.updates.document(str(update_id))
             snapshot = reference.get(transaction=transaction)
             if snapshot.exists:
-                return snapshot.to_dict()
+                return self._decode_receipt(snapshot.to_dict())
             output = action()
             if isinstance(output, str):
                 receipt = {"reply": output, "delivered": False}
@@ -474,7 +485,15 @@ class FirestoreDatabase(TaskActions):
                     "messages": messages,
                     "delivered_count": 0,
                 }
-            transaction.create(reference, receipt)
+            stored = dict(receipt)
+            if "messages" in receipt:
+                # Serialize keyboards: Firestore rejects nested array values.
+                stored["messages"] = [
+                    {**message, "reply_markup": json.dumps(message["reply_markup"])}
+                    if message.get("reply_markup") is not None else dict(message)
+                    for message in receipt["messages"]
+                ]
+            transaction.create(reference, stored)
             return receipt
 
         return self._run_transaction(process)
