@@ -38,13 +38,20 @@ def task_sort_key(task: dict) -> tuple:
     return deadline is None, deadline or "", task["id"]
 
 
+def display_date(value: str) -> str:
+    day = date.fromisoformat(value[:10])
+    weekday = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")[day.weekday()]
+    return f"{day:%m/%d} ({weekday})"
+
+
 def display_time(value: str | None, tz) -> str:
-    """Render task dates as MM/DD, preserving time and timezone conversion."""
+    """Render dates with weekday, preserving time and timezone conversion."""
     if not value:
         return "None"
     if len(value) == 10:
-        return value[5:].replace("-", "/")
-    return datetime.fromisoformat(value).astimezone(tz).strftime("%m/%d %H:%M")
+        return display_date(value)
+    local = datetime.fromisoformat(value).astimezone(tz)
+    return display_date(local.date().isoformat()) + local.strftime(" %H:%M")
 
 
 def timing_details(task: dict, tz) -> list[tuple[str, str]]:
