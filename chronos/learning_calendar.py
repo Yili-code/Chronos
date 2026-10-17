@@ -476,6 +476,8 @@ class LearningCalendar:
         task = next((t for t in self.db.list_open_tasks() if t["id"] == task_id), None)
         if not task:
             return "This task is no longer open."
+        if re.fullmatch(r"(?:已完成|已經完成|已经完成|完成了|全部完成|done|already done|completed)[。.!！\s]*", instruction.strip(), re.IGNORECASE):
+            return self.complete_unbooked(task, state, now)
         if instruction in {"more", "lots", "shuffle"}:
             return await self.suggest_revision(task, state, instruction, now)
         match = re.fullmatch(r"\s*((?:\d{4}-\d{2}-\d{2})|(?:\d{1,2}/\d{1,2}))\s+(\d{1,2}:\d{2})(?:\s+(\d{1,3})(?:\s*(?:minutes|min|分鐘))?)?\s*", instruction, re.IGNORECASE)
@@ -562,6 +564,35 @@ class LearningCalendar:
             return "Another proposal or booking changed while editing. Choose the edit option again."
         return ("Updated. Review the new proposal and press Allow to book it."
                 + (f" {len(displaced)} unapproved proposals will be rearranged; they still need Allow." if displaced else ""))
+
+    def complete_unbooked(self, task, state, now):
+        """Complete the current unapproved task only on explicit owner instruction."""
+        def complete():
+            current = self.get(task["id"])
+            queue = self.db.get_task_action_state("learning:proposal-queue") or {}
+            pending_key = f"learning:edit-chat:{self.settings.telegram_chat_id}"
+            pending = self.db.get_task_action_state(pending_key)
+            live = self.db._load_task_action(task["id"])
+            if (not current or current.get("token") != state["token"]
+                    or current.get("status") not in {"proposed", "editing"}
+                    or queue.get("active_task_id") != task["id"]
+                    or not live or live["task"] != state["snapshot"]):
+                return False
+            if not self.db.complete_task(task["id"], now):
+                return False
+            self.db._save_task_action_state(f"learning:task:{task['id']}", {**current,
+                "status": "finished", "token": uuid4().hex,
+                "feedback": {"outcome": "done", "actual_minutes": None,
+                    "reason": "Owner reported completion before booking", "recorded_at": now.isoformat()}})
+            self.db._save_task_action_state("learning:proposal-queue", {**queue, "active_task_id": None,
+                "retire_message_ids": list(dict.fromkeys([*queue.get("retire_message_ids", []),
+                    *(current.get(key) for key in ("message_id", "edit_message_id") if current.get(key))]))})
+            if pending and pending.get("token") == state["token"]:
+                self.db._save_task_action_state(pending_key, {})
+            return True
+        if not self.db._run_task_action(complete):
+            return "提案或任務已變更，請查看最新狀態。"
+        return f"已完成 · {task['title']}\n排程提案已撤下，沒有新增行事曆活動。"
 
     async def revise_natural(self, task, state, instruction, now):
         try:

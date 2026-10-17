@@ -981,3 +981,34 @@ def test_natural_schedule_edit_keeps_state_on_failure(setup, failure):
     assert 'Updated' not in reply
     assert planner.get(task['id']) == state
     calendar.insert.assert_not_awaited()
+
+@pytest.mark.parametrize('text', ['已完成', '完成了', 'done', 'Already done.'])
+def test_completion_in_edit_finishes_without_booking_or_invented_actuals(setup, text):
+    planner, task, calendar, _ = setup
+    asyncio.run(planner.tick(NOW))
+    state=planner.get(task['id'])
+    reply=asyncio.run(planner.revise(task['id'],state['token'],text,NOW))
+    assert '已完成' in reply
+    assert planner.get(task['id'])['status']=='finished'
+    assert planner.get(task['id'])['feedback']['actual_minutes'] is None
+    assert planner.db.list_open_tasks()==[]
+    assert planner.db.get_task_action_state('learning:proposal-queue')['active_task_id'] is None
+    assert planner.db.get_task_action_state('learning:profile') is None
+    calendar.insert.assert_not_awaited()
+
+
+def test_partial_progress_is_not_completion(setup):
+    planner,task,_,_=setup
+    asyncio.run(planner.tick(NOW));state=planner.get(task['id'])
+    asyncio.run(planner.revise(task['id'],state['token'],'已完成部分',NOW))
+    assert planner.db.list_open_tasks()
+    assert planner.get(task['id'])['status']=='proposed'
+
+
+def test_stale_completion_cannot_finish_a_changed_task(setup):
+    planner,task,_,_=setup
+    asyncio.run(planner.tick(NOW));state=planner.get(task['id'])
+    planner.db.edit_task_with_undo(task['id'], 'Changed scope', None, None, {})
+    assert '已變更' in asyncio.run(planner.revise(task['id'],state['token'],'已完成',NOW))
+    assert planner.db.list_open_tasks()
+    assert planner.get(task['id'])['token']==state['token']
