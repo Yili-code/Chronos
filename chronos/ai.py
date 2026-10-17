@@ -83,7 +83,8 @@ class ScheduleEditOutput(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
     actionable: bool
     minutes: int | None = Field(ge=10, le=180)
-    timing: Literal["keep", "soon", "exact"]
+    timing: Literal["keep", "soon", "exact", "window"]
+    window_end: str | None = None
     start: str | None
     progress_note: str = Field(max_length=500)
 
@@ -119,7 +120,7 @@ class ExternalAI:
             "minutes is remaining work duration (10–180), null if unspecified; 一小時 is 60 minutes. "
             "Use timing soon for 待會/等一下/as soon as possible; keep if no new start is requested; "
             "exact only for an explicit, unambiguous date and time, returned as timezone-aware ISO start. "
-            "Never invent a time for vague periods or infer duration from completed work. "
+            "For a clear evening such as 今天晚上 or tonight, use timing window with start at 18:00 and window_end at 21:00 on that local date, both timezone-aware ISO. Do not reject requests mentioning permission past 21:00; the application separately asks for confirmation if needed. Never infer duration from completed work. "
             "If the requested duration is outside 10–180, or the date/time is ambiguous or unsupported, "
             "set actionable false. Unrelated messages are also not actionable. "
             "Preserve remarks such as 已完成部分 in progress_note using concise English (e.g. Partly completed), without marking the task complete. "

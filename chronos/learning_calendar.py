@@ -325,6 +325,12 @@ class LearningCalendar:
                                                       (end - start).total_seconds() / 60)):
                 self.update(task["id"], lambda old: {**old, "status": "queued"})
                 return "12:00–13:00 and 17:00–18:00 allow only tasks of at most 10 minutes. A new proposal will require approval."
+            cutoff = datetime.combine(start.astimezone(self.settings.tz).date(), time(self.settings.learning_end_hour % 24), self.settings.tz)
+            if self.settings.learning_end_hour == 24:
+                cutoff += timedelta(days=1)
+            if end > cutoff and state.get("late_window") != {"start": state["start"], "end": state["end"]}:
+                self.update(task["id"], lambda old: {**old, "status": "queued"})
+                return "Late study needs confirmation. A fresh proposal will require approval."
             busy = await self.calendar.busy(start, end)
             if overlaps(start, end, busy):
                 self.update(task["id"], lambda old: {**old, "status": "queued"})
@@ -468,7 +474,7 @@ class LearningCalendar:
             self.db.mutate_task_action_state("learning:tick", lambda old: {**old, "until": now.isoformat()}
                 if old["claim"] == claim else old)
 
-    async def _revise(self, task_id, token, instruction, now):
+    async def _revise(self, task_id, token, instruction, now, allow_late=False):
         state = self.get(task_id)
         if not state or state.get("token") != token or state["status"] not in {"proposed", "editing"}:
             return "This proposal has already been handled. Use /plan."
@@ -477,6 +483,18 @@ class LearningCalendar:
             return "This task is no longer open."
         if re.fullmatch(r"(?:已完成|已經完成|已经完成|完成了|全部完成|done|already done|completed)[。.!！\s]*", instruction.strip(), re.IGNORECASE):
             return self.complete_unbooked(task, state, now)
+        pending = state.get("pending_late")
+        answer = instruction.strip().casefold()
+        if pending and answer in {"yes", "confirm", "是", "確認", "no", "cancel", "否", "不要"}:
+            if answer in {"no", "cancel", "否", "不要"}:
+                self.update(task_id, lambda old: {k: v for k, v in old.items() if k != "pending_late"}
+                            if old.get("token") == token else old)
+                return "Late study cancelled. Your previous proposal is unchanged. Keep typing or use /cancel."
+            if pending.get("snapshot") != task_fields(task):
+                return "The task changed. Send the requested time again."
+            if pending["expires_at"] <= now.isoformat():
+                return "That confirmation expired. Send the requested time again."
+            return await self._revise(task_id, token, pending["instruction"], now, allow_late=True)
         if instruction in {"more", "lots", "shuffle"}:
             return await self.suggest_revision(task, state, instruction, now)
         match = re.fullmatch(r"\s*((?:\d{4}-\d{2}-\d{2})|(?:\d{1,2}/\d{1,2}))\s+(\d{1,2}:\d{2})(?:\s+(\d{1,3})(?:\s*(?:minutes|min|分鐘))?)?\s*", instruction, re.IGNORECASE)
@@ -494,9 +512,10 @@ class LearningCalendar:
             end = start + timedelta(minutes=minutes)
         except (ValueError, OverflowError):
             return "Invalid date or time. Reply to the edit prompt with a valid future date."
-        stop = datetime.combine(start.date(), time(self.settings.learning_end_hour % 24), self.settings.tz)
+        normal_stop = datetime.combine(start.date(), time(self.settings.learning_end_hour % 24), self.settings.tz)
         if self.settings.learning_end_hour == 24:
-            stop += timedelta(days=1)
+            normal_stop += timedelta(days=1)
+        stop = datetime.combine(start.date() + timedelta(days=1), time(), self.settings.tz)
         minimum = 10
         if not minimum <= minutes <= 180 or start <= now or start.hour < self.settings.learning_start_hour or end > stop:
             return (f"Use a future {minimum}–180 minute block within {self.settings.learning_start_hour:02d}:00"
@@ -539,10 +558,23 @@ class LearningCalendar:
                 break
             displaced.add(other_id)
             pending_load -= (stop-begin).total_seconds()/60
+        if end > normal_stop and not allow_late:
+            pending = {"snapshot": task_fields(task), "instruction": f"{start:%Y-%m-%d %H:%M} {minutes}",
+                       "expires_at": (now + timedelta(minutes=15)).isoformat()}
+            self.update(task_id, lambda old: {**old, "status": "editing", "pending_late": pending}
+                        if old.get("token") == token and old.get("status") in {"proposed", "editing"} else old)
+            return (f"This session would run {display_time(start.isoformat(), self.settings.tz)}–{end:%H:%M}, "
+                    f"past your {self.settings.learning_end_hour:02d}:00 limit.\n\n"
+                    "Make an exception for this session only? Reply Yes or No.\n"
+                    "Yes prepares a new proposal; Allow is still required to book it.")
         revised = {**state, "token": uuid4().hex, "status": "proposed", "start": start.isoformat(),
             "end": end.isoformat(), "minutes": minutes, "requested_minutes": minutes, "duration_source": "owner",
             "snapshot": task_fields(task), "delivery": "proposal_pending"}
         revised["retire_on_send"] = [state[key] for key in ("message_id", "edit_message_id") if state.get(key)]
+        revised.pop("pending_late", None)
+        revised.pop("late_window", None)
+        if end > normal_stop and allow_late:
+            revised["late_window"] = {"start": start.isoformat(), "end": end.isoformat()}
         revised.pop("message_id", None)
         revised.pop("edit_message_id", None)
         def signature(value):
@@ -601,7 +633,15 @@ class LearningCalendar:
         if not edit.actionable:
             return "Describe the duration, start time or both, e.g. \"One hour soon; partly completed.\" The proposal is unchanged."
         minutes = edit.minutes if edit.minutes is not None else state["minutes"]
-        if edit.timing == "soon":
+        if edit.timing == "window":
+            try:
+                begin, stop = datetime.fromisoformat(edit.start), datetime.fromisoformat(edit.window_end)
+                if begin.tzinfo is None or stop.tzinfo is None or begin >= stop:
+                    raise ValueError
+            except (ValueError, TypeError):
+                return "Please provide a date and time range. The proposal is unchanged."
+            reply = await self.revise_window(task, state, (begin.astimezone(self.settings.tz), stop.astimezone(self.settings.tz), minutes), now)
+        elif edit.timing == "soon":
             reply = await self.revise_window(task, state, (now, now + timedelta(days=7), minutes), now)
         else:
             try:
@@ -636,6 +676,11 @@ class LearningCalendar:
         booked = {begin.date().isoformat(): sum((self.db.get_task_action_state("learning:day:" + begin.date().isoformat()) or {}).values())}
         policy = self.db.get_task_action_state("learning:course-calendar-policy")
         slot = find_slot(task, now, busy, [], self.settings, minutes, booked, policy, window=(begin, stop))
+        if not slot and stop.hour == self.settings.learning_end_hour and stop.minute == 0:
+            late_stop = datetime.combine(stop.date() + timedelta(days=1), time(), self.settings.tz)
+            late_busy = await self.calendar.busy(max(now, begin), late_stop) if late_stop > now else []
+            late_config = self.settings.model_copy(update={"learning_end_hour": 24})
+            slot = find_slot(task, now, late_busy, [], late_config, minutes, booked, policy, window=(begin, late_stop))
         if not slot:
             return (f"No continuous {minutes}-minute slot on {display_time(begin.date().isoformat(), self.settings.tz)} "
                     f"between {begin:%H:%M} and {stop:%H:%M} fits your calendar and daily limit. "

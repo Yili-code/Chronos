@@ -233,3 +233,14 @@ removing the sentence does not change the approval requirement.
 All Chronos-authored Telegram messages must be in English, including completion
 acknowledgements, edit prompts, errors and AI-generated progress notes. Chinese
 owner input remains supported. Keep wording concise.
+
+## Single-session late study exception
+
+The normal cutoff remains 21:00. If a manual time or requested evening window
+would require a later session, ask Yes/No with its exact date and time first.
+Yes creates a revised proposal bound to that exact interval; Allow is still
+required to book it. No preserves the old proposal. Confirmation expires after
+15 minutes and is invalidated by a task change. Later edits require confirmation
+again. Search never passes local midnight and all deadlines, meal windows, class,
+Calendar and daily workload checks remain enforced. Automatic scheduling keeps
+the normal cutoff; no global setting is relaxed.

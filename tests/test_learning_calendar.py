@@ -322,7 +322,7 @@ def test_edit_replaces_card_and_requires_fresh_approval(setup):
 
 @pytest.mark.parametrize("instruction,reason", [
     ("some time maybe", "Use MM/DD"),
-    ("10/20 20:00 90", "future 10"),
+    ("10/20 23:00 90", "future 10"),
     ("10/20 14:00 60", "conflicts"),
     ("10/23 17:00 60", "deadline"),
     ("02/30 17:00 60", "Invalid date"),
@@ -1015,3 +1015,59 @@ def test_stale_completion_cannot_finish_a_changed_task(setup):
     assert 'changed' in asyncio.run(planner.revise(task['id'],state['token'],'已完成',NOW))
     assert planner.db.list_open_tasks()
     assert planner.get(task['id'])['token']==state['token']
+
+
+def test_late_edit_requires_confirmation_then_fresh_approval(setup):
+    planner,task,calendar,_=setup
+    asyncio.run(planner.tick(NOW));state=planner.get(task['id'])
+    reply=asyncio.run(planner.revise(task['id'],state['token'],'10/20 20:00 90',NOW))
+    assert 'Reply Yes or No' in reply
+    pending=planner.get(task['id'])
+    assert pending['token']==state['token'] and pending['status']=='editing'
+    assert pending['start']==state['start']
+    reply=asyncio.run(planner.revise(task['id'],state['token'],'Yes',NOW))
+    assert 'Updated' in reply
+    updated=planner.get(task['id'])
+    assert updated['start']=='2026-10-20T20:00:00+08:00'
+    assert updated['late_window']=={'start':updated['start'],'end':updated['end']}
+    assert updated['token']!=state['token']
+    assert 'pending_late' not in updated
+    calendar.insert.assert_not_awaited()
+    assert planner.settings.learning_end_hour==21
+
+
+@pytest.mark.parametrize('answer', ['No','expired','changed'])
+def test_late_confirmation_does_not_relax_rules_on_rejection_or_stale_input(setup,answer):
+    planner,task,calendar,_=setup
+    asyncio.run(planner.tick(NOW));state=planner.get(task['id'])
+    asyncio.run(planner.revise(task['id'],state['token'],'10/20 20:00 90',NOW))
+    when=NOW+timedelta(minutes=16) if answer=='expired' else NOW
+    if answer=='changed':
+        planner.db.edit_task_with_undo(task['id'],'Changed task',None,None,{})
+    reply=asyncio.run(planner.revise(task['id'],state['token'],'No' if answer=='No' else 'Yes',when))
+    assert 'Updated' not in reply
+    assert planner.get(task['id']).get('late_window') is None
+    calendar.insert.assert_not_awaited()
+
+
+def test_evening_window_requests_late_exception_when_only_later_slot_fits(setup):
+    planner,task,calendar,_=setup
+    asyncio.run(planner.tick(NOW));state=planner.get(task['id'])
+    calendar.busy.return_value=[(NOW.replace(day=20,hour=18),NOW.replace(day=20,hour=20))]
+    reply=asyncio.run(planner.revise(task['id'],state['token'],'10/20 evening 90',NOW))
+    assert 'Reply Yes or No' in reply
+    assert planner.get(task['id'])['pending_late']['instruction']=='2026-10-20 20:00 90'
+    calendar.insert.assert_not_awaited()
+
+
+def test_confirmed_late_proposal_still_needs_allow_to_book(setup):
+    planner,task,calendar,_=setup
+    asyncio.run(planner.tick(NOW));state=planner.get(task['id'])
+    asyncio.run(planner.revise(task['id'],state['token'],'10/20 20:00 90',NOW))
+    asyncio.run(planner.revise(task['id'],state['token'],'Yes',NOW))
+    asyncio.run(planner.tick(NOW));confirmed=planner.get(task['id'])
+    calendar.insert.assert_not_awaited()
+    reply=asyncio.run(planner.callback('approve',task['id'],confirmed['token'],confirmed['message_id']))
+    assert 'booked' in reply
+    assert planner.get(task['id'])['status']=='scheduled'
+    calendar.insert.assert_awaited_once()
