@@ -72,6 +72,7 @@ HELP_SECTIONS = {
         "/classday YYYY-MM-DD &lt;course-code&gt; class|off|auto — save an exact decision\n"
         "/calendar — view or edit TronClass scan dates\n"
         "/free — find the next free two hours, excluding meals\n"
+        "/today — view today’s full calendar agenda\n"
         "/tomorrow — view tomorrow’s full calendar agenda\n"
         "/plan — inspect study proposals and Calendar connection\n"
         "/plan &lt;task-id&gt; — request a proposal or resume a postponed task\n"
@@ -1049,11 +1050,13 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
         except CalendarError:
             return lambda: "Calendar availability is unavailable right now. Please try /free again shortly."
         return lambda: message_bundle(offer)
-    if re.fullmatch(r"/tomorrow(?:@[A-Za-z0-9_]+)?", normalized, re.IGNORECASE):
+    if re.fullmatch(r"/(?:today|tomorrow)(?:@[A-Za-z0-9_]+)?", normalized, re.IGNORECASE):
+        command = normalized.split("@")[0].lower()
+        label = "Today" if command == "/today" else "Tomorrow"
         try:
-            parts = await tomorrow_agenda(google_calendar, settings)
+            parts = await tomorrow_agenda(google_calendar, settings, day_offset=0 if command == "/today" else 1)
         except CalendarError:
-            return lambda: "Tomorrow's agenda is unavailable right now. Please try /tomorrow again shortly."
+            return lambda: f"{label}'s agenda is unavailable right now. Please try {command} again shortly."
         return lambda: message_bundle(*({"text": part, "parse_mode": "HTML"} for part in parts))
     schedule_question = re.fullmatch(
         r"(?:我)?(?:這|下)?(?:星期|週|周)([一二三四五六日天])(?:的)?(早上|上午|下午|晚上)?(?:有事嗎|有空嗎|有什麼(?:事|安排|行程)|有行程嗎)[？?]?",

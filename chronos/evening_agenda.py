@@ -6,8 +6,8 @@ from uuid import uuid4
 from .task_timing import display_date
 
 
-def render_agenda(events, day, tz):
-    heading = f"<b>Tomorrow · {display_date(day.isoformat())}</b>"
+def render_agenda(events, day, tz, label="Tomorrow"):
+    heading = f"<b>{label} · {display_date(day.isoformat())}</b>"
     rows = []
     for event in events:
         title = escape((event.get("summary") or "Untitled event")[:500])
@@ -31,14 +31,14 @@ def render_agenda(events, day, tz):
     return parts
 
 
-async def tomorrow_agenda(calendar, settings, now=None):
+async def tomorrow_agenda(calendar, settings, now=None, *, day_offset=1):
     """Read the full local day live, without changing evening delivery receipts."""
     now = (now or datetime.now(settings.tz)).astimezone(settings.tz)
-    day = now.date() + timedelta(days=1)
+    day = now.date() + timedelta(days=day_offset)
     start = datetime.combine(day, time.min, settings.tz)
     await calendar.verify_owner()
     events = await calendar.agenda(start, start + timedelta(days=1))
-    return render_agenda(events, day, settings.tz)
+    return render_agenda(events, day, settings.tz, "Today" if day_offset == 0 else "Tomorrow")
 
 
 async def send_evening_agenda(db, calendar, telegram, settings, now=None):

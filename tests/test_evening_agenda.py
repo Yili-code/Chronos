@@ -117,3 +117,17 @@ def test_tomorrow_command_reports_calendar_failure_without_false_empty_day(syste
     monkeypatch.setattr(main,'google_calendar',calendar)
     reply=asyncio.run(main.prepare_message('/tomorrow'))()
     assert 'unavailable' in reply and 'No events' not in reply
+
+
+def test_today_command(system, monkeypatch):
+    from chronos import main
+    from datetime import datetime
+    calendar = AsyncMock()
+    calendar.agenda.return_value = []
+    monkeypatch.setattr(main, "google_calendar", calendar)
+    output = asyncio.run(main.prepare_message("/TODAY@ChronosBot"))()
+    assert "Today" in output["messages"][0]["text"]
+    start, end = calendar.agenda.await_args.args
+    assert start.date() == datetime.now(main.settings.tz).date()
+    assert start.hour == 0 and end-start == timedelta(days=1)
+    main.ai.parse.assert_not_awaited()
