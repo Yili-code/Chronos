@@ -281,9 +281,11 @@ def format_tasks(tasks: list[dict], tz, project_aliases: dict[str, str] | None =
 
 
 def is_course_scope_task(task: dict) -> bool:
+    """Classify on every render; course dates may live in timing, not the title."""
     title = task["title"].strip()
     return bool(
-        re.fullmatch(r"Check .+? \d{1,2}[/-]\d{1,2} (?:class |course )?scope", title, re.IGNORECASE)
+        re.fullmatch(r"Check\s+(?:.+?\s+)?(?:class|course)\s+scope[.!]?", title, re.IGNORECASE)
+        or re.fullmatch(r"Check\s+.+?\s+(?:\d{4}-)?\d{1,2}[/-]\d{1,2}\s+(?:(?:class|course)\s+)?scope[.!]?", title, re.IGNORECASE)
         or re.fullmatch(r"確認.*(?:今日上課範圍（\d{4}-\d{2}-\d{2}）| \d{2}/\d{2} 上課範圍|上課範圍)", title)
     )
 

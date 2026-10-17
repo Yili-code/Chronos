@@ -1,10 +1,11 @@
 import sqlite3
+import pytest
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from chronos.db import Database
-from chronos.tasks import TaskService, format_tasks, parse_deterministic_edit
+from chronos.tasks import TaskService, format_tasks, is_course_scope_task, parse_deterministic_edit
 
 
 TZ = ZoneInfo("Asia/Taipei")
@@ -99,6 +100,41 @@ def test_scope_only_list_has_no_empty_general_section():
     rendered = format_tasks([{"title": "Check security 10/15 course scope"}], TZ)
     assert rendered == "<b>Course scope</b>\n1. <b>Check security 10/15 course scope</b>"
     assert format_tasks([], TZ) == "No open tasks. All clear."
+
+
+@pytest.mark.parametrize("title", [
+    "Check operating system class scope",
+    "Check software engineering course scope",
+    "Check course scope",
+    "CHECK operating system CLASS SCOPE.",
+    "Check  operating system  class  scope",
+    "Check security 10/15 scope",
+    "Check security 2026-10-15 scope",
+    "確認資訊安全上課範圍",
+])
+def test_scope_classification_does_not_require_title_date(title):
+    task = {"title": title, "timing": {"event": "2026-10-16"}}
+    assert is_course_scope_task(task)
+    assert format_tasks([task], TZ).startswith("<b>Course scope</b>\n1.")
+
+
+@pytest.mark.parametrize("title", ["Check project scope", "Learn operating system", "Review class scope", "Check telescope"])
+def test_other_tasks_stay_in_general_section(title):
+    assert not is_course_scope_task({"title": title})
+
+
+def test_scope_grouping_is_reapplied_after_creation_edit_and_database_reopen(tmp_path):
+    tasks = service(tmp_path)
+    tasks.create("Exercise 2")
+    task = tasks.create("Check operating system class scope", timing={"event": "2026-10-16"})
+    for current in (tasks, TaskService(Database(tmp_path / "test.db"), TZ)):
+        general, course = format_tasks(current.list_open(), TZ).split("──────────")
+        assert "operating system" not in general
+        assert "2. <b>Check operating system class scope</b>" in course
+        assert "Course / event:</b> 10-16" in course
+    tasks.edit(task["id"], "Check software engineering course scope", None, None)
+    rendered = format_tasks(tasks.list_open(), TZ)
+    assert "software engineering" in rendered.split("──────────")[1]
 
 
 def test_long_project_tags_use_short_display_aliases():

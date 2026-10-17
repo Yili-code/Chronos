@@ -41,7 +41,7 @@ def system(tmp_path, monkeypatch):
 @pytest.mark.parametrize("text", ["/add New task", "Create a new task"])
 def test_creation_shows_updated_list_and_retries_only_undelivered_list(system, text):
     client, service, bot, config = system
-    service.create("Check security 10/15 scope")
+    service.create("Check operating system class scope", timing={"event": "2026-10-16"})
     service.create("Existing task")
     bot.send_message.side_effect = [
         {"ok": True, "result": {"message_id": 700}},
@@ -64,6 +64,7 @@ def test_creation_shows_updated_list_and_retries_only_undelivered_list(system, t
     assert card.args[1].startswith("<b>Task created</b>")
     assert failed_list.args[1] == retried_list.args[1]
     assert "<b>Course scope</b>" in retried_list.args[1]
+    assert "Check operating system class scope" in retried_list.args[1].split("<b>Course scope</b>")[1]
     assert "Existing task" in retried_list.args[1]
     assert ("New task" if text.startswith("/add") else "Test task") in retried_list.args[1]
     assert "Created during retry" not in retried_list.args[1]
