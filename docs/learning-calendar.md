@@ -253,3 +253,12 @@ events in chronological order with time range and duration. Blank lines separate
 each event; long agendas split into readable messages. The command is read-only,
 shows an explicit empty day or retry message, and does not consume the 21:00
 reminder's delivery receipt. Pending proposals are not Calendar events.
+
+## Next free two hours
+
+`/free2h` reads Calendar availability and searches the next seven days for the
+first uninterrupted two-hour opening within 09:00–21:00. It excludes classes,
+Calendar busy intervals and daily meal windows 12:00–13:00 and 17:00–18:00.
+The search starts now, rounded up to the next minute, and jumps past conflicts.
+It only reports availability, without booking events or modifying study budgets,
+proposals or reminders. Unapproved proposals do not reserve calendar time.
