@@ -32,7 +32,8 @@ from .runtime_health import (
 )
 from .task_actions import UndoConflict
 from .deadline_reminders import send_deadline_reminders
-from .free_time import free_two_hour_message
+from .free_time import free_slot_offer
+from .free_booking import bind_free_message, preview_free_event, free_booking_callback
 from .evening_agenda import send_evening_agenda, tomorrow_agenda
 from .task_timing import display_time, task_sort_key, timing_details
 from .study_scheduler import tick_study, notify_study_failures
@@ -70,7 +71,7 @@ HELP_SECTIONS = {
         "/classday &lt;instruction&gt; — confirm a course-specific instruction day\n"
         "/classday YYYY-MM-DD &lt;course-code&gt; class|off|auto — save an exact decision\n"
         "/calendar — view or edit TronClass scan dates\n"
-        "/free2h — find the next free two hours, excluding meals\n"
+        "/free — find the next free two hours, excluding meals\n"
         "/tomorrow — view tomorrow’s full calendar agenda\n"
         "/plan — inspect study proposals and Calendar connection\n"
         "/plan &lt;task-id&gt; — request a proposal or resume a postponed task\n"
@@ -289,6 +290,8 @@ async def deliver_learning_reply(chat_id, update_id, receipt):
     result = await telegram.send_message(chat_id, message["text"], **options)
     if not result.get("ok"):
         raise HTTPException(status_code=502, detail="Study reply pending")
+    if message.get("free_booking") and result.get("result", {}).get("message_id") is not None:
+        bind_free_message(db, chat_id, result["result"]["message_id"], message)
     if message.get("learning_edit"):
         message_id = result.get("result", {}).get("message_id")
         if message_id is None:
@@ -584,6 +587,30 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
     if settings.telegram_chat_id and chat_id != settings.telegram_chat_id:
         raise HTTPException(status_code=403, detail="Unauthorized chat")
     update_id = update.update_id
+    free_callback = re.fullmatch(r"free:(allow|cancel):([a-f0-9]{32})", update.callback_query.data or "") if update.callback_query else None
+    free_source = (db.get_task_action_state(f"free:message:{chat_id}:{source_message.reply_to_message.message_id}")
+                   if source_message.reply_to_message and not update.callback_query else None)
+    if free_callback or (free_source and update.message and not (source_message.text or "").startswith("/")):
+        receipt = db.get_update(update_id)
+        if receipt is None:
+            try:
+                if free_callback:
+                    reply = await free_booking_callback(db, google_calendar, settings, chat_id,
+                        source_message.message_id, free_callback[2], free_callback[1])
+                else:
+                    reply = await preview_free_event(db, ai, settings, chat_id,
+                        source_message.reply_to_message.message_id, source_message.text or "", update_id)
+            except CalendarError:
+                reply = "Calendar could not confirm the result. Tap Allow again to check; no duplicate event will be created."
+            receipt = db.process_update(update_id, lambda: reply)
+        await deliver_learning_reply(chat_id, update_id, receipt)
+        if free_callback:
+            current = db.get_task_action_state("free:booking:" + free_callback[2])
+            if current and current.get("status") in {"booked", "cancelled", "expired", "conflict"}:
+                await telegram.request("editMessageReplyMarkup", {"chat_id": chat_id,
+                    "message_id": source_message.message_id, "reply_markup": {"inline_keyboard": []}})
+            await telegram.answer_callback_query(update.callback_query.id)
+        return {"ok": True}
     if update.callback_query and (update.callback_query.data or "").startswith("learn:"):
         matched = re.fullmatch(r"learn:(approve|edit|postpone|more|lots|shuffle|manual|reject|retry|done|partial|skipped):(\d+):([a-f0-9]{32})", update.callback_query.data)
         if not matched or source_message.message_id is None:
@@ -852,6 +879,8 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             if not result.get("ok"):
                 raise HTTPException(status_code=502, detail="Telegram reply failed; waiting for retry")
             sent_id = result.get("result", {}).get("message_id")
+            if sent_id is not None:
+                bind_free_message(db, chat_id, sent_id, message)
             if message.get("task_id") is not None and sent_id is not None:
                 db.bind_task_message(chat_id, sent_id, message["task_id"])
             if receipt.get("messages"):
@@ -1010,12 +1039,12 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
             r"(?:\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2})\s+\d{1,2}:\d{2}(?:\s+\d{1,3}(?:\s*(?:minutes|min|分鐘))?)?", normalized, re.IGNORECASE)
             or study_window(normalized, datetime.now(settings.tz), settings.learning_minutes)):
         return lambda: "Open Edit → Choose manually on the current study proposal, then send this date/time again. No task was created."
-    if re.fullmatch(r"/free2h(?:@[A-Za-z0-9_]+)?", normalized, re.IGNORECASE):
+    if re.fullmatch(r"/free(?:@[A-Za-z0-9_]+)?", normalized, re.IGNORECASE):
         try:
-            reply = await free_two_hour_message(db, google_calendar, settings)
+            offer = await free_slot_offer(db, google_calendar, settings)
         except CalendarError:
-            return lambda: "Calendar availability is unavailable right now. Please try /free2h again shortly."
-        return lambda: message_bundle({"text": reply, "parse_mode": "HTML"})
+            return lambda: "Calendar availability is unavailable right now. Please try /free again shortly."
+        return lambda: message_bundle(offer)
     if re.fullmatch(r"/tomorrow(?:@[A-Za-z0-9_]+)?", normalized, re.IGNORECASE):
         try:
             parts = await tomorrow_agenda(google_calendar, settings)

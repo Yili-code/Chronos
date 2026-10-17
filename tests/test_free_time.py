@@ -39,8 +39,10 @@ def test_free2h_command_is_read_only(system,monkeypatch):
     client,tasks,bot,config=system
     calendar=AsyncMock();calendar.busy.return_value=[]
     monkeypatch.setattr(main,'google_calendar',calendar)
-    reply=asyncio.run(main.prepare_message('/free2h'))()
-    assert 'Next free 2 hours' in reply['messages'][0]['text']
+    reply=asyncio.run(main.prepare_message('/free'))()
+    assert ' · ' in reply['messages'][0]['text']
+    assert '\n' not in reply['messages'][0]['text']
+    assert reply['messages'][0].get('free_slot')
     assert tasks.list_open()==[]
     main.ai.parse.assert_not_awaited()
     calendar.insert.assert_not_awaited()
@@ -49,4 +51,4 @@ def test_free2h_command_is_read_only(system,monkeypatch):
 def test_free2h_calendar_failure_does_not_report_false_availability(system,monkeypatch):
     calendar=AsyncMock();calendar.busy.side_effect=CalendarError('offline')
     monkeypatch.setattr(main,'google_calendar',calendar)
-    assert 'unavailable' in asyncio.run(main.prepare_message('/free2h'))()
+    assert 'unavailable' in asyncio.run(main.prepare_message('/free'))()

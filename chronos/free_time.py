@@ -29,16 +29,19 @@ def next_two_hours(now, busy, settings, course_policy=None):
     return None
 
 
-async def free_two_hour_message(db, calendar, settings, now=None):
+async def free_slot_offer(db, calendar, settings, now=None):
     now = (now or datetime.now(settings.tz)).astimezone(settings.tz)
     await calendar.verify_owner()
     busy = await calendar.busy(now, now + timedelta(days=7))
     policy = db.get_task_action_state("learning:course-calendar-policy")
     slot = next_two_hours(now, busy, settings, policy)
     if slot is None:
-        return ("<b>No free two-hour slot</b>\n\n"
-                f"None in the next 7 days within {settings.learning_start_hour:02d}:00–{settings.learning_end_hour:02d}:00, "
-                "excluding meals, classes and calendar events.")
+        return {"text": "No free two-hour slot in the next 7 days, excluding meals, classes and calendar events."}
     start, end = slot
-    return (f"<b>Next free 2 hours</b>\n\n{display_date(start.date().isoformat())}\n"
-            f"{start:%H:%M}–{end:%H:%M} · 2 hours\n\nMeals excluded. Nothing booked.")
+    return {"text": f"{display_date(start.date().isoformat())} · {start:%H:%M}–{end:%H:%M}",
+            "free_slot": {"start": start.isoformat(), "end": end.isoformat(),
+                          "expires_at": min(start, now + timedelta(hours=2)).isoformat()}}
+
+
+async def free_two_hour_message(db, calendar, settings, now=None):
+    return (await free_slot_offer(db, calendar, settings, now))["text"]

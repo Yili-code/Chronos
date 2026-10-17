@@ -230,3 +230,15 @@ def test_natural_schedule_edit_structured_output(monkeypatch):
     result=asyncio.run(ExternalAI(config()).parse_schedule_edit('待會花一小時應該就可以看得完（已完成部分）',
         {'title':'Read chapter'}, {'minutes':180},datetime.fromisoformat('2026-10-17T18:53:00+08:00')))
     assert result.minutes==60 and result.timing=='soon'
+
+
+def test_event_title_translation_uses_structured_output(monkeypatch):
+    def handler(request):
+        body=json.loads(request.content)
+        assert 'English Calendar event title' in body['systemInstruction']['parts'][0]['text']
+        assert body['contents'][0]['parts'][0]['text']=='和朋友約咖啡廳聊天'
+        return httpx.Response(200,json={'candidates':[{'content':{'parts':[{'text':json.dumps({
+            'title':'Coffee with friends','actionable':True})}]}}]})
+    mock_provider(monkeypatch,handler)
+    result=asyncio.run(ExternalAI(config()).calendar_event_title('和朋友約咖啡廳聊天'))
+    assert result.title=='Coffee with friends'

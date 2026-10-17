@@ -256,9 +256,18 @@ reminder's delivery receipt. Pending proposals are not Calendar events.
 
 ## Next free two hours
 
-`/free2h` reads Calendar availability and searches the next seven days for the
+`/free` reads Calendar availability and searches the next seven days for the
 first uninterrupted two-hour opening within 09:00–21:00. It excludes classes,
 Calendar busy intervals and daily meal windows 12:00–13:00 and 17:00–18:00.
 The search starts now, rounded up to the next minute, and jumps past conflicts.
 It only reports availability, without booking events or modifying study budgets,
 proposals or reminders. Unapproved proposals do not reserve calendar time.
+
+The result is a single line, e.g. `10/20 (Tue) · 09:00–11:00`.
+Reply explicitly to that slot with an event description to preview a personal
+Calendar event for the entire two-hour interval. AI converts the title to English;
+requests to change time are rejected. Allow rechecks availability before inserting
+one private event; Cancel writes nothing. No study task or study budget is created.
+Slot replies expire after two hours or at the slot start, whichever comes first.
+A newer reply supersedes the older preview for that slot. Deterministic event IDs
+reconcile ambiguous responses and repeated clicks without duplicate inserts.
