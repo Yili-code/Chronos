@@ -277,18 +277,17 @@ class LearningCalendar:
         else:
             start, end = (datetime.fromisoformat(state[key]).astimezone(self.settings.tz) for key in ("start", "end"))
             text = (f"<b>Study proposal</b>\n{escape(task['title'])}\n"
-                    f"When {display_time(state['start'], self.settings.tz)}–{end:%H:%M}\nDuration {state['minutes']} minutes\n"
-                    "Calendar write waits for your approval.")
+                    f"{display_time(state['start'], self.settings.tz)}–{end:%H:%M} · {state['minutes']} minutes")
             if state.get("progress_note"):
                 text += f"\n\nProgress {escape(state['progress_note'])}"
             estimate = state.get("duration_estimate")
             if state.get("duration_source") == "ai" and estimate:
-                text += (f"\nAI estimate {estimate['estimated_minutes']} minutes total · {escape(estimate['confidence'])} confidence"
+                text += (f"\n\nAI estimate {estimate['estimated_minutes']} minutes total · {escape(estimate['confidence'])} confidence"
                          f"\n{escape(estimate['reason'])}")
                 if estimate["estimated_minutes"] > state["minutes"]:
                     text += "\nThis proposal covers one session; more work may remain."
             elif state.get("duration_source") in {"default", "profile"}:
-                text += "\nDuration based on completed sessions." if state["duration_source"] == "profile" else "\nDefault estimate; AI estimate unavailable."
+                text += "\n\nBased on completed sessions." if state["duration_source"] == "profile" else "\n\nDefault estimate; AI estimate unavailable."
             buttons = self.buttons(task["id"], state, [("approve", "Allow"), ("edit", "Edit"), ("postpone", "Postpone")])
         return text, buttons
 

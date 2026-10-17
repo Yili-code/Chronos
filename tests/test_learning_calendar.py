@@ -63,8 +63,8 @@ def test_only_one_proposal_is_shown_until_approval_succeeds(setup):
     assert planner.get(other["id"]) is None
     assert first["minutes"] == 90
     calendar.insert.assert_not_awaited()
-    assert "Duration 90 minutes" in bot.send_message.await_args_list[0].args[1]
-    assert "Calendar write waits for your approval" in bot.send_message.await_args_list[0].args[1]
+    assert " · 90 minutes" in bot.send_message.await_args_list[0].args[1]
+    assert "Calendar write waits for your approval" not in bot.send_message.await_args_list[0].args[1]
     # Frozen scheduling now is in the future relative to booking's wall clock when needed.
     reply = asyncio.run(planner.callback("approve", task["id"], first["token"], 50))
     assert "booked" in reply

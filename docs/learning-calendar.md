@@ -224,3 +224,8 @@ During an unapproved proposal edit, an explicit standalone `已完成`, `完成�
 The transaction checks the active queue turn, token and task snapshot, clears the
 manual-edit context and releases the next task. It never creates Calendar events
 or infers actual work minutes from planned duration. `已完成部分` is not completion.
+
+Proposal cards place date, weekday, time range and session minutes on one line
+without When/Duration labels or repeated approval text. A blank line separates
+that timing line from the AI estimate. Allow, Edit and Postpone remain unchanged;
+removing the sentence does not change the approval requirement.
