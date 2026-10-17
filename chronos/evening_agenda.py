@@ -31,6 +31,16 @@ def render_agenda(events, day, tz):
     return parts
 
 
+async def tomorrow_agenda(calendar, settings, now=None):
+    """Read the full local day live, without changing evening delivery receipts."""
+    now = (now or datetime.now(settings.tz)).astimezone(settings.tz)
+    day = now.date() + timedelta(days=1)
+    start = datetime.combine(day, time.min, settings.tz)
+    await calendar.verify_owner()
+    events = await calendar.agenda(start, start + timedelta(days=1))
+    return render_agenda(events, day, settings.tz)
+
+
 async def send_evening_agenda(db, calendar, telegram, settings, now=None):
     if not settings.enable_learning_calendar:
         return {"enabled": False}

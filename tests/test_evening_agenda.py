@@ -92,3 +92,28 @@ def test_endpoint_requires_scheduler_auth(system):
     client, _, _, _ = system
     assert client.post("/internal/agenda/tomorrow").status_code == 403
     assert client.post("/internal/agenda/tomorrow", headers={"X-Chronos-Scheduler-Secret": "test-scheduler"}).json() == {"enabled": False}
+
+
+def test_tomorrow_command_reads_full_day_without_consuming_evening_receipt(system,monkeypatch):
+    from chronos import main
+    client,tasks,bot,config=system
+    calendar=AsyncMock()
+    calendar.agenda.return_value=[event('Later'),{'summary':'All-day item','start':{'date':'2026-10-20'},'end':{'date':'2026-10-21'}}]
+    monkeypatch.setattr(main,'google_calendar',calendar)
+    output=asyncio.run(main.prepare_message('/tomorrow'))()
+    text=output['messages'][0]['text']
+    assert 'Tomorrow' in text and '\n\n' in text
+    assert text.index('All day')<text.index('17:00')
+    start,end=calendar.agenda.await_args.args
+    assert start.hour==0 and end-start==timedelta(days=1)
+    assert main.db.get_task_action_state('evening:agenda:'+start.date().isoformat()) is None
+    assert tasks.list_open()==[]
+    main.ai.parse.assert_not_awaited()
+
+
+def test_tomorrow_command_reports_calendar_failure_without_false_empty_day(system,monkeypatch):
+    from chronos import main
+    calendar=AsyncMock();calendar.verify_owner.side_effect=CalendarError('unavailable')
+    monkeypatch.setattr(main,'google_calendar',calendar)
+    reply=asyncio.run(main.prepare_message('/tomorrow'))()
+    assert 'unavailable' in reply and 'No events' not in reply

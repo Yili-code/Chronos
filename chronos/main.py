@@ -32,7 +32,7 @@ from .runtime_health import (
 )
 from .task_actions import UndoConflict
 from .deadline_reminders import send_deadline_reminders
-from .evening_agenda import send_evening_agenda
+from .evening_agenda import send_evening_agenda, tomorrow_agenda
 from .task_timing import display_time, task_sort_key, timing_details
 from .study_scheduler import tick_study, notify_study_failures
 from .gmail import GmailClient, GmailError
@@ -69,6 +69,7 @@ HELP_SECTIONS = {
         "/classday &lt;instruction&gt; — confirm a course-specific instruction day\n"
         "/classday YYYY-MM-DD &lt;course-code&gt; class|off|auto — save an exact decision\n"
         "/calendar — view or edit TronClass scan dates\n"
+        "/tomorrow — view tomorrow’s full calendar agenda\n"
         "/plan — inspect study proposals and Calendar connection\n"
         "/plan &lt;task-id&gt; — request a proposal or resume a postponed task\n"
         "/planedit &lt;task-id&gt; MM/DD HH:MM minutes — revise a proposal before Allow\n"
@@ -1007,6 +1008,12 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
             r"(?:\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2})\s+\d{1,2}:\d{2}(?:\s+\d{1,3}(?:\s*(?:minutes|min|分鐘))?)?", normalized, re.IGNORECASE)
             or study_window(normalized, datetime.now(settings.tz), settings.learning_minutes)):
         return lambda: "Open Edit → Choose manually on the current study proposal, then send this date/time again. No task was created."
+    if re.fullmatch(r"/tomorrow(?:@[A-Za-z0-9_]+)?", normalized, re.IGNORECASE):
+        try:
+            parts = await tomorrow_agenda(google_calendar, settings)
+        except CalendarError:
+            return lambda: "Tomorrow's agenda is unavailable right now. Please try /tomorrow again shortly."
+        return lambda: message_bundle(*({"text": part, "parse_mode": "HTML"} for part in parts))
     plan_edit = re.fullmatch(r"/planedit\s+(\d+)\s+(.+)", normalized, re.DOTALL)
     if plan_edit:
         state = learning_calendar().get(int(plan_edit[1]))

@@ -244,3 +244,12 @@ required to book it. No preserves the old proposal. Confirmation expires after
 again. Search never passes local midnight and all deadlines, meal windows, class,
 Calendar and daily workload checks remain enforced. Automatic scheduling keeps
 the normal cutoff; no global setting is relaxed.
+
+## On-demand tomorrow agenda
+
+`/tomorrow` reads the full next day (00:00–24:00, Asia/Taipei) live from all
+configured agenda calendars. All-day events appear first, followed by timed
+events in chronological order with time range and duration. Blank lines separate
+each event; long agendas split into readable messages. The command is read-only,
+shows an explicit empty day or retry message, and does not consume the 21:00
+reminder's delivery receipt. Pending proposals are not Calendar events.
