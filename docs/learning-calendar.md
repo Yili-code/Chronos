@@ -8,6 +8,10 @@ missed webhook tick recovers without leaving the computer on.
 ## Owner rules
 
 - Study blocks start at or after 09:00 and end at or before 21:00, Asia/Taipei.
+- Every day, 12:00–13:00 and 17:00–18:00 allow only tasks of at most
+  10 minutes. Longer blocks cannot overlap either window. Automatic scheduling,
+  random alternatives, manual edits and approval rechecks enforce this rule;
+  existing Calendar events remain unchanged.
 - New subjects default to 90 minutes per block.
 - Course-scope checks, using the same English/Chinese classifier as the task-list
   grouping, default to 10 minutes. This rule takes priority over learned averages

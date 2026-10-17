@@ -20,6 +20,14 @@ def overlaps(start, end, busy):
     return any(start < stop and end > begin for begin, stop in busy)
 
 
+def short_task_windows(day, tz, minutes):
+    """Reserve lunch and dinner hours for tasks of at most ten minutes."""
+    if minutes <= 10:
+        return []
+    return [(datetime.combine(day, time(hour), tz), datetime.combine(day, time(hour + 1), tz))
+            for hour in (12, 17)]
+
+
 def study_window(instruction, now, default_minutes):
     """Resolve a date/weekday period as availability, never as a task deadline."""
     text = instruction.strip().casefold()
@@ -96,7 +104,7 @@ def find_slot(task, now, busy, reservations, config, minutes, booked_minutes=Non
                    + (timedelta(days=1) if config.learning_end_hour == 24 else timedelta()))
         while start + timedelta(minutes=minutes) <= stop:
             end = start + timedelta(minutes=minutes)
-            if not overlaps(start, end, [*busy, *classes, *reservations]):
+            if not overlaps(start, end, [*busy, *classes, *reservations, *short_task_windows(day, config.tz, minutes)]):
                 if not randomize:
                     return start, end
                 candidates.append((start, end))
@@ -283,6 +291,10 @@ class LearningCalendar:
                 self.update(task["id"], lambda old: {**old, "status": "queued"})
                 return "The task or proposed time changed. A fresh proposal will require approval."
             start, end = (datetime.fromisoformat(state[key]) for key in ("start", "end"))
+            if overlaps(start, end, short_task_windows(start.astimezone(self.settings.tz).date(), self.settings.tz,
+                                                      (end - start).total_seconds() / 60)):
+                self.update(task["id"], lambda old: {**old, "status": "queued"})
+                return "12:00–13:00 and 17:00–18:00 allow only tasks of at most 10 minutes. A new proposal will require approval."
             busy = await self.calendar.busy(start, end)
             if overlaps(start, end, busy):
                 self.update(task["id"], lambda old: {**old, "status": "queued"})
@@ -460,6 +472,8 @@ class LearningCalendar:
                     datetime.combine(datetime.fromisoformat(due).date(), time.max, self.settings.tz) if due else None)
         if deadline and end > deadline:
             return f"That block ends after the task deadline {display_time(due, self.settings.tz)}. Choose an earlier time."
+        if overlaps(start, end, short_task_windows(start.date(), self.settings.tz, minutes)):
+            return "12:00–13:00 and 17:00–18:00 allow only tasks of at most 10 minutes. Choose another time or a shorter block."
         others = {t["id"]: self.get(t["id"]) for t in self.db.list_open_tasks() if t["id"] != task_id}
         hard, pending = [], {}
         for other_id, other in others.items():

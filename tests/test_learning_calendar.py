@@ -306,11 +306,11 @@ def test_edit_replaces_card_and_requires_fresh_approval(setup):
     prompt = asyncio.run(planner.callback("manual", task["id"], old["token"], 50))
     assert prompt["messages"][0]["reply_markup"]["force_reply"]
     assert "no longer available" in asyncio.run(planner.callback("approve", task["id"], old["token"], 50))
-    assert "Updated" in asyncio.run(planner.revise(task["id"], old["token"], "10/20 17:00 60", NOW))
+    assert "Updated" in asyncio.run(planner.revise(task["id"], old["token"], "10/20 18:00 60", NOW))
     revised = planner.get(task["id"])
     assert revised["token"] != old["token"]
     assert revised["minutes"] == 60
-    assert revised["start"] == "2026-10-20T17:00:00+08:00"
+    assert revised["start"] == "2026-10-20T18:00:00+08:00"
     calendar.insert.assert_not_awaited()
     asyncio.run(planner.tick(NOW))
     recovered = asyncio.run(planner.callback("approve", task["id"], old["token"], 50))
@@ -374,7 +374,7 @@ def test_edit_prompt_reply_webhook_is_durable_and_does_not_book(system, setup, m
     binding = main.db.get_task_action_state("learning:edit-message:123:50")
     assert binding["token"] == old["token"]
     message = {"update_id": 99811, "message": {"message_id": 51, "chat": {"id": 123},
-        "text": "10/20 17:00 60", "reply_to_message": {"message_id": 50, "chat": {"id": 123}}}}
+        "text": "10/20 18:00 60", "reply_to_message": {"message_id": 50, "chat": {"id": 123}}}}
     assert client.post("/telegram/webhook", json=message, headers=headers).status_code == 200
     token = planner.get(task["id"])["token"]
     assert client.post("/telegram/webhook", json=message, headers=headers).status_code == 200
@@ -539,7 +539,7 @@ def test_revision_cannot_replace_an_approval_that_started_during_calendar_read(s
         planner.update(task["id"], lambda old: {**old, "status": "creating"})
         return []
     calendar.busy.side_effect = raced_busy
-    reply = asyncio.run(planner.revise(task["id"], state["token"], "10/19 12:15 180", NOW))
+    reply = asyncio.run(planner.revise(task["id"], state["token"], "10/19 13:00 180", NOW))
     assert "changed while editing" in reply
     assert planner.get(task["id"])["status"] == "creating"
     assert planner.get(task["id"])["token"] == state["token"]
@@ -557,7 +557,7 @@ def test_edit_repeated_ticks_and_direct_planning_cannot_advance_the_queue(setup)
     asyncio.run(planner.propose(other, NOW, []))
     assert planner.get(other["id"]) is None
     assert bot.send_message.await_count == 1
-    assert "Updated" in asyncio.run(planner.revise(task["id"], state["token"], "10/20 17:00 120", NOW + timedelta(minutes=5)))
+    assert "Updated" in asyncio.run(planner.revise(task["id"], state["token"], "10/20 18:00 120", NOW + timedelta(minutes=5)))
     asyncio.run(planner.tick(NOW + timedelta(minutes=5)))
     assert bot.send_message.await_count == 2
     assert planner.get(other["id"]) is None
@@ -780,7 +780,7 @@ def test_course_scope_manual_duration_survives_resumption(setup):
     planner.db.edit_task(task["id"], "Check course scope", NOW + timedelta(days=3), "graphs", {})
     asyncio.run(planner.tick(NOW))
     state = planner.get(task["id"])
-    assert "Updated" in asyncio.run(planner.revise(task["id"], state["token"], "10/20 17:00 20", NOW))
+    assert "Updated" in asyncio.run(planner.revise(task["id"], state["token"], "10/20 18:00 20", NOW))
     revised = planner.get(task["id"])
     planner.update(task["id"], lambda old: {**old, "status": "queued"})
     asyncio.run(planner.tick(NOW))
@@ -796,12 +796,58 @@ def test_revision_respects_daily_budget_busy_events_and_scheduler_lease(setup):
     asyncio.run(planner.tick(NOW))
     state = planner.get(task["id"])
     planner.db.mutate_task_action_state("learning:day:2026-10-20", lambda old: {"booked": 350})
-    assert "limit" in asyncio.run(planner.revise(task["id"], state["token"], "10/20 17:00 60", NOW))
+    assert "limit" in asyncio.run(planner.revise(task["id"], state["token"], "10/20 18:00 60", NOW))
     planner.db.mutate_task_action_state("learning:day:2026-10-20", lambda old: {})
-    calendar.busy.return_value = [(NOW.replace(day=20, hour=17), NOW.replace(day=20, hour=18))]
-    assert "conflicts" in asyncio.run(planner.revise(task["id"], state["token"], "10/20 17:00 60", NOW))
+    calendar.busy.return_value = [(NOW.replace(day=20, hour=18), NOW.replace(day=20, hour=19))]
+    assert "conflicts" in asyncio.run(planner.revise(task["id"], state["token"], "10/20 18:00 60", NOW))
     planner.db.mutate_task_action_state("learning:tick", lambda old: {
         "claim": "scheduler", "until": (NOW + timedelta(minutes=5)).isoformat()})
-    assert "shortly" in asyncio.run(planner.revise(task["id"], state["token"], "10/20 17:00 60", NOW))
+    assert "shortly" in asyncio.run(planner.revise(task["id"], state["token"], "10/20 18:00 60", NOW))
     assert planner.get(task["id"])["token"] == state["token"]
+    calendar.insert.assert_not_awaited()
+
+@pytest.mark.parametrize('hour,minute,duration,allowed', [
+    (11, 30, 30, True), (11, 45, 30, False),
+    (12, 0, 10, True), (12, 0, 15, False), (12, 55, 10, True),
+    (13, 0, 90, True), (16, 30, 30, True), (16, 45, 30, False),
+    (17, 0, 10, True), (17, 0, 15, False), (18, 0, 90, True),
+])
+def test_daily_short_task_windows_boundaries(hour, minute, duration, allowed):
+    from chronos.learning_calendar import overlaps, short_task_windows
+    for offset in range(7):
+        start = (NOW + timedelta(days=offset)).replace(hour=hour, minute=minute)
+        assert (not overlaps(start, start + timedelta(minutes=duration),
+                             short_task_windows(start.date(), start.tzinfo, duration))) == allowed
+
+
+@pytest.mark.parametrize('randomize', [False, True])
+@pytest.mark.parametrize('duration', [10, 15, 90])
+def test_find_slot_enforces_short_windows_for_all_search_modes(setup, randomize, duration):
+    planner, task, _, _ = setup
+    start = NOW.replace(day=24, hour=12)
+    task = {**task, 'due_at': start.replace(hour=13).isoformat()}
+    slot = find_slot(task, NOW, [], [], planner.settings, duration,
+                     randomize=randomize, window=(start, start.replace(hour=13)))
+    assert (slot is not None) == (duration == 10)
+
+
+@pytest.mark.parametrize('instruction', ['10/20 12:00 15', '10/20 16:45 30', '10/20 17:00 90'])
+def test_manual_edit_rejects_long_blocks_in_short_windows(setup, instruction):
+    planner, task, calendar, _ = setup
+    asyncio.run(planner.tick(NOW))
+    state = planner.get(task['id'])
+    assert 'at most 10 minutes' in asyncio.run(planner.revise(task['id'], state['token'], instruction, NOW))
+    assert planner.get(task['id']) == state
+    calendar.insert.assert_not_awaited()
+
+
+def test_approval_requeues_legacy_long_proposal_in_short_window(setup):
+    planner, task, calendar, _ = setup
+    asyncio.run(planner.tick(NOW))
+    state = planner.update(task['id'], lambda old: {**old,
+        'start': NOW.replace(day=20, hour=17).isoformat(),
+        'end': NOW.replace(day=20, hour=18, minute=30).isoformat()})
+    reply = asyncio.run(planner.callback('approve', task['id'], state['token'], 50))
+    assert 'new proposal' in reply
+    assert planner.get(task['id'])['status'] == 'queued'
     calendar.insert.assert_not_awaited()
