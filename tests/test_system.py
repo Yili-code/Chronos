@@ -258,12 +258,12 @@ def test_webhook_auth_and_commands(system):
     assert bot.send_message.call_args.kwargs == {'parse_mode': None}
     assert service.list_open() == []
     assert send('新增工作').status_code == 200
-    assert bot.send_message.await_args_list[-2].args[1] == '<b>Task created</b>\n<b>Test task</b>'
+    assert '<b>Test task</b>\n<b>Due</b> ' in bot.send_message.await_args_list[-2].args[1]
     assert bot.send_message.call_args.kwargs['parse_mode'] == 'HTML'
     assert bot.send_message.await_args_list[-2].kwargs['reply_markup']['inline_keyboard'][0][0]['callback_data'] == 'task:edit:1'
-    assert bot.send_message.call_args.args[1] == '<b>Tasks</b>\n1. <b>Test task</b>'
+    assert '<b>Test task</b>\n<b>Due</b> ' in bot.send_message.call_args.args[1]
     assert send('/tasks').status_code == 200
-    assert bot.send_message.call_args.args[1] == '<b>Tasks</b>\n1. <b>Test task</b>'
+    assert '<b>Test task</b>\n<b>Due</b> ' in bot.send_message.call_args.args[1]
     assert bot.send_message.call_args.kwargs['parse_mode'] == 'HTML'
     assert 'reply_markup' not in bot.send_message.call_args.kwargs
     main.ai.edit = AsyncMock(return_value=ParsedTask(
@@ -571,7 +571,7 @@ def test_reply_retry_does_not_repeat_task_change(system, failure):
     assert len(service.list_open()) == 1
     assert main.ai.parse.await_count == 1
     assert bot.send_message.await_args_list[-2].args[1] == first_reply
-    assert bot.send_message.call_args.args[1] == '<b>Tasks</b>\n1. <b>Test task</b>'
+    assert '<b>Test task</b>\n<b>Due</b> ' in bot.send_message.call_args.args[1]
 
 
 def test_update_receipt_and_mutation_roll_back_together(system):

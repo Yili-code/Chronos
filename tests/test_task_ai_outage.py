@@ -1,6 +1,6 @@
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import AsyncMock
 
 import httpx
@@ -8,7 +8,7 @@ import pytest
 
 from chronos import main
 from chronos.ai import AIError, ExternalAI
-from chronos.tasks import parse_deterministic_edit
+from chronos.tasks import ParsedTask, parse_deterministic_edit
 from test_ai import config, mock_provider
 from test_system import system
 from test_task_edit_webhook import send
@@ -22,14 +22,45 @@ def stub_edit(monkeypatch):
 def test_literal_add_is_idempotent_and_never_calls_ai(system):
     client, tasks, bot, settings = system
     main.ai.parse.side_effect = AssertionError("AI unavailable")
+    earliest = datetime.now(settings.tz) + timedelta(days=3)
     for _ in range(2):
         assert send(client, 8100, "/add Review Graph Algorithms Quiz 1 #Graph").status_code == 200
     items = tasks.list_open()
     assert len(items) == 1
     assert items[0]["title"] == "Review Graph Algorithms Quiz 1"
     assert items[0]["project"] == "Graph"
-    assert items[0]["due_at"] is None
+    assert earliest <= datetime.fromisoformat(items[0]["due_at"]) <= datetime.now(settings.tz) + timedelta(days=3)
     main.ai.parse.assert_not_awaited()
+
+
+@pytest.mark.parametrize("explicit_due,timing", [
+    (None, {}),
+    ("2026-10-25T18:00:00+08:00", {}),
+    (None, {"due_date": "2026-10-25"}),
+    (None, {"event": "2026-10-16", "scheduled": "2026-10-19"}),
+])
+def test_new_task_defaults_to_72_hours_without_overwriting_explicit_deadlines(system, monkeypatch, explicit_due, timing):
+    client, tasks, bot, settings = system
+    instant = datetime(2026, 10, 17, 13, 20, tzinfo=settings.tz)
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return instant.astimezone(tz)
+
+    monkeypatch.setattr(main, "datetime", Clock)
+    due = datetime.fromisoformat(explicit_due) if explicit_due else None
+    main.ai.parse.return_value = ParsedTask("New task", due, "CA", dict(timing))
+    assert send(client, 8102, "Add a task").status_code == 200
+    task = tasks.list_open()[0]
+    expected = explicit_due if explicit_due or timing.get("due_date") else "2026-10-20T13:20:00+08:00"
+    assert task["due_at"] == expected
+    assert task["timing"] == timing
+    instant += timedelta(days=1)
+    assert send(client, 8102, "Add a task").status_code == 200
+    assert tasks.list_open() == [task]
+    assert bot.send_message.await_count == 2
+    assert main.ai.parse.await_count == 1
 
 
 @pytest.mark.parametrize("instruction", [

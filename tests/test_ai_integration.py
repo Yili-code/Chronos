@@ -23,10 +23,10 @@ def task_service(tmp_path, monkeypatch):
 def test_telegram_uses_external_ai(task_service, monkeypatch):
     parse = AsyncMock(return_value=ParsedTask("Review external analysis"))
     monkeypatch.setattr(main.ai, "parse", parse)
-    assert asyncio.run(main.handle_message("新增 工作")) == (
-        "<b>Task created</b>\n<b>Review external analysis</b>\n\n"
-        "<b>Tasks</b>\n1. <b>Review external analysis</b>"
-    )
+    reply = asyncio.run(main.handle_message("新增 工作"))
+    assert reply.startswith("<b>Task created</b>")
+    assert "<b>Review external analysis</b>\n<b>Due</b> " in reply
+    assert "<b>Tasks</b>\n1. " in reply
     assert parse.await_count == 1
     due = datetime(2026, 9, 20, 12, tzinfo=main.settings.tz)
     edit = AsyncMock(return_value=ParsedTask("Review external analysis", due))

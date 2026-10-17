@@ -3,7 +3,7 @@ import hmac
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
 from collections.abc import Callable
 
@@ -53,7 +53,7 @@ HELP_SECTIONS = {
     "tasks": (
         "<b>Tasks</b>\n"
         "/tasks — list open tasks\n"
-        "/add &lt;title&gt; [#tag] — add exact text without AI or a deadline\n"
+        "/add &lt;title&gt; [#tag] — add exact text without AI; due in 3 days\n"
         "/done &lt;list-position&gt; — complete a task\n"
         "/edit &lt;list-position&gt; &lt;changes&gt; — edit by current list position\n"
         "/edit #&lt;task-id&gt; &lt;changes&gt; — edit by fixed task ID\n"
@@ -1007,7 +1007,10 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
     aliases = tasks.project_aliases()
     def create() -> dict:
         before = tasks.list_open()
-        task = tasks.create(parsed.title, parsed.due_at, parsed.project, parsed.timing)
+        due_at = parsed.due_at
+        if due_at is None and not parsed.timing.get("due_date"):
+            due_at = datetime.now(settings.tz) + timedelta(days=3)
+        task = tasks.create(parsed.title, due_at, parsed.project, parsed.timing)
         details = "\n".join(format_task_block(
             task, settings.tz, project_aliases=aliases
         ))
