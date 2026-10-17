@@ -1014,6 +1014,32 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
         except CalendarError:
             return lambda: "Tomorrow's agenda is unavailable right now. Please try /tomorrow again shortly."
         return lambda: message_bundle(*({"text": part, "parse_mode": "HTML"} for part in parts))
+    schedule_question = re.fullmatch(
+        r"(?:我)?(?:這|下)?(?:星期|週|周)([一二三四五六日天])(?:的)?(早上|上午|下午|晚上)?(?:有事嗎|有空嗎|有什麼(?:事|安排|行程)|有行程嗎)[？?]?",
+        normalized,
+    )
+    if schedule_question:
+        from .evening_agenda import render_agenda
+        now = datetime.now(settings.tz)
+        weekday = "一二三四五六日".index(schedule_question[1].replace("天", "日"))
+        offset = (weekday - now.weekday()) % 7
+        if normalized.lstrip("我").startswith("下"):
+            offset = 7 - now.weekday() + weekday
+        day = now.date() + timedelta(days=offset)
+        hours = {"早上": (6, 12), "上午": (6, 12), "下午": (12, 18), "晚上": (18, 24)}
+        begin, end = hours.get(schedule_question[2], (0, 24))
+        start = datetime.combine(day, datetime.min.time(), settings.tz) + timedelta(hours=begin)
+        stop = datetime.combine(day, datetime.min.time(), settings.tz) + timedelta(hours=end)
+        try:
+            await google_calendar.verify_owner()
+            events = await google_calendar.agenda(start, stop)
+        except CalendarError:
+            return lambda: "目前無法讀取行事曆，尚不能確認這段時間是否有安排。沒有建立任務。"
+        heading = f"Google Calendar · {day.isoformat()} {begin:02d}:00–{end:02d}:00"
+        parts = render_agenda(events, day, settings.tz)
+        parts = [part.replace(f"Tomorrow · ", "", 1) for part in parts]
+        parts[0] = escape(heading) + "\n\n" + parts[0]
+        return lambda: message_bundle(*({"text": part, "parse_mode": "HTML"} for part in parts))
     plan_edit = re.fullmatch(r"/planedit\s+(\d+)\s+(.+)", normalized, re.DOTALL)
     if plan_edit:
         state = learning_calendar().get(int(plan_edit[1]))
@@ -1229,8 +1255,6 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
     def create() -> dict:
         before = tasks.list_open()
         due_at = parsed.due_at
-        if due_at is None and not parsed.timing.get("due_date"):
-            due_at = datetime.now(settings.tz) + timedelta(days=3)
         task = tasks.create(parsed.title, due_at, parsed.project, parsed.timing)
         details = "\n".join(format_task_block(
             task, settings.tz, project_aliases=aliases

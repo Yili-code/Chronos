@@ -22,14 +22,13 @@ def stub_edit(monkeypatch):
 def test_literal_add_is_idempotent_and_never_calls_ai(system):
     client, tasks, bot, settings = system
     main.ai.parse.side_effect = AssertionError("AI unavailable")
-    earliest = datetime.now(settings.tz) + timedelta(days=3)
     for _ in range(2):
         assert send(client, 8100, "/add Review Graph Algorithms Quiz 1 #Graph").status_code == 200
     items = tasks.list_open()
     assert len(items) == 1
     assert items[0]["title"] == "Review Graph Algorithms Quiz 1"
     assert items[0]["project"] == "Graph"
-    assert earliest <= datetime.fromisoformat(items[0]["due_at"]) <= datetime.now(settings.tz) + timedelta(days=3)
+    assert items[0]["due_at"] is None
     main.ai.parse.assert_not_awaited()
 
 
@@ -39,7 +38,7 @@ def test_literal_add_is_idempotent_and_never_calls_ai(system):
     (None, {"due_date": "2026-10-25"}),
     (None, {"event": "2026-10-16", "scheduled": "2026-10-19"}),
 ])
-def test_new_task_defaults_to_72_hours_without_overwriting_explicit_deadlines(system, monkeypatch, explicit_due, timing):
+def test_new_task_preserves_only_explicit_deadlines(system, monkeypatch, explicit_due, timing):
     client, tasks, bot, settings = system
     instant = datetime(2026, 10, 17, 13, 20, tzinfo=settings.tz)
 
@@ -53,7 +52,7 @@ def test_new_task_defaults_to_72_hours_without_overwriting_explicit_deadlines(sy
     main.ai.parse.return_value = ParsedTask("New task", due, "CA", dict(timing))
     assert send(client, 8102, "Add a task").status_code == 200
     task = tasks.list_open()[0]
-    expected = explicit_due if explicit_due or timing.get("due_date") else "2026-10-20T13:20:00+08:00"
+    expected = explicit_due
     assert task["due_at"] == expected
     assert task["timing"] == timing
     instant += timedelta(days=1)
@@ -134,3 +133,29 @@ def test_edit_preserves_safe_error_reason_on_initial_and_retry(system):
     output = (asyncio.run(main.prepare_pending_edit("edit:retry:8300")))()
     assert "configured AI model is unavailable" in str(output)
     assert tasks.list_open()[0]["title"] == "Before"
+
+
+@pytest.mark.parametrize("question", ["我星期一晚上有事嗎", "週二有空嗎？"])
+def test_schedule_question_reads_calendar_without_creating_task(system, monkeypatch, question):
+    client, tasks, bot, settings = system
+    monkeypatch.setattr(main.google_calendar, "verify_owner", AsyncMock())
+    agenda = AsyncMock(return_value=[])
+    monkeypatch.setattr(main.google_calendar, "agenda", agenda)
+    assert send(client, 8199, question).status_code == 200
+    assert tasks.list_open() == []
+    main.ai.parse.assert_not_awaited()
+    agenda.assert_awaited_once()
+
+    start, stop = agenda.await_args.args
+    assert start.weekday() == (0 if "星期一" in question else 1)
+    assert start.hour == (18 if "晚上" in question else 0)
+    assert stop > start
+
+
+def test_schedule_query_failure_does_not_create_task(system, monkeypatch):
+    client, tasks, bot, settings = system
+    monkeypatch.setattr(main.google_calendar, "verify_owner", AsyncMock(side_effect=main.CalendarError("unavailable")))
+    assert send(client, 8200, "我星期一晚上有事嗎").status_code == 200
+    assert tasks.list_open() == []
+    main.ai.parse.assert_not_awaited()
+    assert "尚不能確認" in bot.send_message.call_args.args[1]

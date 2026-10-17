@@ -66,3 +66,15 @@ with those allowed update types using the existing deployment procedure.
 Regression tests use mocked AI/Telegram transports and a Firestore transaction
 fake that rejects reads after writes. They do not certify a live cloud rollout
 or the accuracy of every possible natural-language expression.
+
+## Schedule questions and missing deadlines
+
+Telegram questions such as `我星期一晚上有事嗎` read Google Calendar instead of
+creating a task. The current implementation recognizes Chinese weekday questions;
+evening means 18:00 through midnight. A bare weekday means its next occurrence
+(including today); 下星期 means the following calendar week. Calendar errors
+report that availability is unknown. Results describe Google Calendar events,
+not a guarantee that every personal commitment is recorded.
+
+New tasks without an explicit deadline retain no deadline, including `/add`.
+There is no automatic three-day deadline. Existing stored deadlines are unchanged.
