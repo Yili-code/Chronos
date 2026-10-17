@@ -936,8 +936,11 @@ def test_feedback_card_combines_time_and_duration_and_explains_input(setup):
     assert '10/19 (Mon) 09:00 · 10 minutes planned' in text
     assert '\nWhen ' not in text and '\nPlanned ' not in text
     assert '[reason]' not in text
-    assert f'<code>/studyfeedback {task["id"]} 10 done</code>' in text
-    assert 'done 完成 · partial 尚未完成 · skipped 未開始' in text
+    assert f'<code>/studyfeedback {task["id"]} 15 done</code>' in text
+    assert 'How did it go? Choose below.' in text
+    assert 'For 15 minutes completed' in text
+    assert not any('\u4e00' <= char <= '\u9fff' for char in text)
+    assert len(text.splitlines()) <= 9
     assert '\n\n' in text
 
 

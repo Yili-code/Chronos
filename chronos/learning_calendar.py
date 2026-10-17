@@ -733,13 +733,9 @@ class LearningCalendar:
     def feedback_content(self, task, state):
         text = (f"<b>Study check-in</b>\n\n{escape(task['title'])}\n"
                 f"{display_time(state['start'], self.settings.tz)} · {state['minutes']} minutes planned\n\n"
-                "直接點下方按鈕回報結果。\n\n"
-                "若要記錄實際用時，例如花 10 分鐘完成，傳送\n"
-                f"<code>/studyfeedback {task['id']} 10 done</code>\n"
-                "把 10 換成實際分鐘數。\n"
-                "done 完成 · partial 尚未完成 · skipped 未開始\n\n"
-                "原因可直接加在最後，例如\n"
-                f"<code>/studyfeedback {task['id']} 10 partial 被電話打斷</code>")
+                "How did it go? Choose below.\n\n"
+                "Different duration? For 15 minutes completed, send\n"
+                f"<code>/studyfeedback {task['id']} 15 done</code>")
         return text, self.buttons(task["id"], state,
             [("done", "Done as planned"), ("partial", "Need more time"), ("skipped", "Did not start")])
 

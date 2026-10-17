@@ -164,8 +164,9 @@ ambiguous Telegram delivery requires inspection rather than a blind resend.
 The computer can be off. The local scheduler also supports the same 21:00 job.
 
 Check-in cards combine the planned start and duration on one line, separate sections
-with blank lines, and give concrete feedback examples with explained outcome words
-instead of an unexplained command template. The result buttons remain the primary path.
+with blank lines, and use concise English with one concrete actual-duration example.
+The result buttons remain the primary path; detailed outcome syntax is omitted
+from the card to keep the check-in short.
 
 At the end of a booked event, the next daytime tick sends one check-in. It reads
 the Calendar event again to honor a changed end time; deleted/cancelled events
