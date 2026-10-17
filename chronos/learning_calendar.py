@@ -219,6 +219,7 @@ class LearningCalendar:
                 "requested_minutes": (old or {}).get("requested_minutes"),
                 "duration_source": (old or {}).get("duration_source"),
                 "duration_estimate": (old or {}).get("duration_estimate"),
+                "progress_note": (old or {}).get("progress_note", ""),
                 "retire_on_send": [*((old or {}).get("retire_on_send", [])),
                     *((old or {}).get(key) for key in ("message_id", "edit_message_id") if (old or {}).get(key))]}
             self.db._save_task_action_state(f"learning:task:{task_id}", state)
@@ -278,6 +279,8 @@ class LearningCalendar:
             text = (f"<b>Study proposal</b>\n{escape(task['title'])}\n"
                     f"When {display_time(state['start'], self.settings.tz)}–{end:%H:%M}\nDuration {state['minutes']} minutes\n"
                     "Calendar write waits for your approval.")
+            if state.get("progress_note"):
+                text += f"\n\nProgress {escape(state['progress_note'])}"
             estimate = state.get("duration_estimate")
             if state.get("duration_source") == "ai" and estimate:
                 text += (f"\nAI estimate {estimate['estimated_minutes']} minutes total · {escape(estimate['confidence'])} confidence"
@@ -423,8 +426,8 @@ class LearningCalendar:
                 return "This edit menu is no longer active. Use Edit on the latest proposal."
             if action != "manual":
                 return await self.revise(task_id, token, action, now)
-            return {"messages": [{"text": "Reply with date, start time and duration in minutes.\n"
-                "Examples 10/20 15:00 90, or 星期日早上. Omit minutes to keep the current duration.\n"
+            return {"messages": [{"text": "直接說想改成多久、何時開始，例如「待會花一小時，已完成部分」。\n\n"
+                "也可輸入 10/20 15:00 60 或 星期日早上。省略時長會保留目前分鐘數。\n"
                 "Continue typing here; /cancel returns to the edit menu.\n"
                 "The revised proposal still needs Allow before booking.",
                 "reply_markup": {"force_reply": True}, "learning_edit": {"task_id": task_id, "token": token}}]}
@@ -480,6 +483,8 @@ class LearningCalendar:
             window = study_window(instruction, now, state["minutes"])
             if window:
                 return await self.revise_window(task, state, window, now)
+            if self.ai is not None:
+                return await self.revise_natural(task, state, instruction, now)
             return "Use MM/DD HH:MM minutes or a weekday period such as 星期日早上. Keep typing here, or use /cancel."
         try:
             day = match[1] if "-" in match[1] else f"{now.year}-{int(match[1].split('/')[0]):02d}-{int(match[1].split('/')[1]):02d}"
@@ -557,6 +562,33 @@ class LearningCalendar:
             return "Another proposal or booking changed while editing. Choose the edit option again."
         return ("Updated. Review the new proposal and press Allow to book it."
                 + (f" {len(displaced)} unapproved proposals will be rearranged; they still need Allow." if displaced else ""))
+
+    async def revise_natural(self, task, state, instruction, now):
+        try:
+            edit = await self.ai.parse_schedule_edit(instruction, task, state, now)
+        except AIError:
+            return "目前無法理解這次修改，提案尚未更動。可以再說一次，或輸入日期、時間與分鐘數，例如 10/20 15:00 60。"
+        if not edit.actionable:
+            return "請說明要改成幾分鐘、何時開始，或兩者。例如「待會花一小時，已完成部分」。提案尚未更動。"
+        minutes = edit.minutes if edit.minutes is not None else state["minutes"]
+        if edit.timing == "soon":
+            reply = await self.revise_window(task, state, (now, now + timedelta(days=7), minutes), now)
+        else:
+            try:
+                start = datetime.fromisoformat(edit.start) if edit.timing == "exact" and edit.start else (
+                    datetime.fromisoformat(state["start"]) if edit.timing == "keep" else None)
+                if start is None or start.tzinfo is None:
+                    raise ValueError
+                start = start.astimezone(self.settings.tz)
+            except (ValueError, TypeError, KeyError):
+                return "請補充明確的日期與時間，提案尚未更動。"
+            reply = await self._revise(task["id"], state["token"], f"{start:%Y-%m-%d %H:%M} {minutes}", now)
+        current = self.get(task["id"])
+        if current and current.get("token") != state["token"] and current.get("status") == "proposed":
+            revised_token = current["token"]
+            self.update(task["id"], lambda old: {**old, "progress_note": edit.progress_note} if
+                        old.get("token") == revised_token and old.get("status") == "proposed" else old)
+        return reply
 
     async def revise_window(self, task, state, window, now):
         begin, stop, minutes = window

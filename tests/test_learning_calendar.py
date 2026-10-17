@@ -939,3 +939,45 @@ def test_feedback_card_combines_time_and_duration_and_explains_input(setup):
     assert f'<code>/studyfeedback {task["id"]} 10 done</code>' in text
     assert 'done 完成 · partial 尚未完成 · skipped 未開始' in text
     assert '\n\n' in text
+
+
+@pytest.mark.parametrize('timing', ['soon', 'keep', 'exact'])
+def test_natural_schedule_edit_preserves_remaining_work_and_progress(setup, timing):
+    from chronos.ai import ScheduleEditOutput
+    planner, task, calendar, _ = setup
+    asyncio.run(planner.tick(NOW))
+    state = planner.get(task['id'])
+    planner.ai = AsyncMock()
+    planner.ai.parse_schedule_edit.return_value = ScheduleEditOutput(actionable=True, minutes=60,
+        timing=timing, start='2026-10-20T09:00:00+08:00' if timing=='exact' else None,
+        progress_note='已完成部分')
+    reply = asyncio.run(planner.revise(task['id'], state['token'], '待會花一小時應該就可以看得完（已完成部分）', NOW))
+    assert 'Updated' in reply
+    revised = planner.get(task['id'])
+    assert revised['minutes'] == 60 and revised['duration_source'] == 'owner'
+    assert revised['progress_note'] == '已完成部分'
+    assert revised['token'] != state['token']
+    assert '已完成部分' in planner.proposal_content(task, revised)[0]
+    if timing == 'keep':
+        assert revised['start'] == state['start']
+    assert planner.db.list_open_tasks()[0]['status'] == 'open'
+    calendar.insert.assert_not_awaited()
+
+
+@pytest.mark.parametrize('failure', ['unrelated', 'unavailable', 'naive', 'conflict'])
+def test_natural_schedule_edit_keeps_state_on_failure(setup, failure):
+    from chronos.ai import AIError, ScheduleEditOutput
+    planner, task, calendar, _ = setup
+    asyncio.run(planner.tick(NOW))
+    state = planner.get(task['id'])
+    planner.ai = AsyncMock()
+    if failure == 'unavailable':
+        planner.ai.parse_schedule_edit.side_effect = AIError('offline')
+    else:
+        planner.ai.parse_schedule_edit.return_value = ScheduleEditOutput(
+            actionable=failure!='unrelated', minutes=60, timing='exact',
+            start='2026-10-20T09:00:00' if failure=='naive' else '2026-10-20T17:00:00+08:00', progress_note='note')
+    reply=asyncio.run(planner.revise(task['id'], state['token'], 'natural request', NOW))
+    assert 'Updated' not in reply
+    assert planner.get(task['id']) == state
+    calendar.insert.assert_not_awaited()

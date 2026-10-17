@@ -34,6 +34,7 @@ def system(tmp_path, monkeypatch):
     monkeypatch.setattr(main, 'telegram', bot)
     monkeypatch.setattr(main, 'scheduler', AsyncIOScheduler(timezone=config.tz))
     monkeypatch.setattr(main.ai, 'parse', AsyncMock(return_value=ParsedTask('Test task')))
+    monkeypatch.setattr(main.ai, 'parse_schedule_edit', AsyncMock(side_effect=AIError('Test editor unavailable')))
     monkeypatch.setattr(main.ai, 'estimate_duration', AsyncMock(side_effect=AIError('Test estimator unavailable')))
     with TestClient(main.app, raise_server_exceptions=False) as client:
         yield client, service, bot, config

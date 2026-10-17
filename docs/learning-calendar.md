@@ -208,3 +208,12 @@ follow-up, edited event end times, and feedback persistence against both SQLite
 and the transaction-checking Firestore fake. Real Calendar consent and a real
 approved block/check-in must be verified separately before calling the entire
 integration live-verified.
+
+Natural schedule edits also accept remaining-work statements such as
+`待會花一小時應該就可以看得完（已完成部分）`. AI extracts 60 minutes,
+requests the nearest available slot for “soon”, and preserves the progress note.
+A duration-only edit keeps the current start; an explicit date/time uses that
+start. All results pass the existing deterministic deadline, class, Calendar,
+meal-window and daily-budget checks. Ambiguous/unsupported edits and AI errors
+leave the proposal unchanged and the edit session open. Partial progress never
+marks a task complete; every revised proposal needs a fresh Allow.

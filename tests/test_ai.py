@@ -217,3 +217,16 @@ def test_duration_estimate_rejects_invalid_minutes(monkeypatch, minutes):
         'estimated_minutes': minutes, 'confidence': 'high', 'reason': 'Estimate.'})}]}}]}))
     with pytest.raises(AIError):
         asyncio.run(ExternalAI(config()).estimate_duration({'title': 'Study'}, {}))
+
+
+def test_natural_schedule_edit_structured_output(monkeypatch):
+    def handler(request):
+        payload=json.loads(request.content)
+        data=json.loads(payload['contents'][0]['parts'][0]['text'])
+        assert data['instruction']=='待會花一小時應該就可以看得完（已完成部分）'
+        return httpx.Response(200,json={'candidates':[{'content':{'parts':[{'text':json.dumps({
+            'actionable':True,'minutes':60,'timing':'soon','start':None,'progress_note':'已完成部分'})}]}}]})
+    mock_provider(monkeypatch,handler)
+    result=asyncio.run(ExternalAI(config()).parse_schedule_edit('待會花一小時應該就可以看得完（已完成部分）',
+        {'title':'Read chapter'}, {'minutes':180},datetime.fromisoformat('2026-10-17T18:53:00+08:00')))
+    assert result.minutes==60 and result.timing=='soon'
