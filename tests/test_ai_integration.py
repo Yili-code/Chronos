@@ -33,7 +33,7 @@ def test_telegram_uses_external_ai(task_service, monkeypatch):
     monkeypatch.setattr(main.ai, "edit", edit)
     reply = asyncio.run(main.handle_message("/edit 1 改到週日中午"))
     assert "<b>Updated · Task 1</b>" in reply
-    assert "After: 09/20 12:00" in reply
+    assert "After 09/20 12:00" in reply
     assert "<b>Tasks</b>" in reply
     assert task_service.list_open()[0]["due_at"] == due.isoformat()
 
@@ -50,7 +50,7 @@ def test_failure_does_not_change_tasks(task_service, monkeypatch):
     assert asyncio.run(main.handle_message("/reschedule 1 明天")) == "Unknown command. Use /help to see available commands."
     assert task_service.list_open() == before
     assert "Original task" in asyncio.run(main.handle_message("/tasks"))
-    assert asyncio.run(main.handle_message("/done 1")) == "Completed: Original task\n\nNo open tasks. All clear."
+    assert asyncio.run(main.handle_message("/done 1")) == "Completed Original task\n\nNo open tasks. All clear."
 
 
 def test_edit_uses_natural_language_and_returns_latest_list(task_service, monkeypatch):
@@ -62,9 +62,9 @@ def test_edit_uses_natural_language_and_returns_latest_list(task_service, monkey
     edit.assert_awaited_once()
     assert edit.call_args.args[0]["id"] == original["id"]
     assert "<b>Updated · Task 1</b>" in reply
-    assert "Before: Draft launch plan" in reply
-    assert "After: Finalize launch plan" in reply
-    assert "After: 10/03 18:00" in reply
+    assert "Before Draft launch plan" in reply
+    assert "After Finalize launch plan" in reply
+    assert "After 10/03 18:00" in reply
     assert "<b>Tasks</b>\n1. 🚨 <b>Finalize launch plan</b>" in reply
     stored = task_service.list_open()[0]
     assert stored["title"] == "Finalize launch plan"

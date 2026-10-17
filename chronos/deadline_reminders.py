@@ -75,7 +75,7 @@ async def send_deadline_reminders(db, telegram, settings, *, now=None):
         if len(value) == 10:
             due_text += " · time unspecified"
         text = (f"<b>Deadline reminder</b>\n{escape(stage[1])}\n\n"
-                f"<b>{escape(current['title'][:1500])}</b>\nDue: {escape(due_text)}")
+                f"<b>{escape(current['title'][:1500])}</b>\nDue {escape(due_text)}")
         try:
             result = await telegram.send_message(settings.telegram_chat_id, text, parse_mode="HTML",
                 reply_markup={"inline_keyboard": [[{"text": "Edit task", "callback_data": f"task:edit:{task['id']}"}]]})

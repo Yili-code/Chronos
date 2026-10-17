@@ -41,8 +41,8 @@ def test_time_roles_survive_storage_sorting_and_edits(service):
     items = service.list_open()
     assert [x["id"] for x in items] == [date_only["id"], timed["id"], event["id"]]
     text = format_tasks(items, TZ)
-    assert "<b>Due:</b> 10/08\n" in text
-    assert "<b>Course / event:</b> 10/10" in text
+    assert "<b>Due</b> 10/08\n" in text
+    assert "<b>Course / event</b> 10/10" in text
     assert "09:00" not in text and "00:00" not in text
     operation = parse_deterministic_edit(items[0], "移除期限")
     service.edit(date_only["id"], operation.task.title, operation.task.due_at,
@@ -65,8 +65,8 @@ def test_screenshot_correction_is_deterministic_and_transactional(service, monke
     assert stored["due_at"] is None
     assert stored["timing"]["event"] == "2026-10-10"
     assert stored["title"] == "Finish remote lecture" and stored["project"] == "CA"
-    assert "After: None" in receipt["reply"]
-    assert "After: 10/10" in receipt["reply"]
+    assert "After None" in receipt["reply"]
+    assert "After 10/10" in receipt["reply"]
     edit.assert_not_awaited()
 
 
@@ -200,7 +200,7 @@ def test_display_dates_omit_year_without_changing_task():
     task = {"title": "Confirm coverage for 2026-10-05", "due_at": "2026-10-14T23:59:00+08:00"}
     text = format_tasks([task], TZ, now=NOW)
     assert "Confirm coverage for 10/05" in text
-    assert "<b>Due:</b> 10/14 23:59" in text
+    assert "<b>Due</b> 10/14 23:59" in text
     assert task["title"] == "Confirm coverage for 2026-10-05"
     assert task["due_at"].startswith("2026-")
     assert display_task_title("Version 2026-99-99") == "Version 2026-99-99"

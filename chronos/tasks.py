@@ -302,7 +302,7 @@ def format_task_block(
     alert = "🚨 " if urgent_deadline(task, tz, now=now) else ""
     lines = [f"{prefix}{alert}<b>{escape(display_task_title(task['title']))}</b>"]
     for label, value in timing_details(task, tz):
-        lines.append(f"<b>{label}:</b> {escape(value)}")
+        lines.append(f"<b>{label}</b> {escape(value)}")
     if task.get("project"):
         project = project_display_name(str(task["project"]), project_aliases)
         lines.append(f"<b>#{escape(project)}</b>")
@@ -316,7 +316,7 @@ def format_task(task: dict, tz, *, html: bool = False, now: datetime | None = No
         title = escape(title) if html else title
     parts = [("🚨 " if urgent_deadline(task, tz, now=now) else "") + title]
     for label, value in timing_details(task, tz):
-        parts.append(f"{label}: {escape(value) if html else value}")
+        parts.append(f"{label} {escape(value) if html else value}")
     if task.get("project"):
         project = escape(str(task["project"])) if html else str(task["project"])
         parts.append(f"#{project}")

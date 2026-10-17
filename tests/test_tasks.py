@@ -50,10 +50,10 @@ def test_dynamic_positions_hide_permanent_ids(tmp_path):
     assert format_tasks(tasks.list_open(), TZ, now=NOW) == (
         "<b>Tasks</b>\n"
         "1. <b>Earlier</b>\n"
-        "<b>Due:</b> 09/19 10:00\n"
+        "<b>Due</b> 09/19 10:00\n"
         "<b>#Chronos</b>\n\n"
         "2. <b>Later</b>\n"
-        "<b>Due:</b> 09/20 10:00\n\n"
+        "<b>Due</b> 09/20 10:00\n\n"
         "3. <b>No due date</b>"
     )
     assert tasks.complete_position(1)["id"] == earlier["id"]
@@ -131,7 +131,7 @@ def test_scope_grouping_is_reapplied_after_creation_edit_and_database_reopen(tmp
         general, course = format_tasks(current.list_open(), TZ).split("──────────")
         assert "operating system" not in general
         assert "2. <b>Check operating system class scope</b>" in course
-        assert "Course / event:</b> 10/16" in course
+        assert "Course / event</b> 10/16" in course
     tasks.edit(task["id"], "Check software engineering course scope", None, None)
     rendered = format_tasks(tasks.list_open(), TZ)
     assert "software engineering" in rendered.split("──────────")[1]

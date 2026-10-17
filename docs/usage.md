@@ -97,7 +97,7 @@ Study 預設關閉，包含 NTOU / TronClass 特定課表與課程 ID；不是�
 /classday 10/07 軟體工程不上課
 ```
 
-`/tasks` 與每日清單使用粗體 `Tasks` 標題。日期格式是每次產生任務卡、清單、編輯摘要與截止提醒都會套用的共用顯示規則；資料庫仍保存完整 ISO 日期與時區。每筆 task 的 title、`MM/DD` 日期（例如 `10/20`）與可選的 `HH:MM` due time 與 tag 各自位於不同文字層級，避免把 metadata 混入標題。過長的多字 tag 只在顯示層縮寫，例如 canonical `computer-architecture` 顯示為 `#CA`；canonical value 仍保留供搜尋與資料關聯。Owner 也能透過 `/edit` 保存自己的 tag display preference。課後回覆原文會保存作為進度證據，並完成原本的進度填寫代辦；回覆本身不會被自動轉成複習或確認範圍代辦。若要建立下一步任務，需要另外發送明確的新增代辦訊息。
+`/tasks` 與每日清單使用粗體 `Tasks` 標題。日期格式是每次產生任務卡、清單、編輯摘要與截止提醒都會套用的共用顯示規則；資料庫仍保存完整 ISO 日期與時區。欄位名稱與值之間統一使用空格，不加冒號，例如 `Due 10/20 23:59`、`Course / event 10/16`、`Before None` 與 `After 10/20`；此規則每次產生任務卡、清單、編輯摘要與截止提醒都會套用。時間本身保留 `HH:MM` 格式，任務原文不會被刪除標點。每筆 task 的 title、`MM/DD` 日期（例如 `10/20`）與可選的 `HH:MM` due time 與 tag 各自位於不同文字層級，避免把 metadata 混入標題。過長的多字 tag 只在顯示層縮寫，例如 canonical `computer-architecture` 顯示為 `#CA`；canonical value 仍保留供搜尋與資料關聯。Owner 也能透過 `/edit` 保存自己的 tag display preference。課後回覆原文會保存作為進度證據，並完成原本的進度填寫代辦；回覆本身不會被自動轉成複習或確認範圍代辦。若要建立下一步任務，需要另外發送明確的新增代辦訊息。
 
 設定 `CHRONOS_TELEGRAM_CHAT_ID` 後，其他 chat 無法操作 bot。
 

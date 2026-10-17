@@ -183,7 +183,7 @@ def format_update_summary(
         new_tag = _display_tag(after.get("project"), aliases)
         changes.append(("Tag", old_tag, new_tag))
     for label, old, new in changes:
-        lines.extend(["", f"<b>{label}</b>", f"Before: {escape(old)}", f"After: {escape(new)}"])
+        lines.extend(["", f"<b>{label}</b>", f"Before {escape(old)}", f"After {escape(new)}"])
     if tag_alias:
         project, alias = tag_alias
         lines.extend([
@@ -702,7 +702,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
 
 def _legacy_parse_mode(reply: str) -> str | None:
     return "HTML" if (
-        reply == HELP_TEXT or "<b>Tasks</b>" in reply or reply.startswith("Completed:")
+        reply == HELP_TEXT or "<b>Tasks</b>" in reply or reply.startswith(("Completed:", "Completed "))
         or reply.startswith("<b>")
     ) else None
 
@@ -903,7 +903,7 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
                 return f"Task {position} not found.\n\n{task_list_text()}"
             remaining = [item for item in before if item["id"] != task["id"]]
             return (
-                f"Completed: {escape(task['title'])}\n\n"
+                f"Completed {escape(task['title'])}\n\n"
                 f"{format_tasks(remaining, settings.tz, project_aliases=aliases)}"
             )
         return complete
