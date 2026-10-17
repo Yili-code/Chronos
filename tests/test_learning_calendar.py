@@ -296,6 +296,8 @@ def test_edit_replaces_card_and_requires_fresh_approval(setup):
     assert "10/19 (Mon)" in text
     assert [b["text"] for b in buttons] == ["Allow", "Edit"]
     prompt = asyncio.run(planner.callback("edit", task["id"], old["token"], 50))
+    assert len(prompt["messages"][0]["reply_markup"]["inline_keyboard"]) == 4
+    prompt = asyncio.run(planner.callback("manual", task["id"], old["token"], 50))
     assert prompt["messages"][0]["reply_markup"]["force_reply"]
     assert "no longer available" in asyncio.run(planner.callback("approve", task["id"], old["token"], 50))
     assert "Updated" in asyncio.run(planner.revise(task["id"], old["token"], "10/20 17:00 60", NOW))
@@ -358,6 +360,9 @@ def test_edit_prompt_reply_webhook_is_durable_and_does_not_book(system, setup, m
     callback = {"update_id": 99810, "callback_query": {"id": "edit", "data": f"learn:edit:{task['id']}:{old['token']}",
         "message": {"message_id": 50, "chat": {"id": 123}}}}
     assert client.post("/telegram/webhook", json=callback, headers=headers).status_code == 200
+    callback["update_id"] = 99812
+    callback["callback_query"]["data"] = f"learn:manual:{task['id']}:{old['token']}"
+    assert client.post("/telegram/webhook", json=callback, headers=headers).status_code == 200
     binding = main.db.get_task_action_state("learning:edit-message:123:50")
     assert binding["token"] == old["token"]
     message = {"update_id": 99811, "message": {"message_id": 51, "chat": {"id": 123},
@@ -367,6 +372,66 @@ def test_edit_prompt_reply_webhook_is_durable_and_does_not_book(system, setup, m
     assert client.post("/telegram/webhook", json=message, headers=headers).status_code == 200
     assert planner.get(task["id"])["token"] == token != old["token"]
     assert planner.get(task["id"])["status"] == "proposed"
+    calendar.insert.assert_not_awaited()
+
+
+@pytest.mark.parametrize("option,minutes", [("more", 120), ("lots", 180), ("shuffle", 90)])
+def test_edit_options_generate_new_safe_proposal_without_booking(setup, option, minutes):
+    planner, task, calendar, _ = setup
+    asyncio.run(planner.tick(NOW))
+    old = planner.get(task["id"])
+    asyncio.run(planner.callback("edit", task["id"], old["token"], 50))
+    assert "Updated" in asyncio.run(planner.callback(option, task["id"], old["token"], 50))
+    state = planner.get(task["id"])
+    assert state["minutes"] == minutes
+    assert state["token"] != old["token"]
+    assert state["status"] == "proposed"
+    if option == "shuffle":
+        assert state["start"] >= old["end"] or state["end"] <= old["start"]
+    assert "no longer active" in asyncio.run(planner.callback(option, task["id"], old["token"], 50))
+    calendar.insert.assert_not_awaited()
+
+
+def test_edit_options_fail_closed_when_calendar_has_no_slot(setup):
+    planner, task, calendar, _ = setup
+    asyncio.run(planner.tick(NOW))
+    old = planner.get(task["id"])
+    asyncio.run(planner.callback("edit", task["id"], old["token"], 50))
+    calendar.busy.return_value = [(NOW, NOW + timedelta(days=8))]
+    for option in ("more", "lots", "shuffle"):
+        assert "No alternative fits" in asyncio.run(planner.callback(option, task["id"], old["token"], 50))
+        assert planner.get(task["id"])["status"] == "editing"
+        assert planner.get(task["id"])["token"] == old["token"]
+    calendar.insert.assert_not_awaited()
+
+
+def test_edit_choice_webhook_binds_menu_and_delivers_new_approval_card(system, setup, monkeypatch):
+    client, tasks, bot, config = system
+    _, _, calendar, _ = setup
+    config.enable_learning_calendar = True
+    config.learning_enabled_since = "2020-01-01T00:00:00+08:00"
+    monkeypatch.setattr(main, "google_calendar", calendar)
+    bot.send_message.side_effect = [{"ok": True, "result": {"message_id": n}} for n in [50, 60, 70, 80]]
+    task = tasks.create("Study graphs", NOW + timedelta(days=3))
+    planner = main.learning_calendar()
+    asyncio.run(planner.tick(NOW))
+    old = planner.get(task["id"])
+    headers = {"X-Telegram-Bot-Api-Secret-Token": "test-hook"}
+    payload = {"update_id": 99820, "callback_query": {"id": "edit", "data": f"learn:edit:{task['id']}:{old['token']}",
+        "message": {"message_id": 50, "chat": {"id": 123}}}}
+    assert client.post("/telegram/webhook", json=payload, headers=headers).status_code == 200
+    assert planner.get(task["id"])["message_id"] == 60
+    assert client.post("/telegram/webhook", json=payload, headers=headers).status_code == 200
+    assert bot.send_message.await_count == 2
+    payload["update_id"] = 99821
+    payload["callback_query"]["data"] = f"learn:more:{task['id']}:{old['token']}"
+    payload["callback_query"]["message"]["message_id"] = 60
+    assert client.post("/telegram/webhook", json=payload, headers=headers).status_code == 200
+    revised = planner.get(task["id"])
+    assert revised["message_id"] == 80 and revised["token"] != old["token"]
+    assert revised["minutes"] == 120 and revised["delivery"] == "proposal_sent"
+    assert client.post("/telegram/webhook", json=payload, headers=headers).status_code == 200
+    assert bot.send_message.await_count == 4
     calendar.insert.assert_not_awaited()
 
 

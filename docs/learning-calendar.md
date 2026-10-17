@@ -63,7 +63,14 @@ is read-only. Proposal preparation may wait until 09:00 during quiet hours.
 
 ## Editing a proposal
 
-Press **Edit**, then reply to the prompt with `10/20 15:00 90` (date, start time,
+Press **Edit** to see four choices. **A bit longer** adds 30 minutes;
+**Much longer** doubles the current duration. Each block is capped at 180 minutes,
+and the menu shows the resulting duration. The original start is retained when
+it fits; otherwise another available slot is proposed. **Random other time**
+chooses among valid 15-minute boundaries within the deadline and seven-day
+horizon, excluding the current interval. It preserves the duration. No suitable
+alternative leaves the menu active and reports the constraint.
+**Choose manually** opens a reply prompt for `10/20 15:00 90` (date, start time,
 duration in minutes). ISO dates also work. Invalid or conflicting times leave the
 proposal in editing mode. The replacement card has a new token; the previous
 Allow button cannot book it. Press **Allow** on the replacement to book.

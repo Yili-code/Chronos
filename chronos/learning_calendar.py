@@ -1,6 +1,7 @@
 """Approval-gated study blocks and durable, owner-reported learning feedback."""
 import math
 import re
+from random import choice
 from datetime import datetime, timedelta, time
 from hashlib import sha256
 from html import escape
@@ -24,13 +25,14 @@ def class_windows(day, tz, policy=None):
             for slot in COURSE_SCHEDULE if slot.weekday == day.weekday()]
 
 
-def find_slot(task, now, busy, reservations, config, minutes, booked_minutes=None, course_policy=None):
+def find_slot(task, now, busy, reservations, config, minutes, booked_minutes=None, course_policy=None, randomize=False):
     """Search 15-minute boundaries; class plus study load never exceeds the cap."""
     due = task.get("due_at") or (task.get("timing") or {}).get("due_date")
     deadline = (datetime.fromisoformat(due).astimezone(config.tz) if due and len(due) > 10 else
                 datetime.combine(datetime.fromisoformat(due).date(), time.max, config.tz) if due else
                 now + timedelta(days=7))
     horizon = min(deadline, now + timedelta(days=7))
+    candidates = []
     for offset in range(8):
         day = (now + timedelta(days=offset)).date()
         classes = class_windows(day, config.tz, course_policy)
@@ -47,9 +49,11 @@ def find_slot(task, now, busy, reservations, config, minutes, booked_minutes=Non
         while start + timedelta(minutes=minutes) <= stop:
             end = start + timedelta(minutes=minutes)
             if not overlaps(start, end, [*busy, *classes, *reservations]):
-                return start, end
+                if not randomize:
+                    return start, end
+                candidates.append((start, end))
             start += timedelta(minutes=15)
-    return None
+    return choice(candidates) if candidates else None
 
 
 class LearningCalendar:
@@ -130,6 +134,15 @@ class LearningCalendar:
         text, buttons = self.proposal_content(task, state)
         await self.send(task["id"], state, text, buttons, "proposal")
 
+    def edit_menu(self, task_id, state):
+        more, lots = min(180, state["minutes"] + 30), min(180, state["minutes"] * 2)
+        options = self.buttons(task_id, state, [("more", f"A bit longer · {more} min"),
+            ("lots", f"Much longer · {lots} min"), ("shuffle", "Random other time"), ("manual", "Choose manually")])
+        return {"messages": [{"text": "How would you like to change this proposal?\n"
+            "Longer blocks may move to another available time. A new Allow is still required.",
+            "reply_markup": {"inline_keyboard": [[button] for button in options]},
+            "learning_menu": {"task_id": task_id, "token": state["token"]}}]}
+
     async def book(self, task, state, now):
         """Reconcile a deterministic event ID before retrying a calendar insertion."""
         event_id = sha256(f"chronos:{task['id']}:{state['token']}".encode()).hexdigest()
@@ -179,6 +192,12 @@ class LearningCalendar:
                 if old.get("token") == token and old["status"] == "proposed" else old)
             if changed["status"] != "editing":
                 return "This proposal has already been handled. Use /plan."
+            return self.edit_menu(task_id, state)
+        if action in {"more", "lots", "shuffle", "manual"}:
+            if state["status"] != "editing":
+                return "This edit menu is no longer active. Use Edit on the latest proposal."
+            if action != "manual":
+                return await self.revise(task_id, token, action, now)
             return {"messages": [{"text": "Reply with date, start time and duration in minutes.\n"
                 "Example 10/20 15:00 90\nYou can also use YYYY-MM-DD HH:MM minutes.\n"
                 "The revised proposal still needs Allow before booking.",
@@ -225,6 +244,8 @@ class LearningCalendar:
         task = next((t for t in self.db.list_open_tasks() if t["id"] == task_id), None)
         if not task:
             return "This task is no longer open."
+        if instruction in {"more", "lots", "shuffle"}:
+            return await self.suggest_revision(task, state, instruction, now)
         match = re.fullmatch(r"\s*((?:\d{4}-\d{2}-\d{2})|(?:\d{1,2}/\d{1,2}))\s+(\d{1,2}:\d{2})(?:\s+(\d{1,3})(?:\s*(?:minutes|min|分鐘))?)?\s*", instruction, re.IGNORECASE)
         if not match:
             return "Use MM/DD HH:MM minutes, for example 10/20 15:00 90. Reply to the same edit prompt."
@@ -266,6 +287,34 @@ class LearningCalendar:
         saved = self.update(task_id, lambda old: revised if old.get("token") == token and old["status"] in {"proposed", "editing"} else old)
         return ("Updated. Review the new proposal and press Allow to book it." if saved["token"] == revised["token"]
                 else "The proposal changed while editing. Use /plan.")
+
+    async def suggest_revision(self, task, state, option, now):
+        minutes = min(180, state["minutes"] + 30 if option == "more" else
+                      state["minutes"] * 2 if option == "lots" else state["minutes"])
+        if option != "shuffle" and minutes <= state["minutes"]:
+            return "This block is already at the 180-minute limit. Choose manually or request another study block."
+        def instruction(start):
+            return f"{start:%Y-%m-%d %H:%M} {minutes}"
+        if option != "shuffle" and datetime.fromisoformat(state["start"]) > now:
+            reply = await self._revise(task["id"], state["token"], instruction(datetime.fromisoformat(state["start"])), now)
+            if reply.startswith("Updated"):
+                return reply
+        await self.calendar.verify_owner()
+        busy = await self.calendar.busy(now, now + timedelta(days=7))
+        if option == "shuffle":
+            busy = [*busy, (datetime.fromisoformat(state["start"]), datetime.fromisoformat(state["end"]))]
+        states = [self.get(t["id"]) for t in self.db.list_open_tasks() if t["id"] != task["id"]]
+        reservations = [(datetime.fromisoformat(s["start"]), datetime.fromisoformat(s["end"]))
+                        for s in states if s and s.get("start") and s["status"] in {"proposed", "creating"}]
+        booked = {(now + timedelta(days=i)).date().isoformat():
+            sum((self.db.get_task_action_state("learning:day:" + (now + timedelta(days=i)).date().isoformat()) or {}).values())
+            for i in range(8)}
+        policy = self.db.get_task_action_state("learning:course-calendar-policy")
+        slot = find_slot(task, now, busy, reservations, self.settings, minutes, booked, policy,
+                         randomize=option == "shuffle")
+        if not slot:
+            return "No alternative fits before the deadline under your class and daily limits. Choose another edit option."
+        return await self._revise(task["id"], state["token"], instruction(slot[0]), now)
 
     def feedback(self, task, token, outcome, actual_minutes, reason=""):
         if outcome not in {"done", "partial", "skipped"} or (actual_minutes is not None and not 0 <= actual_minutes <= 720):

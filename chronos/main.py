@@ -291,6 +291,13 @@ async def deliver_learning_reply(chat_id, update_id, receipt):
         if message_id is None:
             raise HTTPException(status_code=502, detail="Study edit prompt ID missing")
         db.mutate_task_action_state(f"learning:edit-message:{chat_id}:{message_id}", lambda old: message["learning_edit"])
+    if message.get("learning_menu"):
+        message_id = result.get("result", {}).get("message_id")
+        if message_id is None:
+            raise HTTPException(status_code=502, detail="Study edit menu ID missing")
+        menu = message["learning_menu"]
+        learning_calendar().update(menu["task_id"], lambda old: {**old, "message_id": message_id}
+            if old and old.get("token") == menu["token"] and old["status"] == "editing" else old)
     db.mark_update_delivered(update_id)
 
 
@@ -560,7 +567,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         raise HTTPException(status_code=403, detail="Unauthorized chat")
     update_id = update.update_id
     if update.callback_query and (update.callback_query.data or "").startswith("learn:"):
-        matched = re.fullmatch(r"learn:(approve|edit|reject|retry|done|partial|skipped):(\d+):([a-f0-9]{32})", update.callback_query.data)
+        matched = re.fullmatch(r"learn:(approve|edit|more|lots|shuffle|manual|reject|retry|done|partial|skipped):(\d+):([a-f0-9]{32})", update.callback_query.data)
         if not matched or source_message.message_id is None:
             raise HTTPException(status_code=400, detail="Invalid study callback")
         receipt = db.get_update(update_id)
@@ -575,7 +582,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             receipt = db.process_update(update_id, lambda: reply)
         await deliver_learning_reply(chat_id, update_id, receipt)
         await telegram.answer_callback_query(update.callback_query.id)
-        if settings.enable_learning_calendar and matched[1] == "partial":
+        if settings.enable_learning_calendar and matched[1] in {"partial", "more", "lots", "shuffle"}:
             try:
                 await learning_calendar().tick()
             except CalendarError:
