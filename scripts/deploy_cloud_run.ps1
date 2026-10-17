@@ -320,7 +320,11 @@ $environment = @(
 
 # Calendar activation has its own owner-consent workflow. Preserve its bindings
 # and scheduling constraints across ordinary source releases.
-$calendarEnvironment = @()
+$environmentValues = @{}
+foreach ($entry in $environment.Split(',')) {
+    $pair = $entry.Split('=', 2)
+    $environmentValues[$pair[0]] = $pair[1]
+}
 if ($null -ne $existingService) {
     foreach ($binding in $existingService.spec.template.spec.containers[0].env) {
         if ($binding.name -notmatch '^CHRONOS_(CALENDAR_|LEARNING_|ENABLE_LEARNING_CALENDAR$)') { continue }
@@ -329,27 +333,27 @@ if ($null -ne $existingService) {
             $secretBindings += "$($binding.name)=$($reference.name):$($reference.key)"
         }
         elseif ($null -ne $binding.value) {
-            $calendarEnvironment += "$($binding.name)=$($binding.value)"
+            $environmentValues[$binding.name] = [string]$binding.value
         }
     }
 }
-if ($calendarEnvironment.Count -gt 0) {
-    $environment = '^~^' + ((@($environment.Split(',')) + $calendarEnvironment) -join '~')
-}
-
 $releaseSource = New-ChronosJobSource -Root $projectRoot -Dockerfile "Dockerfile"
 $releaseDirectory = $releaseSource.Directory
+$environmentFlagsFile = Join-Path ([System.IO.Path]::GetTempPath()) ("chronos-env-" + [guid]::NewGuid().ToString('N') + '.json')
+@{ '--set-env-vars' = $environmentValues } | ConvertTo-Json -Depth 8 |
+    Set-Content -LiteralPath $environmentFlagsFile -Encoding utf8
 
 Push-Location $releaseDirectory
 try {
     Invoke-Gcloud run deploy $Service --source . --region $Region --project $ProjectId `
         --service-account $runtimeAccount --allow-unauthenticated --port 8080 `
         --memory 512Mi --cpu 1 --concurrency 20 --max-instances 3 --timeout 1800 `
-        --set-env-vars $environment --set-secrets ($secretBindings -join ',') `
+        --flags-file $environmentFlagsFile --set-secrets ($secretBindings -join ',') `
         --labels "commit-sha=$releaseSha" --quiet
 }
 finally {
     Pop-Location
+    Remove-Item -LiteralPath $environmentFlagsFile -ErrorAction SilentlyContinue
     Remove-ChronosJobSource $releaseSource
 }
 

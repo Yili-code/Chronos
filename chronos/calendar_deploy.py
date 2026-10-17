@@ -57,9 +57,14 @@ def publish(project, account, region="asia-east1", service="chronos"):
         "CHRONOS_LEARNING_END_HOUR": str(config.learning_end_hour),
         "CHRONOS_LEARNING_MINUTES": str(config.learning_minutes),
         "CHRONOS_LEARNING_DAILY_MINUTES": str(config.learning_daily_minutes)}
-    run("run", "services", "update", service, "--region=" + region,
-        "--update-secrets=" + ",".join(bindings),
-        "--update-env-vars=^~^" + "~".join(key + "=" + value for key, value in values.items()), "--quiet")
+    # A structured flags file preserves comma-containing calendar IDs on Windows
+    # without cmd.exe consuming gcloud's alternate-delimiter escape characters.
+    with tempfile.TemporaryDirectory() as directory:
+        flags = Path(directory) / "calendar-flags.json"
+        flags.write_text(json.dumps({"--update-env-vars": values,
+            "--update-secrets": dict(binding.split("=", 1) for binding in bindings)}), encoding="utf-8")
+        run("run", "services", "update", service, "--region=" + region,
+            "--flags-file=" + str(flags), "--quiet")
     print("Calendar grant verified and published. Cloud planning is enabled; event writes still require Allow.")
 
 
