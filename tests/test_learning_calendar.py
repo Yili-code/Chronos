@@ -35,6 +35,7 @@ def setup(request, tmp_path, monkeypatch):
         return {**body, "htmlLink": "https://calendar.google.com/event"}
     calendar.insert.side_effect = insert
     bot = AsyncMock()
+    bot.request.return_value = {"ok": True}
     bot.send_message.return_value = {"ok": True, "result": {"message_id": 50}}
     planner = LearningCalendar(db, calendar, bot, config)
     task = db.create_task("Study graphs", NOW + timedelta(days=3), "graphs", NOW, {})
@@ -54,12 +55,12 @@ def test_slot_avoids_class_and_calendar_and_ends_by_21(setup):
     assert later[0].date() > NOW.date()
 
 
-def test_no_calendar_write_before_approval_and_reservations_do_not_overlap(setup):
+def test_only_one_proposal_is_shown_until_approval_succeeds(setup):
     planner, task, calendar, bot = setup
     other = planner.db.create_task("Study databases", NOW + timedelta(days=3), None, NOW, {})
     asyncio.run(planner.tick(NOW))
-    first, second = planner.get(task["id"]), planner.get(other["id"])
-    assert first["end"] <= second["start"] or second["end"] <= first["start"]
+    first = planner.get(task["id"])
+    assert planner.get(other["id"]) is None
     assert first["minutes"] == 90
     calendar.insert.assert_not_awaited()
     assert "Duration 90 minutes" in bot.send_message.await_args_list[0].args[1]
@@ -70,6 +71,11 @@ def test_no_calendar_write_before_approval_and_reservations_do_not_overlap(setup
     asyncio.run(planner.callback("approve", task["id"], first["token"], 50))
     assert calendar.insert.await_count == 1
     assert planner.get(task["id"])["status"] == "scheduled"
+    calendar.busy.return_value = [(datetime.fromisoformat(first["start"]), datetime.fromisoformat(first["end"]))]
+    asyncio.run(planner.tick(NOW))
+    second = planner.get(other["id"])
+    assert second["status"] == "proposed"
+    assert first["end"] <= second["start"] or second["end"] <= first["start"]
 
 
 def test_wrong_card_and_changed_task_do_not_book(setup):
@@ -483,7 +489,7 @@ def test_stale_allow_webhook_refreshes_current_card_without_booking(system, setu
 
 
 @pytest.mark.parametrize("option", ["lots", "shuffle"])
-def test_owner_edit_can_reflow_unapproved_proposals_and_preserve_duration(setup, option):
+def test_legacy_proposals_become_queued_and_keep_their_chosen_duration(setup, option):
     from chronos.task_actions import task_fields
     planner, task, calendar, _ = setup
     planner.db.edit_task(task["id"], task["title"], NOW.replace(hour=21), "graphs", {})
@@ -501,7 +507,7 @@ def test_owner_edit_can_reflow_unapproved_proposals_and_preserve_duration(setup,
         cursor += timedelta(minutes=duration)
     asyncio.run(planner.callback("edit", task["id"], original["token"], 50))
     reply = asyncio.run(planner.callback(option, task["id"], original["token"], 50))
-    assert "Updated" in reply and "rearranged" in reply
+    assert "Updated" in reply
     revised = planner.get(task["id"])
     assert revised["minutes"] == (180 if option == "lots" else 90)
     displaced = [(other, old) for other, old in others if planner.get(other["id"])["status"] == "queued"]
@@ -514,28 +520,105 @@ def test_owner_edit_can_reflow_unapproved_proposals_and_preserve_duration(setup,
     asyncio.run(planner.tick(NOW))
     for other, old in displaced:
         current = planner.get(other["id"])
-        assert current["minutes"] == old["minutes"]
+        assert current["requested_minutes"] == old["minutes"]
         assert current["token"] != old["token"]
-        assert current["status"] == "proposed"
+        assert current["status"] == "queued"
+    asyncio.run(planner.callback("approve", task["id"], revised["token"], 50))
+    calendar.busy.return_value = [(datetime.fromisoformat(revised["start"]), datetime.fromisoformat(revised["end"]))]
+    asyncio.run(planner.tick(NOW))
+    assert planner.get(others[0][0]["id"])["minutes"] == 120
+    assert sum(planner.get(other["id"])["status"] == "proposed" for other, _ in others) == 1
 
 
-def test_edit_does_not_displace_an_approval_that_started_during_calendar_read(setup):
+def test_revision_cannot_replace_an_approval_that_started_during_calendar_read(setup):
     planner, task, calendar, _ = setup
     other = planner.db.create_task("Other study", NOW + timedelta(days=3), None, NOW, {})
     asyncio.run(planner.tick(NOW))
     state = planner.get(task["id"])
-    original_other = planner.get(other["id"])
-    asyncio.run(planner.callback("edit", task["id"], state["token"], 50))
     async def raced_busy(start, end):
-        planner.update(other["id"], lambda old: {**old, "status": "creating"})
+        planner.update(task["id"], lambda old: {**old, "status": "creating"})
         return []
     calendar.busy.side_effect = raced_busy
     reply = asyncio.run(planner.revise(task["id"], state["token"], "10/19 12:15 180", NOW))
     assert "changed while editing" in reply
-    assert planner.get(task["id"])["status"] == "editing"
-    assert planner.get(other["id"])["status"] == "creating"
-    assert planner.get(other["id"])["token"] == original_other["token"]
+    assert planner.get(task["id"])["status"] == "creating"
+    assert planner.get(task["id"])["token"] == state["token"]
+    assert planner.get(other["id"]) is None
     calendar.insert.assert_not_awaited()
+
+
+def test_edit_repeated_ticks_and_direct_planning_cannot_advance_the_queue(setup):
+    planner, task, calendar, bot = setup
+    other = planner.db.create_task("Next task", NOW + timedelta(days=3), None, NOW, {})
+    asyncio.run(planner.tick(NOW))
+    state = planner.get(task["id"])
+    asyncio.run(planner.callback("edit", task["id"], state["token"], 50))
+    asyncio.run(planner.tick(NOW + timedelta(minutes=5)))
+    asyncio.run(planner.propose(other, NOW, []))
+    assert planner.get(other["id"]) is None
+    assert bot.send_message.await_count == 1
+    assert "Updated" in asyncio.run(planner.revise(task["id"], state["token"], "10/20 17:00 120", NOW + timedelta(minutes=5)))
+    asyncio.run(planner.tick(NOW + timedelta(minutes=5)))
+    assert bot.send_message.await_count == 2
+    assert planner.get(other["id"]) is None
+    calendar.insert.assert_not_awaited()
+
+
+def test_failed_booking_does_not_advance_the_queue(setup):
+    planner, task, calendar, _ = setup
+    other = planner.db.create_task("Next task", NOW + timedelta(days=3), None, NOW, {})
+    asyncio.run(planner.tick(NOW))
+    state = planner.get(task["id"])
+    calendar.insert.side_effect = CalendarError("uncertain")
+    with pytest.raises(CalendarError):
+        asyncio.run(planner.callback("approve", task["id"], state["token"], 50))
+    with pytest.raises(CalendarError):
+        asyncio.run(planner.tick(NOW))
+    assert planner.get(task["id"])["status"] == "creating"
+    assert planner.get(other["id"]) is None
+
+
+def test_approval_webhook_immediately_shows_exactly_one_next_proposal(system, setup, monkeypatch):
+    client, tasks, bot, config = system
+    _, _, calendar, _ = setup
+    config.enable_learning_calendar = True
+    config.learning_enabled_since = "2020-01-01T00:00:00+08:00"
+    monkeypatch.setattr(main, "google_calendar", calendar)
+    bot.send_message.return_value = {"ok": True, "result": {"message_id": 50}}
+    first = tasks.create("First task", NOW + timedelta(days=3))
+    second = tasks.create("Second task", NOW + timedelta(days=3))
+    third = tasks.create("Third task", NOW + timedelta(days=3))
+    planner = main.learning_calendar()
+    asyncio.run(planner.tick(NOW))
+    state = planner.get(first["id"])
+    assert planner.get(second["id"]) is None
+    payload = {"update_id": 99840, "callback_query": {"id": "allow", "data": f"learn:approve:{first['id']}:{state['token']}",
+        "message": {"message_id": 50, "chat": {"id": 123}}}}
+    headers = {"X-Telegram-Bot-Api-Secret-Token": "test-hook"}
+    assert client.post("/telegram/webhook", json=payload, headers=headers).status_code == 200
+    assert planner.get(first["id"])["status"] == "scheduled"
+    assert planner.get(second["id"])["status"] == "proposed"
+    assert planner.get(third["id"]) is None
+    assert client.post("/telegram/webhook", json=payload, headers=headers).status_code == 200
+    assert calendar.insert.await_count == 1
+    assert planner.get(third["id"]) is None
+    assert bot.send_message.await_count == 3  # First proposal, booking reply, next proposal.
+
+
+def test_checkins_continue_while_the_next_proposal_is_waiting(setup):
+    planner, task, calendar, bot = setup
+    other = planner.db.create_task("Next task", NOW + timedelta(days=3), None, NOW, {})
+    asyncio.run(planner.tick(NOW))
+    state = planner.get(task["id"])
+    asyncio.run(planner.callback("approve", task["id"], state["token"], 50))
+    asyncio.run(planner.tick(NOW))
+    second = planner.get(other["id"])
+    calendar.event.return_value = {"end": {"dateTime": state["end"]},
+        "extendedProperties": {"private": {"chronosToken": state["token"]}}}
+    asyncio.run(planner.tick(datetime.fromisoformat(state["end"]) + timedelta(minutes=1)))
+    assert planner.get(task["id"])["status"] == "awaiting_feedback"
+    assert planner.get(other["id"])["token"] == second["token"]
+    assert bot.send_message.await_count == 3
 
 
 def test_revision_respects_daily_budget_busy_events_and_scheduler_lease(setup):

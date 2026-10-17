@@ -296,15 +296,21 @@ async def deliver_learning_reply(chat_id, update_id, receipt):
         if message_id is None:
             raise HTTPException(status_code=502, detail="Study edit menu ID missing")
         menu = message["learning_menu"]
-        learning_calendar().update(menu["task_id"], lambda old: {**old, "edit_message_id": message_id}
+        previous = learning_calendar().get(menu["task_id"]) or {}
+        saved = learning_calendar().update(menu["task_id"], lambda old: {**old, "edit_message_id": message_id}
             if old and old.get("token") == menu["token"] and old["status"] == "editing" else old)
+        if saved and saved.get("edit_message_id") == message_id:
+            learning_calendar().retire(previous.get("edit_message_id"))
     if message.get("learning_proposal"):
         message_id = result.get("result", {}).get("message_id")
         if message_id is None:
             raise HTTPException(status_code=502, detail="Study proposal ID missing")
         proposal = message["learning_proposal"]
-        learning_calendar().update(proposal["task_id"], lambda old: {**old, "message_id": message_id}
+        previous = learning_calendar().get(proposal["task_id"]) or {}
+        saved = learning_calendar().update(proposal["task_id"], lambda old: {**old, "message_id": message_id}
             if old and old.get("token") == proposal["token"] and old["status"] == "proposed" else old)
+        if saved and saved.get("message_id") == message_id:
+            learning_calendar().retire(previous.get("message_id"), previous.get("edit_message_id"))
     db.mark_update_delivered(update_id)
 
 
@@ -589,7 +595,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             receipt = db.process_update(update_id, lambda: reply)
         await deliver_learning_reply(chat_id, update_id, receipt)
         await telegram.answer_callback_query(update.callback_query.id)
-        if settings.enable_learning_calendar and matched[1] in {"partial", "more", "lots", "shuffle"}:
+        if settings.enable_learning_calendar:
             try:
                 await learning_calendar().tick()
             except CalendarError:

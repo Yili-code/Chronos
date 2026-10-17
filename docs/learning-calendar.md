@@ -61,6 +61,22 @@ Only tasks created after the activation timestamp receive automatic proposals.
 Use `/plan <task-id>` to request a proposal for an existing task. `/plan` by itself
 is read-only. Proposal preparation may wait until 09:00 during quiet hours.
 
+## One proposal at a time
+
+The owner sees one current study proposal. New requests join a queue without
+reserving a time or daily budget. Edit keeps the same task active. Only a
+successful, reconciled booking after Allow releases the turn and immediately
+prepares the next proposal against the updated Calendar and daily budget.
+Retries, uncertain writes and unavailable slots keep the current turn. Scheduled
+session check-ins run independently, even while another proposal waits for Allow.
+
+The durable `learning:proposal-queue` turn is claimed transactionally. On upgrade,
+an existing active turn is retained; otherwise an in-flight booking or the task
+currently being edited takes priority. Other legacy unapproved proposals return
+to the queue with their chosen durations and deadlines preserved. Their tokens
+are invalidated and Telegram keyboards removed, with durable cleanup retries.
+Old callbacks cannot approve or edit a queued task out of turn.
+
 ## Editing a proposal
 
 Press **Edit** to see four choices. **A bit longer** adds 30 minutes;

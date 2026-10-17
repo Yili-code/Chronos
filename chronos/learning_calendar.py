@@ -66,6 +66,62 @@ class LearningCalendar:
     def update(self, task_id, transition):
         return self.db.mutate_task_action_state(f"learning:task:{task_id}", transition)
 
+    def sync_queue(self):
+        """Keep one durable approval turn, including during legacy migration."""
+        tasks = self.db.list_open_tasks()
+        def sync():
+            states = {task["id"]: self.get(task["id"]) for task in tasks}
+            queue = self.db.get_task_action_state("learning:proposal-queue") or {}
+            active = queue.get("active_task_id")
+            phases = {"planning", "proposed", "editing", "no_slot", "creating"}
+            creating = [key for key, state in states.items() if state and state["status"] == "creating"]
+            if creating:
+                active = creating[0]
+            elif not states.get(active) or states[active]["status"] not in phases | {"queued"}:
+                active = next((key for key, state in states.items() if state and state["status"] == "editing"), None)
+                if active is None:
+                    active = next((key for key, state in states.items() if state and state["status"] in phases), None)
+            retired = list(queue.get("retire_message_ids", []))
+            updates = {}
+            for key, state in states.items():
+                if key == active or not state or state["status"] not in phases - {"creating"}:
+                    continue
+                retired.extend(state.get(name) for name in ("message_id", "edit_message_id") if state.get(name))
+                replacement = {**state, "status": "queued", "token": uuid4().hex,
+                               "requested_minutes": state.get("requested_minutes") or state.get("minutes")}
+                for name in ("start", "end", "message_id", "edit_message_id"):
+                    replacement.pop(name, None)
+                updates[key] = replacement
+            for key, state in updates.items():
+                self.db._save_task_action_state(f"learning:task:{key}", state)
+            self.db._save_task_action_state("learning:proposal-queue", {**queue, "active_task_id": active,
+                "retire_message_ids": list(dict.fromkeys(retired))})
+            return active
+        return self.db._run_task_action(sync)
+
+    def retire(self, *message_ids):
+        self.db.mutate_task_action_state("learning:proposal-queue", lambda old: {**(old or {}),
+            "retire_message_ids": list(dict.fromkeys([*(old or {}).get("retire_message_ids", []),
+                                                     *(value for value in message_ids if value)]))})
+
+    async def retire_cards(self):
+        queue = self.db.get_task_action_state("learning:proposal-queue") or {}
+        for message_id in queue.get("retire_message_ids", []):
+            try:
+                result = await self.telegram.request("editMessageReplyMarkup", {"chat_id": self.settings.telegram_chat_id,
+                    "message_id": message_id, "reply_markup": {"inline_keyboard": []}})
+            except RuntimeError:
+                continue  # Durable cleanup retries must not block the current turn.
+            missing = result.get("error_code") == 400 and any(value in result.get("description", "").lower()
+                for value in ("not modified", "not found", "can't be edited", "cannot be edited"))
+            if result.get("ok") or missing:
+                self.db.mutate_task_action_state("learning:proposal-queue", lambda old: {**old,
+                    "retire_message_ids": [value for value in old.get("retire_message_ids", []) if value != message_id]})
+
+    def waiting_turn(self, active):
+        return (f"Confirm or edit the current proposal first (task #{active}). This task is queued."
+                if active else "This task is queued. The next proposal will be prepared shortly.")
+
     async def send(self, task_id, state, text, buttons, kind):
         claim = uuid4().hex
         sending = self.update(task_id, lambda old: {**old, "delivery_claim": claim, "delivery": kind + "_sending"}
@@ -83,6 +139,8 @@ class LearningCalendar:
             raise CalendarError("Study message was rejected; it will be retried.")
         self.update(task_id, lambda old: {**old, "delivery": kind + "_sent",
             "message_id": result.get("result", {}).get("message_id")})
+        if kind == "proposal":
+            self.retire(*state.get("retire_on_send", []))
 
     def buttons(self, task_id, state, values):
         return [{"text": label, "callback_data": f"learn:{action}:{task_id}:{state['token']}"}
@@ -91,12 +149,23 @@ class LearningCalendar:
     async def propose(self, task, now, reservations, booked_minutes=None):
         task_id = task["id"]
         claim = uuid4().hex
-        state = self.update(task_id, lambda old: {"status": "planning", "token": claim,
-            "lease_until": (now + timedelta(minutes=3)).isoformat(), "snapshot": task_fields(task),
-            "requested_minutes": (old or {}).get("requested_minutes")}
-            if not old or old.get("status") == "queued" or
-            (old.get("status") == "planning" and old["lease_until"] < now.isoformat()) else old)
-        if state.get("token") != claim:
+        def claim_turn():
+            old = self.get(task_id)
+            queue = self.db.get_task_action_state("learning:proposal-queue") or {}
+            if queue.get("active_task_id") not in {None, task_id}:
+                return None
+            if old and old["status"] != "queued" and not (old["status"] == "planning" and old["lease_until"] < now.isoformat()):
+                return None
+            state = {"status": "planning", "token": claim,
+                "lease_until": (now + timedelta(minutes=3)).isoformat(), "snapshot": task_fields(task),
+                "requested_minutes": (old or {}).get("requested_minutes"),
+                "retire_on_send": [*((old or {}).get("retire_on_send", [])),
+                    *((old or {}).get(key) for key in ("message_id", "edit_message_id") if (old or {}).get(key))]}
+            self.db._save_task_action_state(f"learning:task:{task_id}", state)
+            self.db._save_task_action_state("learning:proposal-queue", {**queue, "active_task_id": task_id})
+            return state
+        state = self.db._run_task_action(claim_turn)
+        if not state:
             return
         try:
             await self.calendar.verify_owner()
@@ -176,19 +245,27 @@ class LearningCalendar:
             current = self.get(task["id"])
             day_key = "learning:day:" + datetime.fromisoformat(state["start"]).date().isoformat()
             budget = self.db.get_task_action_state(day_key) or {}
+            queue = self.db.get_task_action_state("learning:proposal-queue") or {}
             self.db._save_task_action_state(day_key, {**budget, state["token"]: state["minutes"]})
             self.db._save_task_action_state(f"learning:task:{task['id']}", {**current,
                 "status": "scheduled", "event_id": event_id, "event_url": event.get("htmlLink", "")})
+            self.db._save_task_action_state("learning:proposal-queue", {**queue,
+                "active_task_id": None if queue.get("active_task_id") == task["id"] else queue.get("active_task_id"),
+                "retire_message_ids": list(dict.fromkeys([*queue.get("retire_message_ids", []),
+                    *(current.get(key) for key in ("message_id", "edit_message_id") if current.get(key))]))})
         self.db._run_task_action(record_booking)
         return f"Study time booked\n{state['minutes']} minutes · {display_time(state['start'], self.settings.tz)}"
 
     async def callback(self, action, task_id, token, message_id):
+        active = self.sync_queue()
         state = self.get(task_id)
         task = next((t for t in self.db.list_open_tasks() if t["id"] == task_id), None)
         if not task:
             return "This task is no longer open. No event was created."
         if not state:
             return f"No saved proposal for this task. Use /plan {task_id}."
+        if state["status"] in {"queued", "planning", "proposed", "editing", "no_slot", "rejected"} and task_id != active:
+            return self.waiting_turn(active)
         menu_action = action in {"more", "lots", "shuffle", "manual"}
         expected_message = state.get("edit_message_id", state.get("message_id")) if menu_action else state.get("message_id")
         if state.get("token") != token or expected_message != message_id:
@@ -244,6 +321,9 @@ class LearningCalendar:
     async def revise(self, task_id, token, instruction, now=None):
         if not self.settings.enable_learning_calendar:
             return "Learning calendar is disabled."
+        active = self.sync_queue()
+        if active != task_id:
+            return self.waiting_turn(active)
         now = now or datetime.now(self.settings.tz)
         claim = uuid4().hex
         lease = self.db.mutate_task_action_state("learning:tick", lambda old: {
@@ -321,6 +401,7 @@ class LearningCalendar:
         revised = {**state, "token": uuid4().hex, "status": "proposed", "start": start.isoformat(),
             "end": end.isoformat(), "minutes": minutes, "requested_minutes": minutes,
             "snapshot": task_fields(task), "delivery": "proposal_pending"}
+        revised["retire_on_send"] = [state[key] for key in ("message_id", "edit_message_id") if state.get(key)]
         revised.pop("message_id", None)
         revised.pop("edit_message_id", None)
         def signature(value):
@@ -470,41 +551,45 @@ class LearningCalendar:
                 if old["claim"] == claim else old)
 
     async def _tick(self, now):
+        self.sync_queue()
+        await self.retire_cards()
         tasks = self.db.list_open_tasks()
-        states = {task["id"]: self.get(task["id"]) for task in tasks}
+        # Check-ins continue independently of the one-at-a-time approval queue.
+        for task in tasks:
+            state = self.get(task["id"])
+            if not state:
+                continue
+            if state["status"] == "creating":
+                await self.book(task, state, now)
+            elif state["status"] == "scheduled" and datetime.fromisoformat(state["end"]) <= now:
+                await self.follow_up(task, state, now)
+            elif state["status"] == "awaiting_feedback" and state.get("delivery") == "feedback_pending":
+                await self.deliver_feedback(task, state)
+        active = self.sync_queue()
         # Day buckets retain approved load after task completion without scanning
         # the ever-growing feedback history on every scheduler tick.
         booked_minutes = {}
         for offset in range(8):
             day = (now + timedelta(days=offset)).date().isoformat()
             booked_minutes[day] = sum((self.db.get_task_action_state("learning:day:" + day) or {}).values())
-        reservations = [(datetime.fromisoformat(s["start"]), datetime.fromisoformat(s["end"]))
-            for s in states.values() if s and s.get("start") and (s["status"] == "creating"
-                or s["status"] == "proposed" and datetime.fromisoformat(s["start"]) > now)]
         processed = 0
         for task in tasks:
-            if processed >= 3:
-                break
-            state = states[task["id"]]
+            if active is not None and task["id"] != active:
+                continue
+            state = self.get(task["id"])
             if not state and datetime.fromisoformat(task["created_at"]) < datetime.fromisoformat(self.settings.learning_enabled_since):
                 continue
             if not state or state["status"] in {"queued", "planning"}:
-                await self.propose(task, now, reservations, booked_minutes)
+                await self.propose(task, now, [], booked_minutes)
                 state = self.get(task["id"])
-                if state and state.get("start"):
-                    reservations.append(tuple(datetime.fromisoformat(state[key]) for key in ("start", "end")))
                 processed += 1
             if not state:
                 continue
             if state["status"] in {"proposed", "no_slot"} and state.get("delivery") == "proposal_pending":
                 await self.deliver_proposal(task, state)
-            elif state["status"] == "creating":
-                await self.book(task, state, now)
-            elif state["status"] == "scheduled":
-                if datetime.fromisoformat(state["end"]) <= now:
-                    await self.follow_up(task, state, now)
-            elif state["status"] == "awaiting_feedback" and state.get("delivery") == "feedback_pending":
-                await self.deliver_feedback(task, state)
+            if state["status"] in {"queued", "planning", "proposed", "editing", "no_slot", "creating"}:
+                break
+        await self.retire_cards()
         return {"enabled": True, "proposals_checked": processed}
 
     def status(self):
@@ -513,6 +598,7 @@ class LearningCalendar:
             f"Default duration {self.settings.learning_minutes} minutes",
             f"Class + study limit {self.settings.learning_daily_minutes // 60} hours/day",
             "Every calendar write requires your Allow button."]
+        lines.append("Confirm the current proposal to see the next task.")
         if not self.calendar.configured():
             lines.append("Google Calendar authorization is still required.")
         labels = {"planning": "Finding a time", "queued": "Waiting for a proposal",
