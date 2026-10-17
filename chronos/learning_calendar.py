@@ -92,7 +92,8 @@ class LearningCalendar:
         task_id = task["id"]
         claim = uuid4().hex
         state = self.update(task_id, lambda old: {"status": "planning", "token": claim,
-            "lease_until": (now + timedelta(minutes=3)).isoformat(), "snapshot": task_fields(task)}
+            "lease_until": (now + timedelta(minutes=3)).isoformat(), "snapshot": task_fields(task),
+            "requested_minutes": (old or {}).get("requested_minutes")}
             if not old or old.get("status") == "queued" or
             (old.get("status") == "planning" and old["lease_until"] < now.isoformat()) else old)
         if state.get("token") != claim:
@@ -105,6 +106,7 @@ class LearningCalendar:
             evidence = profile.get(subject, {})
             minutes = (max(15, min(180, math.ceil(evidence["average_minutes"] / 15) * 15))
                        if evidence.get("samples", 0) >= 3 else self.settings.learning_minutes)
+            minutes = state.get("requested_minutes") or minutes
             policy = self.db.get_task_action_state("learning:course-calendar-policy")
             slot = find_slot(task, now, busy, reservations, self.settings, minutes, booked_minutes, policy)
             plan = {**state, "status": "proposed" if slot else "no_slot", "minutes": minutes,
@@ -285,27 +287,60 @@ class LearningCalendar:
                     datetime.combine(datetime.fromisoformat(due).date(), time.max, self.settings.tz) if due else None)
         if deadline and end > deadline:
             return "That block ends after the task deadline. Choose an earlier time."
-        others = [self.get(t["id"]) for t in self.db.list_open_tasks() if t["id"] != task_id]
-        reservations = [(datetime.fromisoformat(s["start"]), datetime.fromisoformat(s["end"]))
-                        for s in others if s and s.get("start") and s["status"] in {"proposed", "creating"}]
+        others = {t["id"]: self.get(t["id"]) for t in self.db.list_open_tasks() if t["id"] != task_id}
+        hard, pending = [], {}
+        for other_id, other in others.items():
+            if not other or not other.get("start"):
+                continue
+            window = (datetime.fromisoformat(other["start"]), datetime.fromisoformat(other["end"]))
+            if other["status"] == "creating":
+                hard.append(window)
+            elif other["status"] == "proposed" and window[0] > now:
+                pending[other_id] = window
         budget = sum((self.db.get_task_action_state("learning:day:" + day) or {}).values())
         policy = self.db.get_task_action_state("learning:course-calendar-policy")
         classes = class_windows(start.date(), self.settings.tz, policy)
         load = budget + minutes + sum((b-a).total_seconds()/60 for a,b in classes)
-        load += sum((b-a).total_seconds()/60 for a,b in reservations if a.date() == start.date())
+        load += sum((b-a).total_seconds()/60 for a,b in hard if a.date() == start.date())
         if load > self.settings.learning_daily_minutes:
             return "That day would exceed your class + study limit. Choose another day or a shorter block."
         await self.calendar.verify_owner()
         busy = await self.calendar.busy(start, end)
-        if overlaps(start, end, [*busy, *classes, *reservations]):
-            return "That time conflicts with a class, calendar event or another proposal. Choose another time."
+        if overlaps(start, end, [*busy, *classes, *hard]):
+            return "That time conflicts with a class, calendar event or approved booking. Choose another time."
+        displaced = {other_id for other_id, window in pending.items() if overlaps(start, end, [window])}
+        remaining = sorted(((other_id, window) for other_id, window in pending.items()
+                            if other_id not in displaced and window[0].date() == start.date()),
+                           key=lambda item: item[1][0], reverse=True)
+        pending_load = sum((b-a).total_seconds()/60 for _, (a,b) in remaining)
+        for other_id, (begin, stop) in remaining:
+            if load + pending_load <= self.settings.learning_daily_minutes:
+                break
+            displaced.add(other_id)
+            pending_load -= (stop-begin).total_seconds()/60
         revised = {**state, "token": uuid4().hex, "status": "proposed", "start": start.isoformat(),
-            "end": end.isoformat(), "minutes": minutes, "snapshot": task_fields(task), "delivery": "proposal_pending"}
+            "end": end.isoformat(), "minutes": minutes, "requested_minutes": minutes,
+            "snapshot": task_fields(task), "delivery": "proposal_pending"}
         revised.pop("message_id", None)
         revised.pop("edit_message_id", None)
-        saved = self.update(task_id, lambda old: revised if old.get("token") == token and old["status"] in {"proposed", "editing"} else old)
-        return ("Updated. Review the new proposal and press Allow to book it." if saved["token"] == revised["token"]
-                else "The proposal changed while editing. Use /plan.")
+        def signature(value):
+            return tuple((value or {}).get(key) for key in ("status", "token", "start", "end", "minutes"))
+        def save():
+            current = self.get(task_id)
+            fresh = {other_id: self.get(other_id) for other_id in others}
+            live_budget = sum((self.db.get_task_action_state("learning:day:" + day) or {}).values())
+            if (not current or current.get("token") != token or current["status"] not in {"proposed", "editing"}
+                    or live_budget != budget or any(signature(fresh[k]) != signature(v) for k,v in others.items())):
+                return False
+            self.db._save_task_action_state(f"learning:task:{task_id}", revised)
+            for other_id in displaced:
+                self.db._save_task_action_state(f"learning:task:{other_id}", {**fresh[other_id], "status": "queued",
+                    "requested_minutes": fresh[other_id]["minutes"], "reflowed_by": task_id})
+            return True
+        if not self.db._run_task_action(save):
+            return "Another proposal or booking changed while editing. Choose the edit option again."
+        return ("Updated. Review the new proposal and press Allow to book it."
+                + (f" {len(displaced)} unapproved proposals will be rearranged; they still need Allow." if displaced else ""))
 
     async def suggest_revision(self, task, state, option, now):
         minutes = min(180, state["minutes"] + 30 if option == "more" else
@@ -324,7 +359,8 @@ class LearningCalendar:
             busy = [*busy, (datetime.fromisoformat(state["start"]), datetime.fromisoformat(state["end"]))]
         states = [self.get(t["id"]) for t in self.db.list_open_tasks() if t["id"] != task["id"]]
         reservations = [(datetime.fromisoformat(s["start"]), datetime.fromisoformat(s["end"]))
-                        for s in states if s and s.get("start") and s["status"] in {"proposed", "creating"}]
+                        for s in states if s and s.get("start") and (s["status"] == "creating"
+                            or s["status"] == "proposed" and datetime.fromisoformat(s["start"]) > now)]
         booked = {(now + timedelta(days=i)).date().isoformat():
             sum((self.db.get_task_action_state("learning:day:" + (now + timedelta(days=i)).date().isoformat()) or {}).values())
             for i in range(8)}
@@ -332,7 +368,16 @@ class LearningCalendar:
         slot = find_slot(task, now, busy, reservations, self.settings, minutes, booked, policy,
                          randomize=option == "shuffle")
         if not slot:
-            return "No alternative fits before the deadline under your class and daily limits. Choose another edit option."
+            # Unapproved proposals can move. Only an approved/in-flight booking
+            # may make actual Calendar availability unavailable to an owner edit.
+            hard = [(datetime.fromisoformat(s["start"]), datetime.fromisoformat(s["end"]))
+                    for s in states if s and s.get("start") and s["status"] == "creating"]
+            slot = find_slot(task, now, busy, hard, self.settings, minutes, booked, policy,
+                             randomize=option == "shuffle")
+        if not slot:
+            return (f"No alternative fits a continuous {minutes}-minute block before the deadline within your "
+                    f"{self.settings.learning_start_hour:02d}:00–{self.settings.learning_end_hour:02d}:00 hours, "
+                    "confirmed calendar events and daily class + study limit. Try a shorter block or another deadline.")
         return await self._revise(task["id"], state["token"], instruction(slot[0]), now)
 
     def feedback(self, task, token, outcome, actual_minutes, reason=""):
@@ -434,7 +479,8 @@ class LearningCalendar:
             day = (now + timedelta(days=offset)).date().isoformat()
             booked_minutes[day] = sum((self.db.get_task_action_state("learning:day:" + day) or {}).values())
         reservations = [(datetime.fromisoformat(s["start"]), datetime.fromisoformat(s["end"]))
-            for s in states.values() if s and s.get("start") and s["status"] in {"proposed", "creating"}]
+            for s in states.values() if s and s.get("start") and (s["status"] == "creating"
+                or s["status"] == "proposed" and datetime.fromisoformat(s["start"]) > now)]
         processed = 0
         for task in tasks:
             if processed >= 3:

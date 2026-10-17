@@ -482,6 +482,62 @@ def test_stale_allow_webhook_refreshes_current_card_without_booking(system, setu
     assert calendar.insert.await_count == 1
 
 
+@pytest.mark.parametrize("option", ["lots", "shuffle"])
+def test_owner_edit_can_reflow_unapproved_proposals_and_preserve_duration(setup, option):
+    from chronos.task_actions import task_fields
+    planner, task, calendar, _ = setup
+    planner.db.edit_task(task["id"], task["title"], NOW.replace(hour=21), "graphs", {})
+    asyncio.run(planner.tick(NOW))
+    original = planner.get(task["id"])
+    others = []
+    cursor = datetime.fromisoformat(original["end"])
+    for duration in [120, 90, 90, 90]:
+        other = planner.db.create_task("Other study", NOW + timedelta(days=3), None, NOW, {})
+        state = {**original, "token": str(other["id"]).zfill(32), "minutes": duration,
+            "start": cursor.isoformat(), "end": (cursor + timedelta(minutes=duration)).isoformat(),
+            "snapshot": task_fields(other)}
+        planner.update(other["id"], lambda old: state)
+        others.append((other, state))
+        cursor += timedelta(minutes=duration)
+    asyncio.run(planner.callback("edit", task["id"], original["token"], 50))
+    reply = asyncio.run(planner.callback(option, task["id"], original["token"], 50))
+    assert "Updated" in reply and "rearranged" in reply
+    revised = planner.get(task["id"])
+    assert revised["minutes"] == (180 if option == "lots" else 90)
+    displaced = [(other, old) for other, old in others if planner.get(other["id"])["status"] == "queued"]
+    assert displaced
+    for other, old in displaced:
+        assert planner.get(other["id"])["requested_minutes"] == old["minutes"]
+        # Old Allow cannot book an evicted proposal.
+        asyncio.run(planner.callback("approve", other["id"], old["token"], 50))
+    calendar.insert.assert_not_awaited()
+    asyncio.run(planner.tick(NOW))
+    for other, old in displaced:
+        current = planner.get(other["id"])
+        assert current["minutes"] == old["minutes"]
+        assert current["token"] != old["token"]
+        assert current["status"] == "proposed"
+
+
+def test_edit_does_not_displace_an_approval_that_started_during_calendar_read(setup):
+    planner, task, calendar, _ = setup
+    other = planner.db.create_task("Other study", NOW + timedelta(days=3), None, NOW, {})
+    asyncio.run(planner.tick(NOW))
+    state = planner.get(task["id"])
+    original_other = planner.get(other["id"])
+    asyncio.run(planner.callback("edit", task["id"], state["token"], 50))
+    async def raced_busy(start, end):
+        planner.update(other["id"], lambda old: {**old, "status": "creating"})
+        return []
+    calendar.busy.side_effect = raced_busy
+    reply = asyncio.run(planner.revise(task["id"], state["token"], "10/19 12:15 180", NOW))
+    assert "changed while editing" in reply
+    assert planner.get(task["id"])["status"] == "editing"
+    assert planner.get(other["id"])["status"] == "creating"
+    assert planner.get(other["id"])["token"] == original_other["token"]
+    calendar.insert.assert_not_awaited()
+
+
 def test_revision_respects_daily_budget_busy_events_and_scheduler_lease(setup):
     planner, task, calendar, _ = setup
     asyncio.run(planner.tick(NOW))

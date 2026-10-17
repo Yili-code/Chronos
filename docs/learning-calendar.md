@@ -70,6 +70,13 @@ it fits; otherwise another available slot is proposed. **Random other time**
 chooses among valid 15-minute boundaries within the deadline and seven-day
 horizon, excluding the current interval. It preserves the duration. No suitable
 alternative leaves the menu active and reports the constraint.
+Unapproved proposals are movable reservations rather than confirmed events.
+An owner edit may reclaim their time or daily budget. Conflicting proposals and
+additional proposals needed to respect the daily cap are atomically
+queued for replanning, retaining their chosen durations and deadlines. Their old
+Allow buttons cannot book the replaced time. Confirmed/in-flight bookings, classes
+and actual Calendar conflicts remain fixed. If an approval starts during the
+availability check, the edit aborts and asks the owner to retry.
 **Choose manually** opens a reply prompt for `10/20 15:00 90` (date, start time,
 duration in minutes). ISO dates also work. Invalid or conflicting times leave the
 proposal in editing mode. The replacement card has a new token; the previous
