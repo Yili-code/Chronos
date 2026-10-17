@@ -300,9 +300,9 @@ def test_edit_replaces_card_and_requires_fresh_approval(setup):
     old = planner.get(task["id"])
     text, buttons = planner.proposal_content(task, old)
     assert "10/19 (Mon)" in text
-    assert [b["text"] for b in buttons] == ["Allow", "Edit"]
+    assert [b["text"] for b in buttons] == ["Allow", "Edit", "Postpone"]
     prompt = asyncio.run(planner.callback("edit", task["id"], old["token"], 50))
-    assert len(prompt["messages"][0]["reply_markup"]["inline_keyboard"]) == 4
+    assert len(prompt["messages"][0]["reply_markup"]["inline_keyboard"]) == 5
     prompt = asyncio.run(planner.callback("manual", task["id"], old["token"], 50))
     assert prompt["messages"][0]["reply_markup"]["force_reply"]
     assert "no longer available" in asyncio.run(planner.callback("approve", task["id"], old["token"], 50))
@@ -631,7 +631,7 @@ def test_weekday_period_respects_duration_conflicts_and_stays_editable(setup):
     state = planner.get(task["id"])
     planner.update(task["id"], lambda old: {**old, "status": "editing", "minutes": 180})
     menu = planner.edit_menu(task["id"], planner.get(task["id"]))
-    assert len(menu["messages"][0]["reply_markup"]["inline_keyboard"]) == 2
+    assert len(menu["messages"][0]["reply_markup"]["inline_keyboard"]) == 3
     calendar.busy.return_value = [(NOW.replace(day=20, hour=10, minute=30), NOW.replace(day=20, hour=12))]
     reply = asyncio.run(planner.revise(task["id"], state["token"], "星期二早上", NOW))
     assert "No continuous 180-minute slot" in reply
@@ -684,6 +684,78 @@ def test_orphan_date_messages_do_not_become_tasks(system):
         assert "No task was created" in bot.send_message.await_args.args[1]
     assert not tasks.list_open()
     main.ai.parse.assert_not_awaited()
+
+
+@pytest.mark.parametrize("from_menu", [False, True])
+def test_postpone_keeps_task_open_and_advances_without_calendar_write(setup, from_menu):
+    from chronos.tasks import TaskService, format_tasks
+    planner, task, calendar, _ = setup
+    other = planner.db.create_task("Ready task", NOW + timedelta(days=3), None, NOW, {})
+    asyncio.run(planner.tick(NOW))
+    old = planner.get(task["id"])
+    message_id = 50
+    if from_menu:
+        asyncio.run(planner.callback("edit", task["id"], old["token"], 50))
+        planner.update(task["id"], lambda value: {**value, "edit_message_id": 60})
+        message_id = 60
+    planner.db.mutate_task_action_state("learning:edit-chat:123", lambda old_value: {"task_id": task["id"], "token": old["token"]})
+    reply = asyncio.run(planner.callback("postpone", task["id"], old["token"], message_id))
+    assert "Waiting for external conditions" in reply
+    assert f"/plan {task['id']}" in reply
+    state = planner.get(task["id"])
+    assert state["status"] == "postponed" and state["token"] != old["token"]
+    assert "start" not in state and "end" not in state
+    assert not planner.db.get_task_action_state("learning:edit-chat:123")
+    service = TaskService(planner.db, planner.settings.tz)
+    live = service.get_open_by_id(task["id"])
+    assert live["due_at"] == task["due_at"]
+    assert live["planning_status"] == "postponed"
+    assert "Waiting for external conditions" in format_tasks(service.list_open(), planner.settings.tz)
+    asyncio.run(planner.tick(NOW))
+    assert planner.get(other["id"])["status"] == "proposed"
+    asyncio.run(planner.tick(NOW + timedelta(days=1)))
+    assert planner.get(task["id"])["status"] == "postponed"
+    assert "waiting for external conditions" in asyncio.run(planner.callback("approve", task["id"], old["token"], 50))
+    calendar.insert.assert_not_awaited()
+
+
+def test_postpone_cannot_cancel_an_approved_booking(setup):
+    planner, task, calendar, _ = setup
+    asyncio.run(planner.tick(NOW))
+    state = planner.get(task["id"])
+    asyncio.run(planner.callback("approve", task["id"], state["token"], 50))
+    reply = asyncio.run(planner.callback("postpone", task["id"], state["token"], 50))
+    assert "No booked event was changed" in reply
+    assert planner.get(task["id"])["status"] == "scheduled"
+    assert calendar.insert.await_count == 1
+
+
+def test_postpone_webhook_is_idempotent_and_plan_resumes_explicitly(system, setup, monkeypatch):
+    client, tasks, bot, config = system
+    _, _, calendar, _ = setup
+    config.enable_learning_calendar = True
+    config.learning_enabled_since = "2020-01-01T00:00:00+08:00"
+    monkeypatch.setattr(main, "google_calendar", calendar)
+    bot.send_message.return_value = {"ok": True, "result": {"message_id": 50}}
+    task = tasks.create("Waiting task", NOW + timedelta(days=3))
+    other = tasks.create("Ready task", NOW + timedelta(days=3))
+    planner = main.learning_calendar()
+    asyncio.run(planner.tick(NOW))
+    state = planner.get(task["id"])
+    headers = {"X-Telegram-Bot-Api-Secret-Token": "test-hook"}
+    payload = {"update_id": 99870, "callback_query": {"id": "postpone",
+        "data": f"learn:postpone:{task['id']}:{state['token']}", "message": {"message_id": 50, "chat": {"id": 123}}}}
+    assert client.post("/telegram/webhook", json=payload, headers=headers).status_code == 200
+    token = planner.get(task["id"])["token"]
+    assert planner.get(other["id"])["status"] == "proposed"
+    assert client.post("/telegram/webhook", json=payload, headers=headers).status_code == 200
+    assert planner.get(task["id"])["token"] == token
+    resume = {"update_id": 99871, "message": {"message_id": 51, "chat": {"id": 123}, "text": f"/plan {task['id']}"}}
+    assert client.post("/telegram/webhook", json=resume, headers=headers).status_code == 200
+    assert planner.get(task["id"])["status"] == "queued"
+    assert "planning_status" not in tasks.get_open_by_id(task["id"])
+    assert "queued" in asyncio.run(planner.callback("approve", task["id"], state["token"], 50))
+    calendar.insert.assert_not_awaited()
 
 
 def test_revision_respects_daily_budget_busy_events_and_scheduler_lease(setup):

@@ -77,6 +77,14 @@ to the queue with their chosen durations and deadlines preserved. Their tokens
 are invalidated and Telegram keyboards removed, with durable cleanup retries.
 Old callbacks cannot approve or edit a queued task out of turn.
 
+**Postpone** on a proposal or its Edit menu means waiting for external conditions.
+It leaves the task open and its deadline unchanged, releases the current approval
+turn, and shows the next ready task. The task list and `/plan` show its waiting
+status. It receives no automatic study proposals until the owner explicitly uses
+`/plan <task-id>` to resume. Deadline reminders still apply. Chosen duration is
+preserved. Manual edit context and old buttons are invalidated transactionally;
+Postpone cannot alter an already approved Calendar event.
+
 ## Editing a proposal
 
 Press **Edit** to see four choices. **A bit longer** adds 30 minutes;

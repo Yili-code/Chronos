@@ -237,13 +237,13 @@ class LearningCalendar:
             text = (f"<b>No study slot available</b>\n{escape(task['title'])}\n"
                     "No block fits before the deadline under your class, calendar and daily limits. "
                     "Change the deadline or duration, then use /plan again.")
-            buttons = self.buttons(task["id"], state, [("retry", "Replan")])
+            buttons = self.buttons(task["id"], state, [("retry", "Replan"), ("postpone", "Postpone")])
         else:
             start, end = (datetime.fromisoformat(state[key]).astimezone(self.settings.tz) for key in ("start", "end"))
             text = (f"<b>Study proposal</b>\n{escape(task['title'])}\n"
                     f"When {display_time(state['start'], self.settings.tz)}–{end:%H:%M}\nDuration {state['minutes']} minutes\n"
                     "Calendar write waits for your approval.")
-            buttons = self.buttons(task["id"], state, [("approve", "Allow"), ("edit", "Edit")])
+            buttons = self.buttons(task["id"], state, [("approve", "Allow"), ("edit", "Edit"), ("postpone", "Postpone")])
         return text, buttons
 
     async def deliver_proposal(self, task, state):
@@ -257,7 +257,8 @@ class LearningCalendar:
             values.append(("more", f"A bit longer · {more} min"))
         if lots > more:
             values.append(("lots", f"Much longer · {lots} min"))
-        options = self.buttons(task_id, state, [*values, ("shuffle", "Random other time"), ("manual", "Choose manually")])
+        options = self.buttons(task_id, state, [*values, ("shuffle", "Random other time"), ("manual", "Choose manually"),
+            ("postpone", "Postpone")])
         return {"messages": [{"text": f"Current proposal · {display_time(state['start'], self.settings.tz)} · {state['minutes']} minutes\n"
             "How would you like to change this proposal?\n"
             "Longer blocks may move to another available time. A new Allow is still required.",
@@ -313,11 +314,15 @@ class LearningCalendar:
             return "This task is no longer open. No event was created."
         if not state:
             return f"No saved proposal for this task. Use /plan {task_id}."
+        if state["status"] == "postponed":
+            return f"This task is waiting for external conditions. Use /plan {task_id} when ready."
         if state["status"] in {"queued", "planning", "proposed", "editing", "no_slot", "rejected"} and task_id != active:
             return self.waiting_turn(active)
         menu_action = action in {"more", "lots", "shuffle", "manual"}
         expected_message = state.get("edit_message_id", state.get("message_id")) if menu_action else state.get("message_id")
-        if state.get("token") != token or expected_message != message_id:
+        valid_message = (message_id in {state.get("message_id"), state.get("edit_message_id")}
+                         if action == "postpone" else expected_message == message_id)
+        if state.get("token") != token or not valid_message:
             # Old buttons may request a fresh view, but can never approve or
             # apply an obsolete duration/time choice to a replacement proposal.
             if state["status"] in {"proposed", "editing"}:
@@ -333,6 +338,32 @@ class LearningCalendar:
                     "learning_proposal": {"task_id": task_id, "token": state["token"]}}]}
             return "This proposal has already been handled. Check /plan for its current status."
         now = datetime.now(self.settings.tz)
+        if action == "postpone":
+            def postpone():
+                current = self.get(task_id)
+                queue = self.db.get_task_action_state("learning:proposal-queue") or {}
+                pending_key = f"learning:edit-chat:{self.settings.telegram_chat_id}"
+                pending = self.db.get_task_action_state(pending_key)
+                if (not current or current.get("token") != token
+                        or current["status"] not in {"proposed", "editing", "no_slot"}
+                        or queue.get("active_task_id") != task_id):
+                    return False
+                waiting = {**current, "status": "postponed", "token": uuid4().hex,
+                    "requested_minutes": current.get("requested_minutes") or current.get("minutes"),
+                    "postponed_at": now.isoformat()}
+                for key in ("start", "end", "message_id", "edit_message_id"):
+                    waiting.pop(key, None)
+                self.db._save_task_action_state(f"learning:task:{task_id}", waiting)
+                self.db._save_task_action_state("learning:proposal-queue", {**queue, "active_task_id": None,
+                    "retire_message_ids": list(dict.fromkeys([*queue.get("retire_message_ids", []),
+                        *(current.get(key) for key in ("message_id", "edit_message_id") if current.get(key))]))})
+                if pending and pending.get("token") == token:
+                    self.db._save_task_action_state(pending_key, {})
+                return True
+            if not self.db._run_task_action(postpone):
+                return "This proposal changed or was already approved. No booked event was changed."
+            return (f"Postponed · {task['title']}\nWaiting for external conditions. The deadline is unchanged.\n"
+                    f"Use /plan {task_id} when ready. The next task will be proposed.")
         if action == "edit":
             changed = self.update(task_id, lambda old: {**old, "status": "editing"}
                 if old.get("token") == token and old["status"] == "proposed" else old)
@@ -680,6 +711,7 @@ class LearningCalendar:
             "editing": "Waiting for your revised time",
             "scheduled": "Booked", "awaiting_feedback": "Waiting for your progress",
             "no_slot": "No available study time", "needs_replan": "Needs another study block",
+            "postponed": "Waiting for external conditions · resume with /plan",
             "rejected": "Skipped", "cancelled": "Calendar event removed", "finished": "Completed"}
         for task in self.db.list_open_tasks():
             state = self.get(task["id"])

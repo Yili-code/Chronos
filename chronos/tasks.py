@@ -43,7 +43,12 @@ class TaskService:
         return self.db.create_task(title.strip(), due_at, project, datetime.now(self.tz), normalize_timing(timing, due_at))
 
     def list_open(self) -> list[dict]:
-        return self.db.list_open_tasks()
+        tasks = self.db.list_open_tasks()
+        for task in tasks:
+            state = self.db.get_task_action_state(f"learning:task:{task['id']}")
+            if state and state.get("status") == "postponed":
+                task["planning_status"] = "postponed"
+        return tasks
 
     def complete(self, task_id: int) -> bool:
         return self.db.complete_task(task_id, datetime.now(self.tz))
@@ -303,6 +308,8 @@ def format_task_block(
     lines = [f"{prefix}{alert}<b>{escape(display_task_title(task['title']))}</b>"]
     for label, value in timing_details(task, tz):
         lines.append(f"<b>{label}</b> {escape(value)}")
+    if task.get("planning_status") == "postponed":
+        lines.append("<b>Status</b> Waiting for external conditions")
     if task.get("project"):
         project = project_display_name(str(task["project"]), project_aliases)
         lines.append(f"<b>#{escape(project)}</b>")
@@ -317,6 +324,8 @@ def format_task(task: dict, tz, *, html: bool = False, now: datetime | None = No
     parts = [("🚨 " if urgent_deadline(task, tz, now=now) else "") + title]
     for label, value in timing_details(task, tz):
         parts.append(f"{label} {escape(value) if html else value}")
+    if task.get("planning_status") == "postponed":
+        parts.append("Waiting for external conditions")
     if task.get("project"):
         project = escape(str(task["project"])) if html else str(task["project"])
         parts.append(f"#{project}")

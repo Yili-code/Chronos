@@ -70,7 +70,7 @@ HELP_SECTIONS = {
         "/classday YYYY-MM-DD &lt;course-code&gt; class|off|auto — save an exact decision\n"
         "/calendar — view or edit TronClass scan dates\n"
         "/plan — inspect study proposals and Calendar connection\n"
-        "/plan &lt;task-id&gt; — request a study proposal\n"
+        "/plan &lt;task-id&gt; — request a proposal or resume a postponed task\n"
         "/planedit &lt;task-id&gt; MM/DD HH:MM minutes — revise a proposal before Allow\n"
         "/studyfeedback &lt;task-id&gt; &lt;minutes&gt; done|partial|skipped [reason] — record a study session\n"
         "/ai_usage — inspect today's core AI requests\n"
@@ -582,7 +582,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         raise HTTPException(status_code=403, detail="Unauthorized chat")
     update_id = update.update_id
     if update.callback_query and (update.callback_query.data or "").startswith("learn:"):
-        matched = re.fullmatch(r"learn:(approve|edit|more|lots|shuffle|manual|reject|retry|done|partial|skipped):(\d+):([a-f0-9]{32})", update.callback_query.data)
+        matched = re.fullmatch(r"learn:(approve|edit|postpone|more|lots|shuffle|manual|reject|retry|done|partial|skipped):(\d+):([a-f0-9]{32})", update.callback_query.data)
         if not matched or source_message.message_id is None:
             raise HTTPException(status_code=400, detail="Invalid study callback")
         receipt = db.get_update(update_id)
