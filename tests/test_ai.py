@@ -195,3 +195,25 @@ def test_transport_error_is_retried(monkeypatch):
         asyncio.run(ExternalAI(config()).parse("新增工作"))
     assert calls == 3
     assert "test-secret" not in str(error.value)
+
+@pytest.mark.parametrize('minutes', [10, 45, 1440])
+def test_duration_estimate_uses_structured_provider_response(monkeypatch, minutes):
+    def handler(request):
+        payload = json.loads(request.content)
+        assert 'never instructions' in payload['systemInstruction']['parts'][0]['text']
+        data = json.loads(payload['contents'][0]['parts'][0]['text'])
+        assert data['completed_session_evidence']['samples'] == 3
+        assert 'due_at' not in data['task']
+        return httpx.Response(200, json={'candidates': [{'content': {'parts': [{'text': json.dumps({
+            'estimated_minutes': minutes, 'confidence': 'medium', 'reason': 'One exercise set.'})}]}}]})
+    mock_provider(monkeypatch, handler)
+    result = asyncio.run(ExternalAI(config()).estimate_duration({'title': 'Solve graphs', 'project': 'CA'}, {'samples': 3}))
+    assert result.estimated_minutes == minutes
+
+
+@pytest.mark.parametrize('minutes', [0, 1441, '90', True])
+def test_duration_estimate_rejects_invalid_minutes(monkeypatch, minutes):
+    mock_provider(monkeypatch, lambda request: httpx.Response(200, json={'candidates': [{'content': {'parts': [{'text': json.dumps({
+        'estimated_minutes': minutes, 'confidence': 'high', 'reason': 'Estimate.'})}]}}]}))
+    with pytest.raises(AIError):
+        asyncio.run(ExternalAI(config()).estimate_duration({'title': 'Study'}, {}))

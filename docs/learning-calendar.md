@@ -12,12 +12,22 @@ missed webhook tick recovers without leaving the computer on.
   10 minutes. Longer blocks cannot overlap either window. Automatic scheduling,
   random alternatives, manual edits and approval rechecks enforce this rule;
   existing Calendar events remain unchanged.
-- New subjects default to 90 minutes per block.
+- AI estimates remaining active work from the task title/project and completed-session
+  evidence. Proposals show total minutes, confidence and assumptions; they do not
+  imply access to course material. The structured estimate accepts 10–1440 minutes,
+  rounds session length up to five minutes, and caps each proposed session at 180.
+  Larger estimates explicitly indicate remaining work, without automatically
+  creating multiple bookings. Ten-minute manual blocks are supported for all tasks.
+- Owner-chosen durations and the course-scope rule take priority over AI. Estimates
+  are cached with the task snapshot across retries and requeues; task changes cause
+  a fresh estimate. Invalid/unavailable AI responses fall back to completed-session
+  averages (at least three reports) or 90 minutes, visibly labelled. No retry loop
+  is added to each scheduler tick; another replan can try estimation again.
 - Course-scope checks, using the same English/Chinese classifier as the task-list
   grouping, default to 10 minutes. This rule takes priority over learned averages
   and legacy queued default estimates. An explicit owner edit overrides it and
   survives rescheduling or postponement. Scope checks accept 10–180 minutes;
-  other manual blocks retain their 15-minute minimum. Their quick duration choices
+  other manual blocks also accept a 10-minute minimum. Their quick duration choices
   add five minutes or double the duration (10 becomes 15 or 20 minutes).
 - Fixed course hours plus reserved/completed study blocks total at most 540
   minutes per day, on weekdays and weekends. Completing a task does not reset

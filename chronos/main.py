@@ -275,7 +275,7 @@ def mail_workflow():
 
 
 def learning_calendar():
-    return LearningCalendar(db, google_calendar, telegram, settings)
+    return LearningCalendar(db, google_calendar, telegram, settings, ai=ai)
 
 
 async def deliver_learning_reply(chat_id, update_id, receipt):

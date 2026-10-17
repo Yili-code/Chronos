@@ -322,7 +322,7 @@ def test_edit_replaces_card_and_requires_fresh_approval(setup):
 
 @pytest.mark.parametrize("instruction,reason", [
     ("some time maybe", "Use MM/DD"),
-    ("10/20 20:00 90", "future 15"),
+    ("10/20 20:00 90", "future 10"),
     ("10/20 14:00 60", "conflicts"),
     ("10/23 17:00 60", "deadline"),
     ("02/30 17:00 60", "Invalid date"),
@@ -851,3 +851,76 @@ def test_approval_requeues_legacy_long_proposal_in_short_window(setup):
     assert 'new proposal' in reply
     assert planner.get(task['id'])['status'] == 'queued'
     calendar.insert.assert_not_awaited()
+
+@pytest.mark.parametrize('minutes', [10, 47, 300])
+def test_ai_estimate_is_cached_and_session_capped(setup, minutes):
+    from chronos.ai import DurationOutput
+    planner, task, calendar, _ = setup
+    planner.ai = AsyncMock()
+    planner.ai.estimate_duration.return_value = DurationOutput(
+        estimated_minutes=minutes, confidence='low', reason='Assumes one chapter without extra exercises.')
+    asyncio.run(planner.tick(NOW))
+    state = planner.get(task['id'])
+    assert state['minutes'] == min(180, ((minutes + 4) // 5) * 5)
+    assert state['duration_source'] == 'ai'
+    assert 'AI estimate' in planner.proposal_content(task, state)[0]
+    planner.update(task['id'], lambda old: {**old, 'status': 'queued', 'requested_minutes': old['minutes']})
+    asyncio.run(planner.tick(NOW))
+    assert planner.ai.estimate_duration.await_count == 1
+    calendar.insert.assert_not_awaited()
+
+
+def test_ai_estimator_failure_uses_default_and_retries_next_replan(setup):
+    from chronos.ai import AIError, DurationOutput
+    planner, task, _, _ = setup
+    planner.ai = AsyncMock()
+    planner.ai.estimate_duration.side_effect = AIError('unavailable')
+    asyncio.run(planner.tick(NOW))
+    state = planner.get(task['id'])
+    assert state['minutes'] == 90 and state['duration_source'] == 'default'
+    assert 'AI estimate unavailable' in planner.proposal_content(task, state)[0]
+    planner.ai.estimate_duration.side_effect = None
+    planner.ai.estimate_duration.return_value = DurationOutput(estimated_minutes=30, confidence='medium', reason='One exercise.')
+    planner.update(task['id'], lambda old: {**old, 'status': 'queued'})
+    asyncio.run(planner.tick(NOW))
+    assert planner.get(task['id'])['minutes'] == 30
+
+
+@pytest.mark.parametrize('source', ['owner', 'course_scope_rule'])
+def test_explicit_duration_and_scope_rule_bypass_ai(setup, source):
+    planner, task, _, _ = setup
+    planner.ai = AsyncMock()
+    if source == 'course_scope_rule':
+        planner.db.edit_task_with_undo(task['id'], 'Check software engineering class scope', None, None, {})
+    else:
+        planner.update(task['id'], lambda old: {'status': 'queued', 'requested_minutes': 60, 'duration_source': 'owner'})
+    asyncio.run(planner.tick(NOW))
+    assert planner.get(task['id'])['minutes'] == (10 if source == 'course_scope_rule' else 60)
+    planner.ai.estimate_duration.assert_not_awaited()
+
+
+def test_changed_task_invalidates_ai_estimate(setup):
+    from chronos.ai import DurationOutput
+    planner, task, _, _ = setup
+    planner.ai = AsyncMock()
+    planner.ai.estimate_duration.return_value = DurationOutput(estimated_minutes=30, confidence='low', reason='Small scope.')
+    asyncio.run(planner.tick(NOW))
+    planner.db.edit_task_with_undo(task['id'], 'Study two chapters', None, None, {})
+    planner.update(task['id'], lambda old: {**old, 'status': 'queued'})
+    planner.ai.estimate_duration.return_value = DurationOutput(estimated_minutes=120, confidence='medium', reason='Two chapters.')
+    asyncio.run(planner.tick(NOW))
+    assert planner.get(task['id'])['minutes'] == 120
+    assert planner.ai.estimate_duration.await_count == 2
+
+
+def test_ai_uses_completed_evidence_and_falls_back_to_profile(setup):
+    from chronos.ai import AIError
+    planner, task, _, _ = setup
+    evidence = {'samples': 4, 'average_minutes': 42}
+    planner.db.mutate_task_action_state('learning:profile', lambda old: {'graphs': evidence})
+    planner.ai = AsyncMock()
+    planner.ai.estimate_duration.side_effect = AIError('unavailable')
+    asyncio.run(planner.tick(NOW))
+    planner.ai.estimate_duration.assert_awaited_once_with(task, evidence)
+    state = planner.get(task['id'])
+    assert state['minutes'] == 45 and state['duration_source'] == 'profile'

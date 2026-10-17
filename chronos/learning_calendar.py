@@ -7,6 +7,7 @@ from hashlib import sha256
 from html import escape
 from uuid import uuid4
 
+from .ai import AIError
 from .course_tracking import COURSE_SCHEDULE
 from .google_calendar import CalendarError
 from .task_actions import task_fields
@@ -113,8 +114,9 @@ def find_slot(task, now, busy, reservations, config, minutes, booked_minutes=Non
 
 
 class LearningCalendar:
-    def __init__(self, db, calendar, telegram, settings):
+    def __init__(self, db, calendar, telegram, settings, ai=None):
         self.db, self.calendar, self.telegram, self.settings = db, calendar, telegram, settings
+        self.ai = ai
 
     def get(self, task_id):
         return self.db.get_task_action_state(f"learning:task:{task_id}")
@@ -216,6 +218,7 @@ class LearningCalendar:
                 "lease_until": (now + timedelta(minutes=3)).isoformat(), "snapshot": task_fields(task),
                 "requested_minutes": (old or {}).get("requested_minutes"),
                 "duration_source": (old or {}).get("duration_source"),
+                "duration_estimate": (old or {}).get("duration_estimate"),
                 "retire_on_send": [*((old or {}).get("retire_on_send", [])),
                     *((old or {}).get(key) for key in ("message_id", "edit_message_id") if (old or {}).get(key))]}
             self.db._save_task_action_state(f"learning:task:{task_id}", state)
@@ -236,6 +239,23 @@ class LearningCalendar:
             source = state.get("duration_source") or ("profile" if evidence.get("samples", 0) >= 3 else "default")
             if is_course_scope_task(task) and source != "owner":
                 minutes, source = COURSE_SCOPE_MINUTES, "course_scope_rule"
+            elif source != "owner" and self.ai is not None:
+                estimate = state.get("duration_estimate")
+                if not estimate or estimate.get("snapshot") != task_fields(task):
+                    try:
+                        output = await self.ai.estimate_duration(task, evidence)
+                        estimate = {**output.model_dump(), "snapshot": task_fields(task)}
+                    except AIError:
+                        estimate = None
+                if estimate:
+                    minutes = min(180, math.ceil(estimate["estimated_minutes"] / 5) * 5)
+                    source = "ai"
+                    state["duration_estimate"] = estimate
+                else:
+                    state["duration_estimate"] = None
+                    source = "profile" if evidence.get("samples", 0) >= 3 else "default"
+                    minutes = (max(15, min(180, math.ceil(evidence["average_minutes"] / 15) * 15))
+                               if evidence.get("samples", 0) >= 3 else self.settings.learning_minutes)
             policy = self.db.get_task_action_state("learning:course-calendar-policy")
             slot = find_slot(task, now, busy, reservations, self.settings, minutes, booked_minutes, policy)
             plan = {**state, "status": "proposed" if slot else "no_slot", "minutes": minutes,
@@ -258,6 +278,14 @@ class LearningCalendar:
             text = (f"<b>Study proposal</b>\n{escape(task['title'])}\n"
                     f"When {display_time(state['start'], self.settings.tz)}–{end:%H:%M}\nDuration {state['minutes']} minutes\n"
                     "Calendar write waits for your approval.")
+            estimate = state.get("duration_estimate")
+            if state.get("duration_source") == "ai" and estimate:
+                text += (f"\nAI estimate {estimate['estimated_minutes']} minutes total · {escape(estimate['confidence'])} confidence"
+                         f"\n{escape(estimate['reason'])}")
+                if estimate["estimated_minutes"] > state["minutes"]:
+                    text += "\nThis proposal covers one session; more work may remain."
+            elif state.get("duration_source") in {"default", "profile"}:
+                text += "\nDuration based on completed sessions." if state["duration_source"] == "profile" else "\nDefault estimate; AI estimate unavailable."
             buttons = self.buttons(task["id"], state, [("approve", "Allow"), ("edit", "Edit"), ("postpone", "Postpone")])
         return text, buttons
 
@@ -463,7 +491,7 @@ class LearningCalendar:
         stop = datetime.combine(start.date(), time(self.settings.learning_end_hour % 24), self.settings.tz)
         if self.settings.learning_end_hour == 24:
             stop += timedelta(days=1)
-        minimum = COURSE_SCOPE_MINUTES if is_course_scope_task(task) else 15
+        minimum = 10
         if not minimum <= minutes <= 180 or start <= now or start.hour < self.settings.learning_start_hour or end > stop:
             return (f"Use a future {minimum}–180 minute block within {self.settings.learning_start_hour:02d}:00"
                     f"–{self.settings.learning_end_hour:02d}:00.")
@@ -532,7 +560,7 @@ class LearningCalendar:
 
     async def revise_window(self, task, state, window, now):
         begin, stop, minutes = window
-        minimum = COURSE_SCOPE_MINUTES if is_course_scope_task(task) else 15
+        minimum = 10
         if not minimum <= minutes <= 180:
             return f"Choose {minimum}–180 minutes per block. Keep typing here or use /cancel."
         due = task.get("due_at") or (task.get("timing") or {}).get("due_date")
