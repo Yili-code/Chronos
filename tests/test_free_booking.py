@@ -79,3 +79,45 @@ def test_webhook_free_reply_binds_preview_and_does_not_create_task(system,monkey
     assert 'Coffee with friends' in bot.send_message.await_args.args[1]
     assert tasks.list_open()==[]
     main.ai.parse.assert_not_awaited()
+
+@pytest.mark.parametrize('success',[True,False])
+def test_allow_deletes_only_successful_preview_after_confirmation(system,monkeypatch,success):
+    client,tasks,bot,cfg=system
+    token='c'*32;key='free:booking:'+token
+    main.db.mutate_task_action_state(key,lambda old:{'status':'pending','chat_id':123,'message_id':11})
+    async def callback(*args):
+        main.db.mutate_task_action_state(key,lambda old:{**old,'status':'booked' if success else 'creating'})
+        if not success:raise main.CalendarError('offline')
+        return 'Added to Calendar\nCoffee with friends'
+    handler=AsyncMock(side_effect=callback)
+    monkeypatch.setattr(main,'free_booking_callback',handler)
+    bot.request.return_value={'ok':True}
+    payload={'update_id':90803,'callback_query':{'id':'allow','data':'free:allow:'+token,
+        'message':{'message_id':11,'chat':{'id':123}}}}
+    headers={'X-Telegram-Bot-Api-Secret-Token':'test-hook'}
+    assert client.post('/telegram/webhook',headers=headers,json=payload).status_code==200
+    deletions=[call for call in bot.request.await_args_list if call.args[0]=='deleteMessage']
+    assert bool(deletions)==success
+    if success:
+        assert deletions[0].args[1]=={'chat_id':123,'message_id':11}
+        assert 'Added to Calendar' in bot.send_message.await_args.args[1]
+        assert client.post('/telegram/webhook',headers=headers,json=payload).status_code==200
+        assert bot.send_message.await_count==1
+        assert handler.await_count==1
+
+
+def test_preview_delete_failure_retries_cleanup_without_rebooking(system,monkeypatch):
+    client,tasks,bot,cfg=system
+    token='d'*32;key='free:booking:'+token
+    main.db.mutate_task_action_state(key,lambda old:{'status':'booked','chat_id':123,'message_id':11})
+    handler=AsyncMock(return_value='Added to Calendar\nCoffee with friends')
+    monkeypatch.setattr(main,'free_booking_callback',handler)
+    bot.request.return_value={'ok':False,'error_code':500}
+    payload={'update_id':90804,'callback_query':{'id':'allow','data':'free:allow:'+token,
+        'message':{'message_id':11,'chat':{'id':123}}}}
+    headers={'X-Telegram-Bot-Api-Secret-Token':'test-hook'}
+    assert client.post('/telegram/webhook',headers=headers,json=payload).status_code==502
+    bot.request.return_value={'ok':False,'error_code':400,'description':'Bad Request: message to delete not found'}
+    assert client.post('/telegram/webhook',headers=headers,json=payload).status_code==200
+    assert handler.await_count==1
+    assert bot.send_message.await_count==1

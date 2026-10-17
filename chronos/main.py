@@ -606,9 +606,13 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         await deliver_learning_reply(chat_id, update_id, receipt)
         if free_callback:
             current = db.get_task_action_state("free:booking:" + free_callback[2])
-            if current and current.get("status") in {"booked", "cancelled", "expired", "conflict"}:
-                await telegram.request("editMessageReplyMarkup", {"chat_id": chat_id,
-                    "message_id": source_message.message_id, "reply_markup": {"inline_keyboard": []}})
+            if (current and current.get("chat_id") == chat_id
+                    and current.get("message_id") == source_message.message_id):
+                if current.get("status") == "booked":
+                    await delete_telegram_messages(chat_id, source_message.message_id)
+                elif current.get("status") in {"cancelled", "expired", "conflict"}:
+                    await telegram.request("editMessageReplyMarkup", {"chat_id": chat_id,
+                        "message_id": source_message.message_id, "reply_markup": {"inline_keyboard": []}})
             await telegram.answer_callback_query(update.callback_query.id)
         return {"ok": True}
     if update.callback_query and (update.callback_query.data or "").startswith("learn:"):

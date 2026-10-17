@@ -271,3 +271,8 @@ one private event; Cancel writes nothing. No study task or study budget is creat
 Slot replies expire after two hours or at the slot start, whichever comes first.
 A newer reply supersedes the older preview for that slot. Deterministic event IDs
 reconcile ambiguous responses and repeated clicks without duplicate inserts.
+
+After a personal-event Allow succeeds and its confirmation is delivered, delete
+the matching preview card. Keep failed or uncertain previews available for retry.
+Cleanup retries reuse the saved update receipt without repeating the booking or
+success message; a missing preview is treated as already cleaned up.
