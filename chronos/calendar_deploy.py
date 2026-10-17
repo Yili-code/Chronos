@@ -19,7 +19,7 @@ def publish(project, account, region="asia-east1", service="chronos"):
     calendars = asyncio.run(calendar.request("GET", "users/me/calendarList", params={"maxResults": 250}))
     busy_ids = {"primary"}
     for item in calendars.get("items", []):
-        if item.get("accessRole") in {"owner", "writer"}:
+        if item.get("accessRole") in {"owner", "writer"} and not item.get("primary"):
             busy_ids.add(item["id"])
     # Incomplete calendar discovery must not silently omit conflicts.
     if calendars.get("nextPageToken"):

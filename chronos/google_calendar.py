@@ -61,8 +61,12 @@ class GoogleCalendar:
         return "calendars/" + quote(self.settings.calendar_id, safe="") + "/events"
 
     async def busy(self, start, end):
-        ids = sorted(set([self.settings.calendar_id, *self.settings.calendar_busy_ids.split(",")]))
-        ids = [value.strip() for value in ids if value.strip()]
+        # Google may coalesce a primary email and the `primary` alias into one
+        # response entry. Normalize before checking every requested calendar.
+        ids = sorted({"primary" if value.strip().casefold() == self.settings.calendar_account.casefold()
+                      else value.strip() for value in
+                      [self.settings.calendar_id, *self.settings.calendar_busy_ids.split(",")]
+                      if value.strip()})
         data = await self.request("POST", "freeBusy", body={"timeMin": start.isoformat(),
             "timeMax": end.isoformat(), "timeZone": self.settings.timezone,
             "items": [{"id": value} for value in ids]})

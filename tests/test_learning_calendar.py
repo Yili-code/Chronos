@@ -270,3 +270,19 @@ def test_partial_feedback_preserves_evidence_and_queues_another_approval(setup):
     assert new["status"] == "proposed" and new["token"] != state["token"]
     assert calendar.insert.await_count == 1
     assert planner.db.get_task_action_state("learning:history:" + state["token"])["feedback"]["actual_minutes"] == 45
+
+
+def test_primary_email_alias_is_normalized_before_freebusy_validation():
+    import json
+    import httpx
+    config = Settings(_env_file=None, calendar_client_id="id", calendar_client_secret="secret",
+        calendar_refresh_token="refresh", calendar_account="owner@example.com",
+        calendar_busy_ids="primary,owner@example.com,family@example.com")
+    def handler(request):
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "access"})
+        ids = {v["id"] for v in json.loads(request.content)["items"]}
+        assert ids == {"primary", "family@example.com"}
+        return httpx.Response(200, json={"calendars": {key: {"busy": []} for key in ids}})
+    client = GoogleCalendar(config, transport=httpx.MockTransport(handler))
+    assert asyncio.run(client.busy(NOW, NOW + timedelta(days=1))) == []
