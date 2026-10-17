@@ -367,11 +367,11 @@ def _short_date(value: str) -> str:
 
 
 def display_task_title(title: str) -> str:
-    """Shorten valid ISO dates for display without editing stored task text."""
+    """Display valid ISO dates as MM/DD without editing stored task text."""
     def shorten(match):
         try:
             datetime.strptime(match[0], "%Y-%m-%d")
         except ValueError:
             return match[0]
-        return match[0][5:]
+        return match[0][5:].replace("-", "/")
     return re.sub(r"(?<![\w-])\d{4}-\d{2}-\d{2}(?![\w-])", shorten, title)

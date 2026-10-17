@@ -5,6 +5,7 @@ from html import escape
 from uuid import uuid4
 
 from .telegram import TelegramError
+from .task_timing import display_time
 
 
 def deadline_value(task):
@@ -70,8 +71,9 @@ async def send_deadline_reminders(db, telegram, settings, *, now=None):
         if current is None or deadline_value(current) != value:
             db.mutate_task_action_state(key, lambda old: {**old, "status": "cancelled"})
             continue
-        due_text = (datetime.fromisoformat(value).astimezone(settings.tz).strftime("%Y-%m-%d %H:%M")
-                    if len(value) > 10 else value + " · time unspecified")
+        due_text = display_time(value, settings.tz)
+        if len(value) == 10:
+            due_text += " · time unspecified"
         text = (f"<b>Deadline reminder</b>\n{escape(stage[1])}\n\n"
                 f"<b>{escape(current['title'][:1500])}</b>\nDue: {escape(due_text)}")
         try:

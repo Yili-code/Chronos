@@ -42,6 +42,7 @@ def test_two_stages_deduplicate_and_overdue_stops(store):
     store.create_task("<Report>", NOW + timedelta(hours=24), None, NOW, {})
     telegram = bot()
     assert send(store, telegram) == {"sent": 1}
+    assert "Due: 10/17 12:00" in telegram.send_message.call_args.args[1]
     assert send(store, telegram) == {"sent": 0}
     assert send(store, telegram, NOW + timedelta(hours=23)) == {"sent": 1}
     assert send(store, telegram, NOW + timedelta(hours=23, minutes=5)) == {"sent": 0}
@@ -67,6 +68,7 @@ def test_date_only_has_no_invented_cutoff(store):
     assert send(store, telegram, NOW.replace(hour=9)) == {"sent": 1}
     assert send(store, telegram, NOW + timedelta(days=1, hours=-3)) == {"sent": 1}
     assert "time unspecified" in telegram.send_message.call_args.args[1]
+    assert "Due: 10/17 · time unspecified" in telegram.send_message.call_args.args[1]
     assert send(store, telegram, NOW + timedelta(days=2)) == {"sent": 0}
 
 

@@ -39,11 +39,12 @@ def task_sort_key(task: dict) -> tuple:
 
 
 def display_time(value: str | None, tz) -> str:
+    """Render task dates as MM/DD, preserving time and timezone conversion."""
     if not value:
         return "None"
     if len(value) == 10:
-        return value[5:]
-    return datetime.fromisoformat(value).astimezone(tz).strftime("%m-%d %H:%M")
+        return value[5:].replace("-", "/")
+    return datetime.fromisoformat(value).astimezone(tz).strftime("%m/%d %H:%M")
 
 
 def timing_details(task: dict, tz) -> list[tuple[str, str]]:
