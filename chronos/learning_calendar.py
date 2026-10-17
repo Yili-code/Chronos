@@ -17,6 +17,49 @@ def overlaps(start, end, busy):
     return any(start < stop and end > begin for begin, stop in busy)
 
 
+def study_window(instruction, now, default_minutes):
+    """Resolve a date/weekday period as availability, never as a task deadline."""
+    text = instruction.strip().casefold()
+    duration = re.search(r"(?:\s+)(\d{1,3})(?:\s*(?:minutes|min|分鐘|分钟))?$|(?<!\d)(\d{1,3})(?:分鐘|分钟|minutes|min)$", text)
+    minutes = int(duration[1] or duration[2]) if duration else default_minutes
+    if duration:
+        text = text[:duration.start()].strip()
+    period = (9, 21)
+    for expression, hours in [(r"早上|上午|morning", (9, 12)), (r"下午|afternoon", (12, 18)),
+                              (r"晚上|晚間|evening", (18, 21))]:
+        if re.search(expression, text):
+            text = re.sub(expression, "", text)
+            period = hours
+            break
+    text = re.sub(r"\s+", "", text)
+    day = None
+    if text in {"明天", "tomorrow", "今天", "today"}:
+        day = now.date() + timedelta(days=int(text in {"明天", "tomorrow"}))
+    else:
+        match = re.fullmatch(r"(下|這|这|本)?(?:星期|週|周)([一二三四五六日天])", text)
+        english = re.fullmatch(r"(next|this)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)", text)
+        if match or english:
+            weekday = "一二三四五六日".index(match[2].replace("天", "日")) if match else (
+                "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday").index(english[2])
+            prefix = match[1] if match else english[1]
+            if prefix in {"下", "next", "這", "这", "本", "this"}:
+                day = now.date() - timedelta(days=now.weekday()) + timedelta(days=weekday + (7 if prefix in {"下", "next"} else 0))
+            else:
+                day = now.date() + timedelta(days=(weekday - now.weekday()) % 7)
+                if day == now.date() and now.hour >= period[1]:
+                    day += timedelta(days=7)
+        else:
+            match = re.fullmatch(r"\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}", text)
+            if not match:
+                return None
+            try:
+                day = datetime.fromisoformat(text if "-" in text else f"{now.year}-{int(text.split('/')[0]):02d}-{int(text.split('/')[1]):02d}").date()
+            except ValueError:
+                return None
+    return (datetime.combine(day, time(period[0]), now.tzinfo),
+            datetime.combine(day, time(period[1]), now.tzinfo), minutes)
+
+
 def class_windows(day, tz, policy=None):
     if policy and (day.isoformat() < policy["first_day"] or day.isoformat() > policy["last_regular_day"]
                    or day.isoformat() in policy.get("excluded_dates", [])):
@@ -25,16 +68,16 @@ def class_windows(day, tz, policy=None):
             for slot in COURSE_SCHEDULE if slot.weekday == day.weekday()]
 
 
-def find_slot(task, now, busy, reservations, config, minutes, booked_minutes=None, course_policy=None, randomize=False):
+def find_slot(task, now, busy, reservations, config, minutes, booked_minutes=None, course_policy=None, randomize=False, window=None):
     """Search 15-minute boundaries; class plus study load never exceeds the cap."""
     due = task.get("due_at") or (task.get("timing") or {}).get("due_date")
     deadline = (datetime.fromisoformat(due).astimezone(config.tz) if due and len(due) > 10 else
                 datetime.combine(datetime.fromisoformat(due).date(), time.max, config.tz) if due else
                 now + timedelta(days=7))
-    horizon = min(deadline, now + timedelta(days=7))
+    horizon = min(deadline, window[1] if window else now + timedelta(days=7))
     candidates = []
     for offset in range(8):
-        day = (now + timedelta(days=offset)).date()
+        day = (max(now, window[0]) if window else now).date() + timedelta(days=offset)
         classes = class_windows(day, config.tz, course_policy)
         load = sum((end - start).total_seconds() / 60 for start, end in classes)
         load += (booked_minutes or {}).get(day.isoformat(), 0)
@@ -42,6 +85,8 @@ def find_slot(task, now, busy, reservations, config, minutes, booked_minutes=Non
         if load + minutes > config.learning_daily_minutes:
             continue
         start = max(now + timedelta(minutes=10), datetime.combine(day, time(config.learning_start_hour), config.tz))
+        if window:
+            start = max(start, window[0])
         start = start.replace(second=0, microsecond=0)
         start += timedelta(minutes=(-start.minute) % 15)
         stop = min(horizon, datetime.combine(day, time(config.learning_end_hour % 24), config.tz)
@@ -207,8 +252,12 @@ class LearningCalendar:
 
     def edit_menu(self, task_id, state):
         more, lots = min(180, state["minutes"] + 30), min(180, state["minutes"] * 2)
-        options = self.buttons(task_id, state, [("more", f"A bit longer · {more} min"),
-            ("lots", f"Much longer · {lots} min"), ("shuffle", "Random other time"), ("manual", "Choose manually")])
+        values = []
+        if more > state["minutes"]:
+            values.append(("more", f"A bit longer · {more} min"))
+        if lots > more:
+            values.append(("lots", f"Much longer · {lots} min"))
+        options = self.buttons(task_id, state, [*values, ("shuffle", "Random other time"), ("manual", "Choose manually")])
         return {"messages": [{"text": f"Current proposal · {display_time(state['start'], self.settings.tz)} · {state['minutes']} minutes\n"
             "How would you like to change this proposal?\n"
             "Longer blocks may move to another available time. A new Allow is still required.",
@@ -296,7 +345,8 @@ class LearningCalendar:
             if action != "manual":
                 return await self.revise(task_id, token, action, now)
             return {"messages": [{"text": "Reply with date, start time and duration in minutes.\n"
-                "Example 10/20 15:00 90\nYou can also use YYYY-MM-DD HH:MM minutes.\n"
+                "Examples 10/20 15:00 90, or 星期日早上. Omit minutes to keep the current duration.\n"
+                "Continue typing here; /cancel returns to the edit menu.\n"
                 "The revised proposal still needs Allow before booking.",
                 "reply_markup": {"force_reply": True}, "learning_edit": {"task_id": task_id, "token": token}}]}
         if action in {"done", "partial", "skipped"}:
@@ -348,7 +398,10 @@ class LearningCalendar:
             return await self.suggest_revision(task, state, instruction, now)
         match = re.fullmatch(r"\s*((?:\d{4}-\d{2}-\d{2})|(?:\d{1,2}/\d{1,2}))\s+(\d{1,2}:\d{2})(?:\s+(\d{1,3})(?:\s*(?:minutes|min|分鐘))?)?\s*", instruction, re.IGNORECASE)
         if not match:
-            return "Use MM/DD HH:MM minutes, for example 10/20 15:00 90. Reply to the same edit prompt."
+            window = study_window(instruction, now, state["minutes"])
+            if window:
+                return await self.revise_window(task, state, window, now)
+            return "Use MM/DD HH:MM minutes or a weekday period such as 星期日早上. Keep typing here, or use /cancel."
         try:
             day = match[1] if "-" in match[1] else f"{now.year}-{int(match[1].split('/')[0]):02d}-{int(match[1].split('/')[1]):02d}"
             start = datetime.fromisoformat(day + "T" + match[2].zfill(5)).replace(tzinfo=self.settings.tz)
@@ -366,7 +419,7 @@ class LearningCalendar:
         deadline = (datetime.fromisoformat(due).astimezone(self.settings.tz) if due and len(due) > 10 else
                     datetime.combine(datetime.fromisoformat(due).date(), time.max, self.settings.tz) if due else None)
         if deadline and end > deadline:
-            return "That block ends after the task deadline. Choose an earlier time."
+            return f"That block ends after the task deadline {display_time(due, self.settings.tz)}. Choose an earlier time."
         others = {t["id"]: self.get(t["id"]) for t in self.db.list_open_tasks() if t["id"] != task_id}
         hard, pending = [], {}
         for other_id, other in others.items():
@@ -422,6 +475,27 @@ class LearningCalendar:
             return "Another proposal or booking changed while editing. Choose the edit option again."
         return ("Updated. Review the new proposal and press Allow to book it."
                 + (f" {len(displaced)} unapproved proposals will be rearranged; they still need Allow." if displaced else ""))
+
+    async def revise_window(self, task, state, window, now):
+        begin, stop, minutes = window
+        if not 15 <= minutes <= 180:
+            return "Choose 15–180 minutes per block. Keep typing here or use /cancel."
+        due = task.get("due_at") or (task.get("timing") or {}).get("due_date")
+        if due:
+            deadline = (datetime.fromisoformat(due).astimezone(self.settings.tz) if len(due) > 10 else
+                        datetime.combine(datetime.fromisoformat(due).date(), time.max, self.settings.tz))
+            if begin >= deadline:
+                return f"That period is after the task deadline {display_time(due, self.settings.tz)}. Choose an earlier day."
+        await self.calendar.verify_owner()
+        busy = await self.calendar.busy(max(now, begin), stop) if stop > now else []
+        booked = {begin.date().isoformat(): sum((self.db.get_task_action_state("learning:day:" + begin.date().isoformat()) or {}).values())}
+        policy = self.db.get_task_action_state("learning:course-calendar-policy")
+        slot = find_slot(task, now, busy, [], self.settings, minutes, booked, policy, window=(begin, stop))
+        if not slot:
+            return (f"No continuous {minutes}-minute slot on {display_time(begin.date().isoformat(), self.settings.tz)} "
+                    f"between {begin:%H:%M} and {stop:%H:%M} fits your calendar and daily limit. "
+                    "Try a shorter block or another period; keep typing here.")
+        return await self._revise(task["id"], state["token"], f"{slot[0]:%Y-%m-%d %H:%M} {minutes}", now)
 
     async def suggest_revision(self, task, state, option, now):
         minutes = min(180, state["minutes"] + 30 if option == "more" else

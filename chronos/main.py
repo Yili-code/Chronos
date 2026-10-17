@@ -38,7 +38,7 @@ from .study_scheduler import tick_study, notify_study_failures
 from .gmail import GmailClient, GmailError
 from .mail_workflow import MailWorkflow
 from .google_calendar import GoogleCalendar, CalendarError
-from .learning_calendar import LearningCalendar
+from .learning_calendar import LearningCalendar, study_window
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("chronos")
@@ -291,6 +291,8 @@ async def deliver_learning_reply(chat_id, update_id, receipt):
         if message_id is None:
             raise HTTPException(status_code=502, detail="Study edit prompt ID missing")
         db.mutate_task_action_state(f"learning:edit-message:{chat_id}:{message_id}", lambda old: message["learning_edit"])
+        db.mutate_task_action_state(f"learning:edit-chat:{chat_id}", lambda old: {**message["learning_edit"],
+            "expires_at": (datetime.now(settings.tz) + timedelta(hours=2)).isoformat()})
     if message.get("learning_menu"):
         message_id = result.get("result", {}).get("message_id")
         if message_id is None:
@@ -603,16 +605,35 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         return {"ok": True}
     study_edit = (db.get_task_action_state(f"learning:edit-message:{chat_id}:{source_message.reply_to_message.message_id}")
                   if source_message.reply_to_message else None)
+    instruction = (source_message.text or "").strip()
+    pending_key = f"learning:edit-chat:{chat_id}"
+    pending = db.get_task_action_state(pending_key)
+    if (not study_edit and pending and not source_message.reply_to_message and not update.callback_query
+            and (not instruction.startswith("/") or instruction == "/cancel")):
+        if pending.get("expires_at", "") > datetime.now(settings.tz).isoformat():
+            study_edit = pending
     if study_edit:
         receipt = db.get_update(update_id)
         if receipt is None:
             if update.edited_message:
                 reply = "Send a new reply to edit the study proposal. Editing an old message does not replay it."
+            elif instruction in {"/cancel", "取消"}:
+                planner = learning_calendar()
+                state = planner.get(study_edit["task_id"])
+                reply = (planner.edit_menu(study_edit["task_id"], state) if state and state["status"] == "editing"
+                    and state["token"] == study_edit["token"] else "This manual edit has ended. Open Edit on the current proposal.")
+                db.mutate_task_action_state(pending_key, lambda old: {} if (old or {}).get("token") == study_edit["token"] else old)
             else:
                 try:
-                    reply = await learning_calendar().revise(study_edit["task_id"], study_edit["token"], source_message.text or "")
+                    reply = await learning_calendar().revise(study_edit["task_id"], study_edit["token"], instruction)
                 except CalendarError as error:
                     reply = str(error)
+                state = learning_calendar().get(study_edit["task_id"])
+                if not state or state.get("token") != study_edit["token"] or state["status"] != "editing":
+                    db.mutate_task_action_state(pending_key, lambda old: {} if (old or {}).get("token") == study_edit["token"] else old)
+                else:
+                    db.mutate_task_action_state(pending_key, lambda old: {"task_id": study_edit["task_id"],
+                        "token": study_edit["token"], "expires_at": (datetime.now(settings.tz) + timedelta(hours=2)).isoformat()})
             receipt = db.process_update(update_id, lambda: reply)
         await deliver_learning_reply(chat_id, update_id, receipt)
         if settings.enable_learning_calendar:
@@ -982,6 +1003,10 @@ async def handle_message(text: str) -> str:
 async def prepare_message(text: str, *, update_id: int | None = None) -> Callable[[], str | dict]:
     """Resolve external input first; the returned action performs no async work."""
     normalized = text.strip()
+    if not normalized.startswith("/") and (re.fullmatch(
+            r"(?:\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2})\s+\d{1,2}:\d{2}(?:\s+\d{1,3}(?:\s*(?:minutes|min|分鐘))?)?", normalized, re.IGNORECASE)
+            or study_window(normalized, datetime.now(settings.tz), settings.learning_minutes)):
+        return lambda: "Open Edit → Choose manually on the current study proposal, then send this date/time again. No task was created."
     plan_edit = re.fullmatch(r"/planedit\s+(\d+)\s+(.+)", normalized, re.DOTALL)
     if plan_edit:
         state = learning_calendar().get(int(plan_edit[1]))

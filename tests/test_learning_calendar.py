@@ -321,7 +321,7 @@ def test_edit_replaces_card_and_requires_fresh_approval(setup):
 
 
 @pytest.mark.parametrize("instruction,reason", [
-    ("tomorrow afternoon", "Use MM/DD"),
+    ("some time maybe", "Use MM/DD"),
     ("10/20 20:00 90", "future 15"),
     ("10/20 14:00 60", "conflicts"),
     ("10/23 17:00 60", "deadline"),
@@ -619,6 +619,71 @@ def test_checkins_continue_while_the_next_proposal_is_waiting(setup):
     assert planner.get(task["id"])["status"] == "awaiting_feedback"
     assert planner.get(other["id"])["token"] == second["token"]
     assert bot.send_message.await_count == 3
+
+
+def test_weekday_period_respects_duration_conflicts_and_stays_editable(setup):
+    from chronos.learning_calendar import study_window
+    planner, task, calendar, _ = setup
+    begin, end, minutes = study_window("星期日早上", NOW - timedelta(days=2), 180)
+    assert begin.isoformat() == "2026-10-18T09:00:00+08:00"
+    assert end.hour == 12 and minutes == 180
+    asyncio.run(planner.tick(NOW))
+    state = planner.get(task["id"])
+    planner.update(task["id"], lambda old: {**old, "status": "editing", "minutes": 180})
+    menu = planner.edit_menu(task["id"], planner.get(task["id"]))
+    assert len(menu["messages"][0]["reply_markup"]["inline_keyboard"]) == 2
+    calendar.busy.return_value = [(NOW.replace(day=20, hour=10, minute=30), NOW.replace(day=20, hour=12))]
+    reply = asyncio.run(planner.revise(task["id"], state["token"], "星期二早上", NOW))
+    assert "No continuous 180-minute slot" in reply
+    assert planner.get(task["id"])["status"] == "editing"
+    assert "Updated" in asyncio.run(planner.revise(task["id"], state["token"], "星期二早上 90", NOW))
+    assert planner.get(task["id"])["start"] == "2026-10-20T09:00:00+08:00"
+    calendar.insert.assert_not_awaited()
+
+
+def test_manual_plain_text_retries_never_create_tasks(system, setup, monkeypatch):
+    client, tasks, bot, config = system
+    _, _, calendar, _ = setup
+    config.enable_learning_calendar = True
+    config.learning_enabled_since = "2020-01-01T00:00:00+08:00"
+    monkeypatch.setattr(main, "google_calendar", calendar)
+    bot.send_message.return_value = {"ok": True, "result": {"message_id": 50}}
+    task = tasks.create("Study graphs", NOW + timedelta(days=3))
+    planner = main.learning_calendar()
+    asyncio.run(planner.tick(NOW))
+    token = planner.get(task["id"])["token"]
+    headers = {"X-Telegram-Bot-Api-Secret-Token": "test-hook"}
+    for index, action in enumerate(["edit", "manual"]):
+        payload = {"update_id": 99850 + index, "callback_query": {"id": action,
+            "data": f"learn:{action}:{task['id']}:{token}", "message": {"message_id": 50, "chat": {"id": 123}}}}
+        assert client.post("/telegram/webhook", json=payload, headers=headers).status_code == 200
+    def send(update_id, text):
+        return client.post("/telegram/webhook", headers=headers,
+            json={"update_id": update_id, "message": {"message_id": update_id, "chat": {"id": 123}, "text": text}})
+    assert send(99852, "not a time").status_code == 200
+    assert main.db.get_task_action_state("learning:edit-chat:123")["token"] == token
+    assert send(99853, "10/28 09:00").status_code == 200
+    assert "deadline 10/22" in bot.send_message.await_args.args[1]
+    assert len(tasks.list_open()) == 1
+    assert send(99854, "星期二早上").status_code == 200
+    assert planner.get(task["id"])["start"] == "2026-10-20T09:00:00+08:00"
+    assert not main.db.get_task_action_state("learning:edit-chat:123")
+    assert send(99854, "星期二早上").status_code == 200
+    assert len(tasks.list_open()) == 1
+    main.ai.parse.assert_not_awaited()
+    calendar.insert.assert_not_awaited()
+
+
+def test_orphan_date_messages_do_not_become_tasks(system):
+    client, tasks, bot, _ = system
+    headers = {"X-Telegram-Bot-Api-Secret-Token": "test-hook"}
+    for index, text in enumerate(["10/28 09:00", "星期日早上"]):
+        response = client.post("/telegram/webhook", headers=headers,
+            json={"update_id": 99860 + index, "message": {"chat": {"id": 123}, "text": text}})
+        assert response.status_code == 200
+        assert "No task was created" in bot.send_message.await_args.args[1]
+    assert not tasks.list_open()
+    main.ai.parse.assert_not_awaited()
 
 
 def test_revision_respects_daily_budget_busy_events_and_scheduler_lease(setup):

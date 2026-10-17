@@ -103,6 +103,18 @@ it never approves or modifies the replacement. Proposal and Edit-menu message
 IDs are bound separately so returning to Edit on the original card still works.
 `/planedit <task-id> MM/DD HH:MM minutes` also revises a pending proposal.
 
+Manual entry keeps a chat-level session for two hours, refreshed after invalid
+input. Follow-up text does not need Telegram's reply arrow. `/cancel` returns to
+the edit menu; explicit slash commands and replies to unrelated cards retain
+their normal routing. Successful edits clear the session. Date/time-only text
+outside a session is never treated as a new task.
+Weekday periods such as `星期日早上` or `tomorrow afternoon` search within that
+period, keeping the current duration unless minutes are supplied. Morning is
+09:00–12:00, afternoon 12:00–18:00, and evening 18:00–21:00, still constrained by
+the configured study hours. Conflicts or insufficient continuous time leave the
+session active. Deadlines remain unchanged and are named in rejection messages.
+At the 180-minute block limit, longer-duration buttons are omitted.
+
 The 115-1 course import starts 2026-10-19 and repeats weekly through 2026-12-18.
 The final regular day is inferred from the official final exam week 12/21–12/25.
 Midterm week 10/26–10/30 is excluded; final exams are beyond the recurrence end.
