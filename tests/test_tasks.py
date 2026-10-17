@@ -70,11 +70,35 @@ def test_course_tasks_use_separate_layers_and_html_escaping():
     ], TZ)
     assert rendered == (
         "<b>Tasks</b>\n"
-        "1. <b>確認資訊安全實務與管理今日上課範圍（10-05）</b>\n"
-        "<b>#ISPM</b>\n\n"
         "2. <b>複習計算機結構 10/06：Chapter 2 to around page 43 &amp; examples</b>\n"
-        "<b>#計算機結構</b>"
+        "<b>#計算機結構</b>\n\n──────────\n\n"
+        "<b>Course scope</b>\n"
+        "1. <b>確認資訊安全實務與管理今日上課範圍（10-05）</b>\n"
+        "<b>#ISPM</b>"
     )
+
+
+def test_scope_section_preserves_command_positions(tmp_path):
+    tasks = service(tmp_path)
+    first = tasks.create("Exercise 2")
+    scope = tasks.create("Check software engineering 10/14 class scope", project="se")
+    third = tasks.create("Learn network firewall")
+    generated = tasks.create("Check security 10/15 scope")
+    rendered = format_tasks(tasks.list_open(), TZ)
+    general, course = rendered.split("──────────")
+    assert "1. <b>Exercise 2</b>" in general
+    assert "3. <b>Learn network firewall</b>" in general
+    assert "2. <b>Check software engineering 10/14 class scope</b>" in course
+    assert "4. <b>Check security 10/15 scope</b>" in course
+    assert tasks.get_open_by_position(2)["id"] == scope["id"]
+    assert tasks.complete_position(4)["id"] == generated["id"]
+    assert [t["id"] for t in tasks.list_open()] == [first["id"], scope["id"], third["id"]]
+
+
+def test_scope_only_list_has_no_empty_general_section():
+    rendered = format_tasks([{"title": "Check security 10/15 course scope"}], TZ)
+    assert rendered == "<b>Course scope</b>\n1. <b>Check security 10/15 course scope</b>"
+    assert format_tasks([], TZ) == "No open tasks. All clear."
 
 
 def test_long_project_tags_use_short_display_aliases():

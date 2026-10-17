@@ -62,7 +62,7 @@ Job 使用獨立的 `chronos-collector` service account，只取得 CAS、Telegr
 /done 1
 ```
 
-這是輸入示例，AI 產生的英文標題與相對日期依當時環境而定。先用 `/tasks` 確認任務的位置，編輯後再查一次；清單按期限排序，`1` 是當下位置。完整的 Retry、清除確認與 Study 指令見 [使用說明](docs/usage.md)。
+這是輸入示例，AI 產生的英文標題與相對日期依當時環境而定。先用 `/tasks` 確認任務的位置，編輯後再查一次；清單按期限排序，`1` 是當下位置。課程範圍確認任務會集中顯示於下方的 `Course scope` 區；各區保留原清單編號，因此可能跳號，`/edit`、`/done` 請使用顯示的編號。完整的 Retry、清除確認與 Study 指令見 [使用說明](docs/usage.md)。
 
 ## 快速啟動：Windows PowerShell
 

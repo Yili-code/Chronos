@@ -262,12 +262,30 @@ def canonical_project(value: str) -> str:
 def format_tasks(tasks: list[dict], tz, project_aliases: dict[str, str] | None = None, *, now: datetime | None = None) -> str:
     if not tasks:
         return "No open tasks. All clear."
-    lines = ["<b>Tasks</b>"]
+    sections = [("Tasks", []), ("Course scope", [])]
     for position, task in enumerate(tasks, start=1):
-        if position > 1:
-            lines.append("")
-        lines.extend(format_task_block(task, tz, position=position, project_aliases=project_aliases, now=now))
+        section = sections[1 if is_course_scope_task(task) else 0][1]
+        section.append((position, task))
+    lines = []
+    for title, entries in sections:
+        if not entries:
+            continue
+        if lines:
+            lines.extend(["", "──────────", ""])
+        lines.append(f"<b>{title}</b>")
+        for index, (position, task) in enumerate(entries):
+            if index:
+                lines.append("")
+            lines.extend(format_task_block(task, tz, position=position, project_aliases=project_aliases, now=now))
     return "\n".join(lines)
+
+
+def is_course_scope_task(task: dict) -> bool:
+    title = task["title"].strip()
+    return bool(
+        re.fullmatch(r"Check .+? \d{1,2}[/-]\d{1,2} (?:class |course )?scope", title, re.IGNORECASE)
+        or re.fullmatch(r"確認.*(?:今日上課範圍（\d{4}-\d{2}-\d{2}）| \d{2}/\d{2} 上課範圍|上課範圍)", title)
+    )
 
 
 def format_task_block(
