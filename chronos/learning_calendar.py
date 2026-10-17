@@ -32,6 +32,11 @@ def short_task_windows(day, tz, minutes):
 def study_window(instruction, now, default_minutes):
     """Resolve a date/weekday period as availability, never as a task deadline."""
     text = instruction.strip().casefold()
+    text = re.sub(r"^(?:改成|改到|安排在|move to|change to)\s*", "", text)
+    # Permission wording requests a later slot; it never grants the exception.
+    text = re.sub(r"[（(](?:允許|允许|可以|可)(?:超過|超过)(?:九點|九点|9點|9点|21:00)[）)]$", "", text).strip()
+    if text in {"tonight", "今天晚上", "今晚"}:
+        text = "today evening"
     duration = re.search(r"(?:\s+)(\d{1,3})(?:\s*(?:minutes|min|分鐘|分钟))?$|(?<!\d)(\d{1,3})(?:分鐘|分钟|minutes|min)$", text)
     minutes = int(duration[1] or duration[2]) if duration else default_minutes
     if duration:

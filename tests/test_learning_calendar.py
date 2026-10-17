@@ -1071,3 +1071,16 @@ def test_confirmed_late_proposal_still_needs_allow_to_book(setup):
     assert 'booked' in reply
     assert planner.get(task['id'])['status']=='scheduled'
     calendar.insert.assert_awaited_once()
+
+@pytest.mark.parametrize('instruction',['改成今天晚上（允許超過九點）','今晚','tonight'])
+def test_tonight_permission_request_is_deterministic_and_still_needs_confirmation(setup,instruction):
+    planner,task,calendar,_=setup
+    evening=NOW.replace(hour=19,minute=38)
+    asyncio.run(planner.tick(NOW));state=planner.get(task['id'])
+    reply=asyncio.run(planner.revise(task['id'],state['token'],instruction,evening))
+    assert 'Reply Yes or No' in reply
+    pending=planner.get(task['id'])
+    assert pending['status']=='editing'
+    assert pending['pending_late']['instruction']=='2026-10-19 20:00 90'
+    assert not pending.get('late_window')
+    calendar.insert.assert_not_awaited()
