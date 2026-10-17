@@ -31,6 +31,20 @@ def validate_runtime_security(settings) -> None:
         raise RuntimeConfigurationError(
             "Public mode requires: " + ", ".join(missing) + "."
         )
+    if settings.enable_learning_calendar:
+        required = (settings.calendar_client_id, settings.calendar_client_secret,
+                    settings.calendar_refresh_token, settings.calendar_account, settings.learning_enabled_since)
+        if not all(required):
+            raise RuntimeConfigurationError("Learning Calendar requires owner authorization and an activation time.")
+        if settings.learning_start_hour >= settings.learning_end_hour:
+            raise RuntimeConfigurationError("Learning hours must end after they start.")
+        from datetime import datetime
+        try:
+            activated = datetime.fromisoformat(settings.learning_enabled_since)
+            if activated.utcoffset() is None:
+                raise ValueError("Missing timezone")
+        except ValueError:
+            raise RuntimeConfigurationError("Learning activation time must include its timezone.") from None
 
 
 def readiness_snapshot(db, settings) -> dict:
@@ -51,5 +65,6 @@ def configured_components(settings) -> dict:
         "scheduler_auth": "configured" if settings.scheduler_secret else "disabled",
         "study": "configured" if settings.enable_study_tracking else "disabled",
         "gmail": "configured" if settings.enable_gmail else "disabled",
+        "learning_calendar": "configured" if settings.enable_learning_calendar else "disabled",
         "release": settings.release_sha or "development",
     }

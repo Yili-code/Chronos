@@ -36,6 +36,8 @@ from .task_timing import display_time, task_sort_key, timing_details
 from .study_scheduler import tick_study, notify_study_failures
 from .gmail import GmailClient, GmailError
 from .mail_workflow import MailWorkflow
+from .google_calendar import GoogleCalendar, CalendarError
+from .learning_calendar import LearningCalendar
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("chronos")
@@ -46,6 +48,7 @@ ai_usage = AIUsageRecorder(db, settings.tz)
 ai = ExternalAI(settings, usage=ai_usage)
 telegram = TelegramClient(settings.telegram_bot_token)
 gmail = GmailClient(settings)
+google_calendar = GoogleCalendar(settings)
 scheduler = AsyncIOScheduler(timezone=settings.tz)
 
 HELP_TEXT = "<b>Chronos</b>\nReady, YiLi. Choose a category."
@@ -65,6 +68,9 @@ HELP_SECTIONS = {
         "/classday &lt;instruction&gt; — confirm a course-specific instruction day\n"
         "/classday YYYY-MM-DD &lt;course-code&gt; class|off|auto — save an exact decision\n"
         "/calendar — view or edit TronClass scan dates\n"
+        "/plan — inspect study proposals and Calendar connection\n"
+        "/plan &lt;task-id&gt; — request a study proposal\n"
+        "/studyfeedback &lt;task-id&gt; &lt;minutes&gt; done|partial|skipped [reason] — record a study session\n"
         "/ai_usage — inspect today's core AI requests\n"
         "/announcements [page] — list saved announcements\n"
         "/announcement &lt;version-id&gt; [page] — read a saved announcement"
@@ -263,6 +269,10 @@ def mail_workflow():
     return MailWorkflow(db, gmail, telegram, ai, settings)
 
 
+def learning_calendar():
+    return LearningCalendar(db, google_calendar, telegram, settings)
+
+
 async def delete_telegram_messages(chat_id: int, *message_ids: int | None) -> None:
     """Delete resolved interaction cards; repeated cleanup is safe."""
     for message_id in dict.fromkeys(message_id for message_id in message_ids if message_id is not None):
@@ -427,7 +437,18 @@ async def trigger_daily_mail(x_chronos_scheduler_secret: str | None = Header(def
 
 
 async def run_deadline_reminders():
-    return await send_deadline_reminders(db, telegram, settings)
+    error = None
+    try:
+        result = await send_deadline_reminders(db, telegram, settings)
+    except RuntimeError as failure:
+        if not settings.enable_learning_calendar:
+            raise
+        result, error = {}, failure
+    if settings.enable_learning_calendar:
+        result["learning"] = await learning_calendar().tick()
+    if error:
+        raise error
+    return result
 
 
 @app.post("/internal/deadlines")
@@ -438,6 +459,36 @@ async def trigger_deadline_reminders(x_chronos_scheduler_secret: str | None = He
         return await run_deadline_reminders()
     except RuntimeError as error:
         raise HTTPException(status_code=503, detail="Deadline reminder delivery requires retry or inspection") from error
+
+
+def require_learning_scheduler_secret(value):
+    if not settings.scheduler_secret or not hmac.compare_digest(value or "", settings.scheduler_secret):
+        raise HTTPException(status_code=403, detail="Invalid scheduler credential")
+
+
+@app.get("/internal/learning/status")
+async def learning_status(x_chronos_scheduler_secret: str | None = Header(default=None)):
+    require_learning_scheduler_secret(x_chronos_scheduler_secret)
+    if not settings.enable_learning_calendar:
+        return {"enabled": False}
+    try:
+        await google_calendar.verify_owner()
+        now = datetime.now(settings.tz)
+        await google_calendar.busy(now, now + timedelta(days=1))
+    except CalendarError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from None
+    return {"enabled": True, "calendar_read_verified": True, "approval_required": True,
+        "start_hour": settings.learning_start_hour, "end_hour": settings.learning_end_hour,
+        "default_minutes": settings.learning_minutes, "daily_class_and_study_minutes": settings.learning_daily_minutes}
+
+
+@app.post("/internal/learning")
+async def learning_tick(x_chronos_scheduler_secret: str | None = Header(default=None)):
+    require_learning_scheduler_secret(x_chronos_scheduler_secret)
+    try:
+        return await learning_calendar().tick()
+    except CalendarError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from None
 
 
 @app.post("/internal/daily")
@@ -474,6 +525,32 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
     if settings.telegram_chat_id and chat_id != settings.telegram_chat_id:
         raise HTTPException(status_code=403, detail="Unauthorized chat")
     update_id = update.update_id
+    if update.callback_query and (update.callback_query.data or "").startswith("learn:"):
+        matched = re.fullmatch(r"learn:(approve|reject|retry|done|partial|skipped):(\d+):([a-f0-9]{32})", update.callback_query.data)
+        if not matched or source_message.message_id is None:
+            raise HTTPException(status_code=400, detail="Invalid study callback")
+        receipt = db.get_update(update_id)
+        if receipt is None:
+            if not settings.enable_learning_calendar:
+                reply = "Learning calendar is disabled. No event was created."
+            else:
+                try:
+                    reply = await learning_calendar().callback(matched[1], int(matched[2]), matched[3], source_message.message_id)
+                except CalendarError as error:
+                    reply = str(error) + " The proposal remains saved; check /plan."
+            receipt = db.process_update(update_id, lambda: reply)
+        if not receipt["delivered"]:
+            result = await telegram.send_message(chat_id, receipt["reply"])
+            if not result.get("ok"):
+                raise HTTPException(status_code=502, detail="Study reply pending")
+            db.mark_update_delivered(update_id)
+        await telegram.answer_callback_query(update.callback_query.id)
+        if settings.enable_learning_calendar and matched[1] == "partial":
+            try:
+                await learning_calendar().tick()
+            except CalendarError:
+                logger.warning("Study continuation proposal deferred to the scheduler")
+        return {"ok": True}
     # Route mail cards before generic task/study replies. Bind callbacks to the
     # actual delivered card so arbitrary mail IDs cannot be supplied by a client.
     mail = mail_workflow() if settings.enable_gmail else None
@@ -697,6 +774,13 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         result = await telegram.answer_callback_query(update.callback_query.id)
         if not result.get("ok"):
             raise HTTPException(status_code=502, detail="Telegram callback acknowledgement failed")
+    if settings.enable_learning_calendar and update.message and (
+        receipt.get("reply", "").startswith("<b>Task created</b>") or (source_message.text or "").startswith(("/plan ", "/studyfeedback "))
+    ):
+        try:
+            await learning_calendar().tick()
+        except CalendarError:
+            logger.warning("Learning calendar proposal deferred; check /plan or the next scheduler tick")
     return {"ok": True}
 
 
@@ -828,6 +912,31 @@ async def handle_message(text: str) -> str:
 async def prepare_message(text: str, *, update_id: int | None = None) -> Callable[[], str | dict]:
     """Resolve external input first; the returned action performs no async work."""
     normalized = text.strip()
+    if normalized == "/plan":
+        return lambda: message_bundle({"text": learning_calendar().status(), "parse_mode": "HTML"})
+    replan = re.fullmatch(r"/plan\s+#?(\d+)", normalized)
+    if replan:
+        task_id = int(replan[1])
+        def request_plan():
+            if not settings.enable_learning_calendar:
+                return "Learning calendar is disabled."
+            if tasks.get_open_by_id(task_id) is None:
+                return "That task is not open. Use /tasks."
+            state = learning_calendar().get(task_id)
+            if state and state["status"] in {"creating", "scheduled", "awaiting_feedback"}:
+                return "A session is already booked or awaiting feedback. Use the existing card first."
+            learning_calendar().update(task_id, lambda old: {**(old or {}), "status": "queued"})
+            return "Study proposal requested. Calendar writing still waits for your approval."
+        return request_plan
+    feedback = re.fullmatch(r"/studyfeedback\s+(\d+)\s+(\d+)\s+(done|partial|skipped)(?:\s+(.+))?", normalized, re.DOTALL)
+    if feedback:
+        def record_feedback():
+            task = tasks.get_open_by_id(int(feedback[1]))
+            state = learning_calendar().get(int(feedback[1]))
+            if not task or not state:
+                return "No open study session matches that task."
+            return learning_calendar().feedback(task, state["token"], feedback[3], int(feedback[2]), feedback[4] or "")
+        return record_feedback
     command = normalized[1:].strip() if normalized.startswith("/") else None
     if command is not None and (command == 'announcements' or command.startswith('announcements ')):
         from .announcement_commands import announcements_query

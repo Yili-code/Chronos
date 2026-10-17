@@ -25,6 +25,7 @@ A self-hosted, single-user Telegram task assistant with Gemini-powered natural-l
 | 編輯撤回 | 修改成功後按 Undo，或 `/undo` 還原最近一次 edit；不撤回完成。 |
 | 期限提醒 | 有時間：前 24 小時及 1 小時；只有日期：前一天及當天 09:00。 |
 | 每日未完成清單 | 預設 `Asia/Taipei` 08:00；需要持續運行的服務或外部 scheduler，不是逐筆到期提醒。 |
+| 學習行事曆（選用） | 參考課表與 Google Calendar 提出時段，按 Allow 才建立活動；結束後追蹤進度。需另外授權，規則與驗證界線見 [說明](docs/learning-calendar.md)。 |
 | Gmail 郵件整理 | 選用；07:00 過濾明確促銷並移到垃圾桶、Telegram 摘要與按鈕／回覆新增任務。需獨立 OAuth，無寄信入口。[授權與啟用](docs/gmail.md)。 |
 | SQLite / Firestore | 本機預設 SQLite；Firestore 是選用的雲端設定。 |
 | Study 模組 | 預設關閉；保留特定 NTOU / TronClass 課表、進度、作業與公告。沒有教材下載、PDF AI 摘要或筆記匯出。 |

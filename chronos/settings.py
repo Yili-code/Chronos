@@ -20,6 +20,18 @@ class Settings(BaseSettings):
     enable_internal_scheduler: bool = True
     enable_study_tracking: bool = False
     enable_gmail: bool = False
+    enable_learning_calendar: bool = False
+    calendar_client_id: str = Field(default="", repr=False)
+    calendar_client_secret: str = Field(default="", repr=False)
+    calendar_refresh_token: str = Field(default="", repr=False)
+    calendar_account: str = ""
+    calendar_id: str = "primary"
+    calendar_busy_ids: str = "primary"
+    learning_enabled_since: str = ""
+    learning_start_hour: int = Field(default=9, ge=0, le=20)
+    learning_end_hour: int = Field(default=21, ge=1, le=24)
+    learning_minutes: int = Field(default=90, ge=15, le=180)
+    learning_daily_minutes: int = Field(default=540, ge=90, le=720)
     gmail_client_id: str = ""
     gmail_client_secret: str = ""
     gmail_refresh_token: str = ""

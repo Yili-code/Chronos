@@ -85,6 +85,8 @@ Telegram 明確拒絕時可於下一輪重試；timeout、5xx 或發送後尚未
 
 `/calendar` 查詢每天 06:00（Asia/Taipei）的掃描期間與例外日期；可用 `/calendar disable YYYY-MM-DD`、`enable YYYY-MM-DD`、`reset YYYY-MM-DD`，或 `/calendar term START END` 設定學期掃描區間。讀取不寫資料，更新與 webhook receipt 同一 transaction 保存；重送同一 update 不會重複操作，同時準備的不同指令會依最新設定合併。
 
+另可啟用 [Google 學習行事曆](learning-calendar.md)：新任務會提出日期、時段與預計時長，按 Allow 才寫入 Google Calendar。預設每段 90 分鐘、09:00–21:00、課程加學習每日最多 9 小時；避開課表與既有活動。活動結束後於白天主動追蹤完成情況，保存回覆並累積時長估計。`/plan` 查狀態，`/plan <task-id>` 要求提案，`/studyfeedback <task-id> <minutes> done|partial|skipped [reason]` 記錄實際情況。此功能需要另外完成雲端 Calendar 授權，聊天內的 Google 連線不會自動提供給機器人。
+
 校曆只控制「哪天掃描」，不更換課程 roster 或 TronClass 學期。scanner 目前保留已部署的 `1151` 學期及七門課程範圍；下學期須核對 `TRACKED_SEMESTER` 與 `TRACKED_COURSES` 後另外發布。詳細維運流程見 [TronClass scanner](tronclass-scanner.md)。
 
 ### Study 指令範例（需額外設定）

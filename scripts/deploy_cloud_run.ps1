@@ -318,6 +318,25 @@ $environment = @(
     "CHRONOS_RELEASE_SHA=$releaseSha"
 ) -join ','
 
+# Calendar activation has its own owner-consent workflow. Preserve its bindings
+# and scheduling constraints across ordinary source releases.
+$calendarEnvironment = @()
+if ($null -ne $existingService) {
+    foreach ($binding in $existingService.spec.template.spec.containers[0].env) {
+        if ($binding.name -notmatch '^CHRONOS_(CALENDAR_|LEARNING_|ENABLE_LEARNING_CALENDAR$)') { continue }
+        $reference = $binding.valueFrom.secretKeyRef
+        if ($reference -and $reference.name -and $reference.key) {
+            $secretBindings += "$($binding.name)=$($reference.name):$($reference.key)"
+        }
+        elseif ($null -ne $binding.value) {
+            $calendarEnvironment += "$($binding.name)=$($binding.value)"
+        }
+    }
+}
+if ($calendarEnvironment.Count -gt 0) {
+    $environment = '^~^' + ((@($environment.Split(',')) + $calendarEnvironment) -join '~')
+}
+
 $releaseSource = New-ChronosJobSource -Root $projectRoot -Dockerfile "Dockerfile"
 $releaseDirectory = $releaseSource.Directory
 
