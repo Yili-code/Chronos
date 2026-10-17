@@ -924,3 +924,18 @@ def test_ai_uses_completed_evidence_and_falls_back_to_profile(setup):
     planner.ai.estimate_duration.assert_awaited_once_with(task, evidence)
     state = planner.get(task['id'])
     assert state['minutes'] == 45 and state['duration_source'] == 'profile'
+
+
+def test_feedback_card_combines_time_and_duration_and_explains_input(setup):
+    planner, task, _, bot = setup
+    state = {'token': 'checkin', 'status': 'awaiting_feedback',
+             'start': NOW.isoformat(), 'minutes': 10, 'delivery': 'feedback_pending'}
+    planner.update(task['id'], lambda old: state)
+    asyncio.run(planner.deliver_feedback(task, state))
+    text = bot.send_message.await_args.args[1]
+    assert '10/19 (Mon) 09:00 · 10 minutes planned' in text
+    assert '\nWhen ' not in text and '\nPlanned ' not in text
+    assert '[reason]' not in text
+    assert f'<code>/studyfeedback {task["id"]} 10 done</code>' in text
+    assert 'done 完成 · partial 尚未完成 · skipped 未開始' in text
+    assert '\n\n' in text

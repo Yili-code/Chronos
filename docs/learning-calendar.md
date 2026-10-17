@@ -163,6 +163,10 @@ Per-day, per-part receipts prevent duplicate deliveries. Read failures retry;
 ambiguous Telegram delivery requires inspection rather than a blind resend.
 The computer can be off. The local scheduler also supports the same 21:00 job.
 
+Check-in cards combine the planned start and duration on one line, separate sections
+with blank lines, and give concrete feedback examples with explained outcome words
+instead of an unexplained command template. The result buttons remain the primary path.
+
 At the end of a booked event, the next daytime tick sends one check-in. It reads
 the Calendar event again to honor a changed end time; deleted/cancelled events
 are not recreated. Follow-up is deferred outside 09:00–21:00.
