@@ -9,6 +9,12 @@ missed webhook tick recovers without leaving the computer on.
 
 - Study blocks start at or after 09:00 and end at or before 21:00, Asia/Taipei.
 - New subjects default to 90 minutes per block.
+- Course-scope checks, using the same English/Chinese classifier as the task-list
+  grouping, default to 10 minutes. This rule takes priority over learned averages
+  and legacy queued default estimates. An explicit owner edit overrides it and
+  survives rescheduling or postponement. Scope checks accept 10–180 minutes;
+  other manual blocks retain their 15-minute minimum. Their quick duration choices
+  add five minutes or double the duration (10 becomes 15 or 20 minutes).
 - Fixed course hours plus reserved/completed study blocks total at most 540
   minutes per day, on weekdays and weekends. Completing a task does not reset
   that day's budget. Nonstudy personal events block availability but do not count

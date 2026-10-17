@@ -11,6 +11,9 @@ from .course_tracking import COURSE_SCHEDULE
 from .google_calendar import CalendarError
 from .task_actions import task_fields
 from .task_timing import display_time
+from .tasks import is_course_scope_task
+
+COURSE_SCOPE_MINUTES = 10
 
 
 def overlaps(start, end, busy):
@@ -204,6 +207,7 @@ class LearningCalendar:
             state = {"status": "planning", "token": claim,
                 "lease_until": (now + timedelta(minutes=3)).isoformat(), "snapshot": task_fields(task),
                 "requested_minutes": (old or {}).get("requested_minutes"),
+                "duration_source": (old or {}).get("duration_source"),
                 "retire_on_send": [*((old or {}).get("retire_on_send", [])),
                     *((old or {}).get(key) for key in ("message_id", "edit_message_id") if (old or {}).get(key))]}
             self.db._save_task_action_state(f"learning:task:{task_id}", state)
@@ -221,10 +225,13 @@ class LearningCalendar:
             minutes = (max(15, min(180, math.ceil(evidence["average_minutes"] / 15) * 15))
                        if evidence.get("samples", 0) >= 3 else self.settings.learning_minutes)
             minutes = state.get("requested_minutes") or minutes
+            source = state.get("duration_source") or ("profile" if evidence.get("samples", 0) >= 3 else "default")
+            if is_course_scope_task(task) and source != "owner":
+                minutes, source = COURSE_SCOPE_MINUTES, "course_scope_rule"
             policy = self.db.get_task_action_state("learning:course-calendar-policy")
             slot = find_slot(task, now, busy, reservations, self.settings, minutes, booked_minutes, policy)
             plan = {**state, "status": "proposed" if slot else "no_slot", "minutes": minutes,
-                    "delivery": "proposal_pending", "estimate_samples": evidence.get("samples", 0)}
+                    "duration_source": source, "delivery": "proposal_pending", "estimate_samples": evidence.get("samples", 0)}
             if slot:
                 plan.update(start=slot[0].isoformat(), end=slot[1].isoformat())
             self.update(task_id, lambda old: plan if old.get("token") == claim else old)
@@ -251,7 +258,8 @@ class LearningCalendar:
         await self.send(task["id"], state, text, buttons, "proposal")
 
     def edit_menu(self, task_id, state):
-        more, lots = min(180, state["minutes"] + 30), min(180, state["minutes"] * 2)
+        extra = 5 if is_course_scope_task(state["snapshot"]) else 30
+        more, lots = min(180, state["minutes"] + extra), min(180, state["minutes"] * 2)
         values = []
         if more > state["minutes"]:
             values.append(("more", f"A bit longer · {more} min"))
@@ -443,8 +451,9 @@ class LearningCalendar:
         stop = datetime.combine(start.date(), time(self.settings.learning_end_hour % 24), self.settings.tz)
         if self.settings.learning_end_hour == 24:
             stop += timedelta(days=1)
-        if not 15 <= minutes <= 180 or start <= now or start.hour < self.settings.learning_start_hour or end > stop:
-            return (f"Use a future 15–180 minute block within {self.settings.learning_start_hour:02d}:00"
+        minimum = COURSE_SCOPE_MINUTES if is_course_scope_task(task) else 15
+        if not minimum <= minutes <= 180 or start <= now or start.hour < self.settings.learning_start_hour or end > stop:
+            return (f"Use a future {minimum}–180 minute block within {self.settings.learning_start_hour:02d}:00"
                     f"–{self.settings.learning_end_hour:02d}:00.")
         due = task.get("due_at") or task.get("timing", {}).get("due_date")
         deadline = (datetime.fromisoformat(due).astimezone(self.settings.tz) if due and len(due) > 10 else
@@ -483,7 +492,7 @@ class LearningCalendar:
             displaced.add(other_id)
             pending_load -= (stop-begin).total_seconds()/60
         revised = {**state, "token": uuid4().hex, "status": "proposed", "start": start.isoformat(),
-            "end": end.isoformat(), "minutes": minutes, "requested_minutes": minutes,
+            "end": end.isoformat(), "minutes": minutes, "requested_minutes": minutes, "duration_source": "owner",
             "snapshot": task_fields(task), "delivery": "proposal_pending"}
         revised["retire_on_send"] = [state[key] for key in ("message_id", "edit_message_id") if state.get(key)]
         revised.pop("message_id", None)
@@ -509,8 +518,9 @@ class LearningCalendar:
 
     async def revise_window(self, task, state, window, now):
         begin, stop, minutes = window
-        if not 15 <= minutes <= 180:
-            return "Choose 15–180 minutes per block. Keep typing here or use /cancel."
+        minimum = COURSE_SCOPE_MINUTES if is_course_scope_task(task) else 15
+        if not minimum <= minutes <= 180:
+            return f"Choose {minimum}–180 minutes per block. Keep typing here or use /cancel."
         due = task.get("due_at") or (task.get("timing") or {}).get("due_date")
         if due:
             deadline = (datetime.fromisoformat(due).astimezone(self.settings.tz) if len(due) > 10 else
@@ -529,7 +539,8 @@ class LearningCalendar:
         return await self._revise(task["id"], state["token"], f"{slot[0]:%Y-%m-%d %H:%M} {minutes}", now)
 
     async def suggest_revision(self, task, state, option, now):
-        minutes = min(180, state["minutes"] + 30 if option == "more" else
+        extra = 5 if is_course_scope_task(task) else 30
+        minutes = min(180, state["minutes"] + extra if option == "more" else
                       state["minutes"] * 2 if option == "lots" else state["minutes"])
         if option != "shuffle" and minutes <= state["minutes"]:
             return "This block is already at the 180-minute limit. Choose manually or request another study block."
@@ -701,6 +712,7 @@ class LearningCalendar:
         lines = ["<b>Learning calendar</b>",
             f"Hours {self.settings.learning_start_hour:02d}:00–{self.settings.learning_end_hour:02d}:00",
             f"Default duration {self.settings.learning_minutes} minutes",
+            "Course scope checks 10 minutes by default",
             f"Class + study limit {self.settings.learning_daily_minutes // 60} hours/day",
             "Every calendar write requires your Allow button."]
         lines.append("Confirm the current proposal to see the next task.")

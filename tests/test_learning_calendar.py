@@ -758,6 +758,39 @@ def test_postpone_webhook_is_idempotent_and_plan_resumes_explicitly(system, setu
     calendar.insert.assert_not_awaited()
 
 
+@pytest.mark.parametrize("title", ["Check course scope", "Check software engineering 10/14 class scope",
+    "Check operating system class scope", "確認作業系統上課範圍"])
+def test_course_scope_rule_defaults_to_ten_minutes_even_for_legacy_queue(setup, title):
+    planner, task, calendar, _ = setup
+    planner.db.edit_task(task["id"], title, NOW + timedelta(days=3), "graphs", {})
+    planner.update(task["id"], lambda old: {"status": "queued", "requested_minutes": 90})
+    planner.db.mutate_task_action_state("learning:profile", lambda old: {"graphs": {"samples": 5, "average_minutes": 120}})
+    asyncio.run(planner.tick(NOW))
+    state = planner.get(task["id"])
+    assert state["minutes"] == 10 and state["duration_source"] == "course_scope_rule"
+    assert datetime.fromisoformat(state["end"]) - datetime.fromisoformat(state["start"]) == timedelta(minutes=10)
+    menu = planner.edit_menu(task["id"], state)["messages"][0]["reply_markup"]["inline_keyboard"]
+    assert menu[0][0]["text"] == "A bit longer · 15 min"
+    assert menu[1][0]["text"] == "Much longer · 20 min"
+    calendar.insert.assert_not_awaited()
+
+
+def test_course_scope_manual_duration_survives_resumption(setup):
+    planner, task, _, _ = setup
+    planner.db.edit_task(task["id"], "Check course scope", NOW + timedelta(days=3), "graphs", {})
+    asyncio.run(planner.tick(NOW))
+    state = planner.get(task["id"])
+    assert "Updated" in asyncio.run(planner.revise(task["id"], state["token"], "10/20 17:00 20", NOW))
+    revised = planner.get(task["id"])
+    planner.update(task["id"], lambda old: {**old, "status": "queued"})
+    asyncio.run(planner.tick(NOW))
+    assert planner.get(task["id"])["minutes"] == 20
+    assert planner.get(task["id"])["duration_source"] == "owner"
+    state = planner.get(task["id"])
+    assert "Updated" in asyncio.run(planner.revise(task["id"], state["token"], "10/20 17:00 10", NOW))
+    assert planner.get(task["id"])["minutes"] == 10
+
+
 def test_revision_respects_daily_budget_busy_events_and_scheduler_lease(setup):
     planner, task, calendar, _ = setup
     asyncio.run(planner.tick(NOW))
