@@ -151,6 +151,12 @@ def test_real_command_actions_do_not_read_after_firestore_writes(monkeypatch):
         assert result["reply"]
     assert db.list_open_tasks() == []
 
+    action = asyncio.run(main.prepare_message("/add Newly created"))
+    receipt = db.process_update(3, action)
+    assert len(receipt["messages"]) == 2
+    assert receipt["messages"][1]["text"] == "<b>Tasks</b>\n1. <b>Newly created</b>"
+    assert db.get_update(3) == receipt
+
 
 def test_firestore_scheduler_reply_and_stop_reminders(monkeypatch):
     import asyncio

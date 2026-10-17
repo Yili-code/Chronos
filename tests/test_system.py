@@ -38,6 +38,39 @@ def system(tmp_path, monkeypatch):
         yield client, service, bot, config
 
 
+@pytest.mark.parametrize("text", ["/add New task", "Create a new task"])
+def test_creation_shows_updated_list_and_retries_only_undelivered_list(system, text):
+    client, service, bot, config = system
+    service.create("Check security 10/15 scope")
+    service.create("Existing task")
+    bot.send_message.side_effect = [
+        {"ok": True, "result": {"message_id": 700}},
+        {"ok": False},
+        {"ok": True, "result": {"message_id": 701}},
+    ]
+    payload = {"update_id": 899, "message": {"message_id": 699,
+               "chat": {"id": 123}, "text": text}}
+    headers = {"X-Telegram-Bot-Api-Secret-Token": "test-hook"}
+    assert client.post("/telegram/webhook", headers=headers, json=payload).status_code == 502
+    assert main.db.get_update(899)["delivered_count"] == 1
+    assert len(service.list_open()) == 3
+    # A later task must not change the saved response or cause creation to repeat.
+    service.create("Created during retry")
+    assert client.post("/telegram/webhook", headers=headers, json=payload).status_code == 200
+    assert client.post("/telegram/webhook", headers=headers, json=payload).status_code == 200
+    assert len(service.list_open()) == 4
+    assert bot.send_message.await_count == 3
+    card, failed_list, retried_list = bot.send_message.await_args_list
+    assert card.args[1].startswith("<b>Task created</b>")
+    assert failed_list.args[1] == retried_list.args[1]
+    assert "<b>Course scope</b>" in retried_list.args[1]
+    assert "Existing task" in retried_list.args[1]
+    assert ("New task" if text.startswith("/add") else "Test task") in retried_list.args[1]
+    assert "Created during retry" not in retried_list.args[1]
+    assert retried_list.kwargs["parse_mode"] == "HTML"
+    assert main.db.get_update(899)["delivered"]
+
+
 def test_course_reply_is_correlated_and_receipt_deduplicated(system):
     from chronos.course_tracking import COURSE_SCHEDULE, new_session
     client, service, bot, config = system
@@ -224,9 +257,10 @@ def test_webhook_auth_and_commands(system):
     assert bot.send_message.call_args.kwargs == {'parse_mode': None}
     assert service.list_open() == []
     assert send('新增工作').status_code == 200
-    assert bot.send_message.call_args.args[1] == '<b>Task created</b>\n<b>Test task</b>'
+    assert bot.send_message.await_args_list[-2].args[1] == '<b>Task created</b>\n<b>Test task</b>'
     assert bot.send_message.call_args.kwargs['parse_mode'] == 'HTML'
-    assert bot.send_message.call_args.kwargs['reply_markup']['inline_keyboard'][0][0]['callback_data'] == 'task:edit:1'
+    assert bot.send_message.await_args_list[-2].kwargs['reply_markup']['inline_keyboard'][0][0]['callback_data'] == 'task:edit:1'
+    assert bot.send_message.call_args.args[1] == '<b>Tasks</b>\n1. <b>Test task</b>'
     assert send('/tasks').status_code == 200
     assert bot.send_message.call_args.args[1] == '<b>Tasks</b>\n1. <b>Test task</b>'
     assert bot.send_message.call_args.kwargs['parse_mode'] == 'HTML'
@@ -500,7 +534,7 @@ def test_webhook_duplicate_update(system):
         assert client.post('/telegram/webhook', json=payload, headers={
             'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}).status_code == 200
     assert len(service.list_open()) == 1
-    assert bot.send_message.await_count == 1
+    assert bot.send_message.await_count == 2
     assert main.ai.parse.await_count == 1
 
 
@@ -515,7 +549,7 @@ def test_duplicate_update_survives_database_reopen(system, monkeypatch):
     monkeypatch.setattr(main, 'tasks', TaskService(reopened, config.tz))
     assert client.post('/telegram/webhook', json=payload, headers=headers).status_code == 200
     assert len(service.list_open()) == 1
-    assert bot.send_message.await_count == 1
+    assert bot.send_message.await_count == 2
 
 
 @pytest.mark.parametrize('failure', ['exception', 'rejected'])
@@ -535,7 +569,8 @@ def test_reply_retry_does_not_repeat_task_change(system, failure):
     assert client.post('/telegram/webhook', json=payload, headers=headers).status_code == 200
     assert len(service.list_open()) == 1
     assert main.ai.parse.await_count == 1
-    assert bot.send_message.call_args.args[1] == first_reply
+    assert bot.send_message.await_args_list[-2].args[1] == first_reply
+    assert bot.send_message.call_args.args[1] == '<b>Tasks</b>\n1. <b>Test task</b>'
 
 
 def test_update_receipt_and_mutation_roll_back_together(system):

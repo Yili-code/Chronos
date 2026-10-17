@@ -1006,11 +1006,17 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
             return lambda reply=str(error): reply
     aliases = tasks.project_aliases()
     def create() -> dict:
+        before = tasks.list_open()
         task = tasks.create(parsed.title, parsed.due_at, parsed.project, parsed.timing)
         details = "\n".join(format_task_block(
             task, settings.tz, project_aliases=aliases
         ))
-        return message_bundle(task_card(task, f"<b>Task created</b>\n{details}"))
+        # Render the transaction outcome without reading Firestore after a write.
+        after = sorted([*before, task], key=task_sort_key)
+        return message_bundle(
+            task_card(task, f"<b>Task created</b>\n{details}"),
+            {"text": format_tasks(after, settings.tz, project_aliases=aliases), "parse_mode": "HTML"},
+        )
     return create
 
 

@@ -45,6 +45,8 @@ CHRONOS_PUBLIC_BASE_URL=https://你的公開網址
 
 除了 slash commands 外，直接傳送中英文自然語言就會新增一筆代辦。Telegram 與 Web 的互動文字統一使用英文。
 AI 暫時不可用時，可用 `/add Review Graph Algorithms Quiz 1 #Graph` 新增一筆確定文字的任務；`/add` 原樣保存標題與可選的英文 tag，不解析或推測期限，也不呼叫 AI。自然語言新增仍維持 AI 失敗時不寫入的行為。
+
+自然語言或 `/add` 新增成功後，會先顯示 `Task created` 任務卡，再自動送出包含新任務的最新清單，無須另外輸入 `/tasks`。清單維持期限排序與 `Course scope` 分區；若清單傳送失敗，重試只補送尚未送達的訊息，不會重複新增任務。
 若已知道完整新標題，可用 `/edit 1 title: "Watch Database Chapter 1 video"` 直接替換標題，保留期限、分類與其他時間資訊；此操作也不需要 AI。`Set the title to "..."` 與 `Translate the title to "..."` 接受明確提供的替換文字，並不自行翻譯。要求自動翻譯或摘要仍需要 AI。
 `/tasks` 依「期限最早、無期限最後、同期限較早建立者優先」排序，並將目前未完成代辦動態編為 `1..n`；永久 database ID 不會顯示。`/done` 與 `/edit` 接受當下位置，但 mutation 會在 receipt transaction 內綁定永久 ID，因此清單重新排序不會讓已保存的 retry 改到另一筆 task。不存在的位置會顯示英文錯誤及最新清單。每天 08:00 的清單使用同一格式。
 `/edit <position> <instruction>` 接受中文或英文自然語言，可同時修改標題、期限與分類，也能明確移除期限或分類；未提及的欄位會保留，儲存標題仍為精簡英文 action phrase。移除日期、移除分類與保存 tag abbreviation 等明確操作會走 deterministic path；其他語意改寫才呼叫 AI。任務改期與作業截止日期都統一使用 `/edit`；`/reschedule` 與 `/deadline` 不再支援。
