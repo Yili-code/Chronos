@@ -70,6 +70,7 @@ HELP_SECTIONS = {
         "/calendar — view or edit TronClass scan dates\n"
         "/plan — inspect study proposals and Calendar connection\n"
         "/plan &lt;task-id&gt; — request a study proposal\n"
+        "/planedit &lt;task-id&gt; MM/DD HH:MM minutes — revise a proposal before Allow\n"
         "/studyfeedback &lt;task-id&gt; &lt;minutes&gt; done|partial|skipped [reason] — record a study session\n"
         "/ai_usage — inspect today's core AI requests\n"
         "/announcements [page] — list saved announcements\n"
@@ -271,6 +272,22 @@ def mail_workflow():
 
 def learning_calendar():
     return LearningCalendar(db, google_calendar, telegram, settings)
+
+
+async def deliver_learning_reply(chat_id, update_id, receipt):
+    if receipt["delivered"]:
+        return
+    message = (receipt.get("messages") or [{"text": receipt["reply"]}])[0]
+    options = {key: message[key] for key in ("parse_mode", "reply_markup") if key in message}
+    result = await telegram.send_message(chat_id, message["text"], **options)
+    if not result.get("ok"):
+        raise HTTPException(status_code=502, detail="Study reply pending")
+    if message.get("learning_edit"):
+        message_id = result.get("result", {}).get("message_id")
+        if message_id is None:
+            raise HTTPException(status_code=502, detail="Study edit prompt ID missing")
+        db.mutate_task_action_state(f"learning:edit-message:{chat_id}:{message_id}", lambda old: message["learning_edit"])
+    db.mark_update_delivered(update_id)
 
 
 async def delete_telegram_messages(chat_id: int, *message_ids: int | None) -> None:
@@ -526,7 +543,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         raise HTTPException(status_code=403, detail="Unauthorized chat")
     update_id = update.update_id
     if update.callback_query and (update.callback_query.data or "").startswith("learn:"):
-        matched = re.fullmatch(r"learn:(approve|reject|retry|done|partial|skipped):(\d+):([a-f0-9]{32})", update.callback_query.data)
+        matched = re.fullmatch(r"learn:(approve|edit|reject|retry|done|partial|skipped):(\d+):([a-f0-9]{32})", update.callback_query.data)
         if not matched or source_message.message_id is None:
             raise HTTPException(status_code=400, detail="Invalid study callback")
         receipt = db.get_update(update_id)
@@ -539,17 +556,33 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                 except CalendarError as error:
                     reply = str(error) + " The proposal remains saved; check /plan."
             receipt = db.process_update(update_id, lambda: reply)
-        if not receipt["delivered"]:
-            result = await telegram.send_message(chat_id, receipt["reply"])
-            if not result.get("ok"):
-                raise HTTPException(status_code=502, detail="Study reply pending")
-            db.mark_update_delivered(update_id)
+        await deliver_learning_reply(chat_id, update_id, receipt)
         await telegram.answer_callback_query(update.callback_query.id)
         if settings.enable_learning_calendar and matched[1] == "partial":
             try:
                 await learning_calendar().tick()
             except CalendarError:
                 logger.warning("Study continuation proposal deferred to the scheduler")
+        return {"ok": True}
+    study_edit = (db.get_task_action_state(f"learning:edit-message:{chat_id}:{source_message.reply_to_message.message_id}")
+                  if source_message.reply_to_message else None)
+    if study_edit:
+        receipt = db.get_update(update_id)
+        if receipt is None:
+            if update.edited_message:
+                reply = "Send a new reply to edit the study proposal. Editing an old message does not replay it."
+            else:
+                try:
+                    reply = await learning_calendar().revise(study_edit["task_id"], study_edit["token"], source_message.text or "")
+                except CalendarError as error:
+                    reply = str(error)
+            receipt = db.process_update(update_id, lambda: reply)
+        await deliver_learning_reply(chat_id, update_id, receipt)
+        if settings.enable_learning_calendar:
+            try:
+                await learning_calendar().tick()
+            except CalendarError:
+                logger.warning("Revised study proposal deferred to the scheduler")
         return {"ok": True}
     # Route mail cards before generic task/study replies. Bind callbacks to the
     # actual delivered card so arbitrary mail IDs cannot be supplied by a client.
@@ -775,7 +808,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         if not result.get("ok"):
             raise HTTPException(status_code=502, detail="Telegram callback acknowledgement failed")
     if settings.enable_learning_calendar and update.message and (
-        receipt.get("reply", "").startswith("<b>Task created</b>") or (source_message.text or "").startswith(("/plan ", "/studyfeedback "))
+        receipt.get("reply", "").startswith("<b>Task created</b>") or (source_message.text or "").startswith(("/plan ", "/planedit ", "/studyfeedback "))
     ):
         try:
             await learning_calendar().tick()
@@ -912,6 +945,16 @@ async def handle_message(text: str) -> str:
 async def prepare_message(text: str, *, update_id: int | None = None) -> Callable[[], str | dict]:
     """Resolve external input first; the returned action performs no async work."""
     normalized = text.strip()
+    plan_edit = re.fullmatch(r"/planedit\s+(\d+)\s+(.+)", normalized, re.DOTALL)
+    if plan_edit:
+        state = learning_calendar().get(int(plan_edit[1]))
+        if not state:
+            return lambda: "No study proposal matches that task. Use /plan."
+        try:
+            reply = await learning_calendar().revise(int(plan_edit[1]), state["token"], plan_edit[2])
+        except CalendarError as error:
+            reply = str(error)
+        return lambda: reply
     if normalized == "/plan":
         return lambda: message_bundle({"text": learning_calendar().status(), "parse_mode": "HTML"})
     replan = re.fullmatch(r"/plan\s+#?(\d+)", normalized)

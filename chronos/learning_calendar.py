@@ -1,5 +1,6 @@
 """Approval-gated study blocks and durable, owner-reported learning feedback."""
 import math
+import re
 from datetime import datetime, timedelta, time
 from hashlib import sha256
 from html import escape
@@ -8,18 +9,22 @@ from uuid import uuid4
 from .course_tracking import COURSE_SCHEDULE
 from .google_calendar import CalendarError
 from .task_actions import task_fields
+from .task_timing import display_time
 
 
 def overlaps(start, end, busy):
     return any(start < stop and end > begin for begin, stop in busy)
 
 
-def class_windows(day, tz):
+def class_windows(day, tz, policy=None):
+    if policy and (day.isoformat() < policy["first_day"] or day.isoformat() > policy["last_regular_day"]
+                   or day.isoformat() in policy.get("excluded_dates", [])):
+        return []
     return [(datetime.combine(day, slot.start, tz), datetime.combine(day, slot.end, tz))
             for slot in COURSE_SCHEDULE if slot.weekday == day.weekday()]
 
 
-def find_slot(task, now, busy, reservations, config, minutes, booked_minutes=None):
+def find_slot(task, now, busy, reservations, config, minutes, booked_minutes=None, course_policy=None):
     """Search 15-minute boundaries; class plus study load never exceeds the cap."""
     due = task.get("due_at") or (task.get("timing") or {}).get("due_date")
     deadline = (datetime.fromisoformat(due).astimezone(config.tz) if due and len(due) > 10 else
@@ -28,7 +33,7 @@ def find_slot(task, now, busy, reservations, config, minutes, booked_minutes=Non
     horizon = min(deadline, now + timedelta(days=7))
     for offset in range(8):
         day = (now + timedelta(days=offset)).date()
-        classes = class_windows(day, config.tz)
+        classes = class_windows(day, config.tz, course_policy)
         load = sum((end - start).total_seconds() / 60 for start, end in classes)
         load += (booked_minutes or {}).get(day.isoformat(), 0)
         load += sum((end - start).total_seconds() / 60 for start, end in reservations if start.date() == day)
@@ -96,7 +101,8 @@ class LearningCalendar:
             evidence = profile.get(subject, {})
             minutes = (max(15, min(180, math.ceil(evidence["average_minutes"] / 15) * 15))
                        if evidence.get("samples", 0) >= 3 else self.settings.learning_minutes)
-            slot = find_slot(task, now, busy, reservations, self.settings, minutes, booked_minutes)
+            policy = self.db.get_task_action_state("learning:course-calendar-policy")
+            slot = find_slot(task, now, busy, reservations, self.settings, minutes, booked_minutes, policy)
             plan = {**state, "status": "proposed" if slot else "no_slot", "minutes": minutes,
                     "delivery": "proposal_pending", "estimate_samples": evidence.get("samples", 0)}
             if slot:
@@ -106,7 +112,7 @@ class LearningCalendar:
             self.update(task_id, lambda old: {**old, "status": "queued"} if old.get("token") == claim else old)
             raise
 
-    async def deliver_proposal(self, task, state):
+    def proposal_content(self, task, state):
         if state["status"] == "no_slot":
             text = (f"<b>No study slot available</b>\n{escape(task['title'])}\n"
                     "No block fits before the deadline under your class, calendar and daily limits. "
@@ -115,9 +121,13 @@ class LearningCalendar:
         else:
             start, end = (datetime.fromisoformat(state[key]).astimezone(self.settings.tz) for key in ("start", "end"))
             text = (f"<b>Study proposal</b>\n{escape(task['title'])}\n"
-                    f"When {start:%m/%d %H:%M}–{end:%H:%M}\nDuration {state['minutes']} minutes\n"
+                    f"When {display_time(state['start'], self.settings.tz)}–{end:%H:%M}\nDuration {state['minutes']} minutes\n"
                     "Calendar write waits for your approval.")
-            buttons = self.buttons(task["id"], state, [("approve", "Allow"), ("reject", "Skip")])
+            buttons = self.buttons(task["id"], state, [("approve", "Allow"), ("edit", "Edit")])
+        return text, buttons
+
+    async def deliver_proposal(self, task, state):
+        text, buttons = self.proposal_content(task, state)
         await self.send(task["id"], state, text, buttons, "proposal")
 
     async def book(self, task, state, now):
@@ -154,7 +164,7 @@ class LearningCalendar:
             self.db._save_task_action_state(f"learning:task:{task['id']}", {**current,
                 "status": "scheduled", "event_id": event_id, "event_url": event.get("htmlLink", "")})
         self.db._run_task_action(record_booking)
-        return f"Study time booked\n{state['minutes']} minutes · {datetime.fromisoformat(state['start']):%m/%d %H:%M}"
+        return f"Study time booked\n{state['minutes']} minutes · {display_time(state['start'], self.settings.tz)}"
 
     async def callback(self, action, task_id, token, message_id):
         state = self.get(task_id)
@@ -164,6 +174,15 @@ class LearningCalendar:
         if not task:
             return "This task is no longer open. No event was created."
         now = datetime.now(self.settings.tz)
+        if action == "edit":
+            changed = self.update(task_id, lambda old: {**old, "status": "editing"}
+                if old.get("token") == token and old["status"] == "proposed" else old)
+            if changed["status"] != "editing":
+                return "This proposal has already been handled. Use /plan."
+            return {"messages": [{"text": "Reply with date, start time and duration in minutes.\n"
+                "Example 10/20 15:00 90\nYou can also use YYYY-MM-DD HH:MM minutes.\n"
+                "The revised proposal still needs Allow before booking.",
+                "reply_markup": {"force_reply": True}, "learning_edit": {"task_id": task_id, "token": token}}]}
         if action in {"done", "partial", "skipped"}:
             return self.feedback(task, token, action, state["minutes"] if action == "done" else 0 if action == "skipped" else None)
         if action in {"reject", "retry"}:
@@ -182,6 +201,71 @@ class LearningCalendar:
                 return "This proposal is no longer available."
             return await self.book(task, approved, now)
         return "Unknown study action."
+
+    async def revise(self, task_id, token, instruction, now=None):
+        if not self.settings.enable_learning_calendar:
+            return "Learning calendar is disabled."
+        now = now or datetime.now(self.settings.tz)
+        claim = uuid4().hex
+        lease = self.db.mutate_task_action_state("learning:tick", lambda old: {
+            "claim": claim, "until": (now + timedelta(minutes=10)).isoformat()}
+            if not old or old["until"] <= now.isoformat() else old)
+        if lease["claim"] != claim:
+            return "Another proposal is being prepared. Reply again shortly."
+        try:
+            return await self._revise(task_id, token, instruction, now)
+        finally:
+            self.db.mutate_task_action_state("learning:tick", lambda old: {**old, "until": now.isoformat()}
+                if old["claim"] == claim else old)
+
+    async def _revise(self, task_id, token, instruction, now):
+        state = self.get(task_id)
+        if not state or state.get("token") != token or state["status"] not in {"proposed", "editing"}:
+            return "This proposal has already been handled. Use /plan."
+        task = next((t for t in self.db.list_open_tasks() if t["id"] == task_id), None)
+        if not task:
+            return "This task is no longer open."
+        match = re.fullmatch(r"\s*((?:\d{4}-\d{2}-\d{2})|(?:\d{1,2}/\d{1,2}))\s+(\d{1,2}:\d{2})(?:\s+(\d{1,3})(?:\s*(?:minutes|min|分鐘))?)?\s*", instruction, re.IGNORECASE)
+        if not match:
+            return "Use MM/DD HH:MM minutes, for example 10/20 15:00 90. Reply to the same edit prompt."
+        try:
+            day = match[1] if "-" in match[1] else f"{now.year}-{int(match[1].split('/')[0]):02d}-{int(match[1].split('/')[1]):02d}"
+            start = datetime.fromisoformat(day + "T" + match[2].zfill(5)).replace(tzinfo=self.settings.tz)
+            minutes = int(match[3]) if match[3] else state["minutes"]
+            end = start + timedelta(minutes=minutes)
+        except (ValueError, OverflowError):
+            return "Invalid date or time. Reply to the edit prompt with a valid future date."
+        stop = datetime.combine(start.date(), time(self.settings.learning_end_hour % 24), self.settings.tz)
+        if self.settings.learning_end_hour == 24:
+            stop += timedelta(days=1)
+        if not 15 <= minutes <= 180 or start <= now or start.hour < self.settings.learning_start_hour or end > stop:
+            return (f"Use a future 15–180 minute block within {self.settings.learning_start_hour:02d}:00"
+                    f"–{self.settings.learning_end_hour:02d}:00.")
+        due = task.get("due_at") or task.get("timing", {}).get("due_date")
+        deadline = (datetime.fromisoformat(due).astimezone(self.settings.tz) if due and len(due) > 10 else
+                    datetime.combine(datetime.fromisoformat(due).date(), time.max, self.settings.tz) if due else None)
+        if deadline and end > deadline:
+            return "That block ends after the task deadline. Choose an earlier time."
+        others = [self.get(t["id"]) for t in self.db.list_open_tasks() if t["id"] != task_id]
+        reservations = [(datetime.fromisoformat(s["start"]), datetime.fromisoformat(s["end"]))
+                        for s in others if s and s.get("start") and s["status"] in {"proposed", "creating"}]
+        budget = sum((self.db.get_task_action_state("learning:day:" + day) or {}).values())
+        policy = self.db.get_task_action_state("learning:course-calendar-policy")
+        classes = class_windows(start.date(), self.settings.tz, policy)
+        load = budget + minutes + sum((b-a).total_seconds()/60 for a,b in classes)
+        load += sum((b-a).total_seconds()/60 for a,b in reservations if a.date() == start.date())
+        if load > self.settings.learning_daily_minutes:
+            return "That day would exceed your class + study limit. Choose another day or a shorter block."
+        await self.calendar.verify_owner()
+        busy = await self.calendar.busy(start, end)
+        if overlaps(start, end, [*busy, *classes, *reservations]):
+            return "That time conflicts with a class, calendar event or another proposal. Choose another time."
+        revised = {**state, "token": uuid4().hex, "status": "proposed", "start": start.isoformat(),
+            "end": end.isoformat(), "minutes": minutes, "snapshot": task_fields(task), "delivery": "proposal_pending"}
+        revised.pop("message_id", None)
+        saved = self.update(task_id, lambda old: revised if old.get("token") == token and old["status"] in {"proposed", "editing"} else old)
+        return ("Updated. Review the new proposal and press Allow to book it." if saved["token"] == revised["token"]
+                else "The proposal changed while editing. Use /plan.")
 
     def feedback(self, task, token, outcome, actual_minutes, reason=""):
         if outcome not in {"done", "partial", "skipped"} or (actual_minutes is not None and not 0 <= actual_minutes <= 720):
@@ -233,6 +317,7 @@ class LearningCalendar:
 
     async def deliver_feedback(self, task, state):
         text = (f"<b>Study check-in</b>\n{escape(task['title'])}\n"
+                f"When {display_time(state['start'], self.settings.tz)}\n"
                 f"Planned {state['minutes']} minutes\nHow did it go?\n"
                 "For actual time or an interruption reason, send\n"
                 f"/studyfeedback {task['id']} 60 done [reason]")
@@ -318,6 +403,7 @@ class LearningCalendar:
             lines.append("Google Calendar authorization is still required.")
         labels = {"planning": "Finding a time", "queued": "Waiting for a proposal",
             "proposed": "Waiting for your Allow", "creating": "Calendar confirmation pending",
+            "editing": "Waiting for your revised time",
             "scheduled": "Booked", "awaiting_feedback": "Waiting for your progress",
             "no_slot": "No available study time", "needs_replan": "Needs another study block",
             "rejected": "Skipped", "cancelled": "Calendar event removed", "finished": "Completed"}

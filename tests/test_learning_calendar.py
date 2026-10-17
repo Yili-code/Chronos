@@ -286,3 +286,101 @@ def test_primary_email_alias_is_normalized_before_freebusy_validation():
         return httpx.Response(200, json={"calendars": {key: {"busy": []} for key in ids}})
     client = GoogleCalendar(config, transport=httpx.MockTransport(handler))
     assert asyncio.run(client.busy(NOW, NOW + timedelta(days=1))) == []
+
+
+def test_edit_replaces_card_and_requires_fresh_approval(setup):
+    planner, task, calendar, bot = setup
+    asyncio.run(planner.tick(NOW))
+    old = planner.get(task["id"])
+    text, buttons = planner.proposal_content(task, old)
+    assert "10/19 (Mon)" in text
+    assert [b["text"] for b in buttons] == ["Allow", "Edit"]
+    prompt = asyncio.run(planner.callback("edit", task["id"], old["token"], 50))
+    assert prompt["messages"][0]["reply_markup"]["force_reply"]
+    assert "no longer available" in asyncio.run(planner.callback("approve", task["id"], old["token"], 50))
+    assert "Updated" in asyncio.run(planner.revise(task["id"], old["token"], "10/20 17:00 60", NOW))
+    revised = planner.get(task["id"])
+    assert revised["token"] != old["token"]
+    assert revised["minutes"] == 60
+    assert revised["start"] == "2026-10-20T17:00:00+08:00"
+    calendar.insert.assert_not_awaited()
+    asyncio.run(planner.tick(NOW))
+    assert "no longer active" in asyncio.run(planner.callback("approve", task["id"], old["token"], 50))
+    assert "booked" in asyncio.run(planner.callback("approve", task["id"], revised["token"], 50))
+    assert calendar.insert.await_count == 1
+
+
+@pytest.mark.parametrize("instruction,reason", [
+    ("tomorrow afternoon", "Use MM/DD"),
+    ("10/20 20:00 90", "future 15"),
+    ("10/20 14:00 60", "conflicts"),
+    ("10/23 17:00 60", "deadline"),
+    ("02/30 17:00 60", "Invalid date"),
+])
+def test_invalid_edits_preserve_pending_state(setup, instruction, reason):
+    planner, task, calendar, _ = setup
+    asyncio.run(planner.tick(NOW))
+    old = planner.get(task["id"])
+    asyncio.run(planner.callback("edit", task["id"], old["token"], 50))
+    assert reason in asyncio.run(planner.revise(task["id"], old["token"], instruction, NOW))
+    assert planner.get(task["id"])["status"] == "editing"
+    assert planner.get(task["id"])["token"] == old["token"]
+    calendar.insert.assert_not_awaited()
+
+
+def test_course_policy_excludes_exams_and_ends_teaching_period(setup):
+    from chronos.learning_calendar import class_windows
+    planner, task, calendar, _ = setup
+    policy = {"first_day": "2026-09-07", "last_regular_day": "2026-12-18",
+              "excluded_dates": ["2026-10-26", "2026-10-27", "2026-10-28", "2026-10-29", "2026-10-30"]}
+    assert class_windows(NOW.date(), planner.settings.tz, policy)
+    for day in ["2026-10-26", "2026-10-28", "2026-12-21", "2027-01-04"]:
+        assert not class_windows(datetime.fromisoformat(day).date(), planner.settings.tz, policy)
+    planner.db.mutate_task_action_state("learning:course-calendar-policy", lambda old: policy)
+    exam_now = NOW + timedelta(days=7)
+    planner.db.edit_task(task["id"], task["title"], exam_now + timedelta(days=3), "graphs", {})
+    asyncio.run(planner.tick(exam_now))
+    assert "T09:15:" in planner.get(task["id"])["start"]
+
+
+def test_edit_prompt_reply_webhook_is_durable_and_does_not_book(system, setup, monkeypatch):
+    client, tasks, bot, config = system
+    _, _, calendar, _ = setup
+    config.enable_learning_calendar = True
+    config.learning_enabled_since = "2020-01-01T00:00:00+08:00"
+    monkeypatch.setattr(main, "google_calendar", calendar)
+    bot.send_message.return_value = {"ok": True, "result": {"message_id": 50}}
+    task = tasks.create("Study graphs", NOW + timedelta(days=3))
+    planner = main.learning_calendar()
+    asyncio.run(planner.tick(NOW))
+    old = planner.get(task["id"])
+    headers = {"X-Telegram-Bot-Api-Secret-Token": "test-hook"}
+    callback = {"update_id": 99810, "callback_query": {"id": "edit", "data": f"learn:edit:{task['id']}:{old['token']}",
+        "message": {"message_id": 50, "chat": {"id": 123}}}}
+    assert client.post("/telegram/webhook", json=callback, headers=headers).status_code == 200
+    binding = main.db.get_task_action_state("learning:edit-message:123:50")
+    assert binding["token"] == old["token"]
+    message = {"update_id": 99811, "message": {"message_id": 51, "chat": {"id": 123},
+        "text": "10/20 17:00 60", "reply_to_message": {"message_id": 50, "chat": {"id": 123}}}}
+    assert client.post("/telegram/webhook", json=message, headers=headers).status_code == 200
+    token = planner.get(task["id"])["token"]
+    assert client.post("/telegram/webhook", json=message, headers=headers).status_code == 200
+    assert planner.get(task["id"])["token"] == token != old["token"]
+    assert planner.get(task["id"])["status"] == "proposed"
+    calendar.insert.assert_not_awaited()
+
+
+def test_revision_respects_daily_budget_busy_events_and_scheduler_lease(setup):
+    planner, task, calendar, _ = setup
+    asyncio.run(planner.tick(NOW))
+    state = planner.get(task["id"])
+    planner.db.mutate_task_action_state("learning:day:2026-10-20", lambda old: {"booked": 350})
+    assert "limit" in asyncio.run(planner.revise(task["id"], state["token"], "10/20 17:00 60", NOW))
+    planner.db.mutate_task_action_state("learning:day:2026-10-20", lambda old: {})
+    calendar.busy.return_value = [(NOW.replace(day=20, hour=17), NOW.replace(day=20, hour=18))]
+    assert "conflicts" in asyncio.run(planner.revise(task["id"], state["token"], "10/20 17:00 60", NOW))
+    planner.db.mutate_task_action_state("learning:tick", lambda old: {
+        "claim": "scheduler", "until": (NOW + timedelta(minutes=5)).isoformat()})
+    assert "shortly" in asyncio.run(planner.revise(task["id"], state["token"], "10/20 17:00 60", NOW))
+    assert planner.get(task["id"])["token"] == state["token"]
+    calendar.insert.assert_not_awaited()

@@ -14,9 +14,10 @@ missed webhook tick recovers without leaving the computer on.
   that day's budget. Nonstudy personal events block availability but do not count
   as study hours.
 - Respect the task deadline and check Google Calendar plus the configured course
-  timetable. Course slots are conservatively blocked even on school holidays;
-  Google availability does not replace the timetable.
-- Each proposal displays MM/DD, start/end time and duration. No calendar write
+  timetable. A persisted `learning:course-calendar-policy` controls the teaching
+  dates and excluded exam/holiday dates. Without it, slots are conservatively
+  blocked. Google availability does not replace the timetable.
+- Each proposal displays MM/DD (weekday), start/end time and duration. No calendar write
   occurs without an owner callback bound to that exact proposal card.
 - Check availability again on approval. Changed tasks, expired proposals or new
   conflicts require another proposal and another approval.
@@ -59,6 +60,22 @@ and targets `/internal/deadlines` every five minutes.
 Only tasks created after the activation timestamp receive automatic proposals.
 Use `/plan <task-id>` to request a proposal for an existing task. `/plan` by itself
 is read-only. Proposal preparation may wait until 09:00 during quiet hours.
+
+## Editing a proposal
+
+Press **Edit**, then reply to the prompt with `10/20 15:00 90` (date, start time,
+duration in minutes). ISO dates also work. Invalid or conflicting times leave the
+proposal in editing mode. The replacement card has a new token; the previous
+Allow button cannot book it. Press **Allow** on the replacement to book.
+`/planedit <task-id> MM/DD HH:MM minutes` also revises a pending proposal.
+
+The 115-1 course import starts 2026-10-19 and repeats weekly through 2026-12-18.
+The final regular day is inferred from the official final exam week 12/21–12/25.
+Midterm week 10/26–10/30 is excluded; final exams are beyond the recurrence end.
+Source [NTOU official calendar](https://academic.ntou.edu.tw/p/405-1005-123146,c834.php?Lang=zh-tw).
+Existing personal recurring events are preserved. Teacher-specific exam changes
+require a timetable update. The policy expires with the teaching period and does
+not imply next semester has the same courses.
 
 ## Follow-up and learning
 
