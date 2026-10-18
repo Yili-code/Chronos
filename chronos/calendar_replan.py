@@ -2,8 +2,9 @@
 from datetime import datetime, timedelta
 from hashlib import sha256
 from html import escape
+import re
 
-from .ai import AIError
+from .ai import AIError, ReplanOutput
 from .google_calendar import CalendarError
 from .learning_calendar import find_slot, overlaps
 from .study_reflow import bounds, movable, apply, reconcile, ReflowReviewError
@@ -37,6 +38,38 @@ def bind(db, chat_id, message_id, message):
                                     if old and old.get('token') == token else old)
 
 
+def explicit_window(instruction, now):
+    """Resolve a complete, explicit same-day request without model ambiguity."""
+    match = re.fullmatch(
+        r"(?:清空|騰出|空出)今天(?:從)?(?:現在|目前)到(?:今天)?"
+        r"(上午|中午|下午|晚上)([0-9一二三四五六七八九十兩]{1,3})點"
+        r"(半|[0-9一二三四五六七八九十兩]{1,3}分)?(?:之?前)?(?:的)?(?:所有)?(?:行程|事情|安排|活動)[。！!]?",
+        re.sub(r"\s+", "", instruction))
+    if not match:
+        return None
+    def number(text):
+        if text.isdigit():
+            return int(text)
+        digits = {'一': 1, '二': 2, '兩': 2, '三': 3, '四': 4, '五': 5,
+                  '六': 6, '七': 7, '八': 8, '九': 9}
+        if '十' in text:
+            if not re.fullmatch(r'[一二三四五六七八九兩]?十[一二三四五六七八九]?', text):
+                return -1
+            left, right = text.split('十', 1)
+            return (digits.get(left, 1) if left else 1) * 10 + digits.get(right, 0)
+        return digits.get(text, -1)
+    hour = number(match[2])
+    minute = 30 if match[3] == '半' else number(match[3][:-1]) if match[3] else 0
+    if not 1 <= hour <= 12 or not 0 <= minute < 60 or (match[1] == '中午' and hour != 12) or (match[1] == '晚上' and hour == 12):
+        return ReplanOutput(actionable=False, start=None, end=None, destination_start=None)
+    if match[1] in {'下午', '晚上'} and hour != 12:
+        hour += 12
+    elif match[1] == '上午' and hour == 12:
+        hour = 0
+    end = now.replace(hour=hour, minute=minute, second=0, microsecond=0).isoformat()
+    return ReplanOutput(actionable=True, start=now.isoformat(), end=end, destination_start=end)
+
+
 async def preview(planner, chat_id, instruction, update_id, now=None):
     now = now or datetime.now(planner.settings.tz)
     db, config = planner.db, planner.settings
@@ -47,7 +80,7 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
     if previous and previous.get('token') == token:
         return card(previous)
     try:
-        output = await planner.ai.parse_replan(instruction, now,
+        output = explicit_window(instruction, now) or await planner.ai.parse_replan(instruction, now,
             {k: previous[k] for k in ('start', 'end', 'destination_start')} if previous and previous.get('status') == 'editing' else None)
         if not output.actionable:
             raise ValueError
@@ -55,6 +88,8 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
         if any(t.tzinfo is None for t in (start, end, destination)):
             raise ValueError
         start, end, destination = [t.astimezone(config.tz) for t in (start, end, destination)]
+        if end <= now:
+            return f'指定的截止時間 {end:%H:%M} 已經過了；現在是 {now:%H:%M}。請指定未來時段。未變更任何行程。'
         if not now - timedelta(minutes=2) <= start < end <= now + timedelta(days=7) or destination < end or destination >= now + timedelta(days=7):
             raise ValueError
     except (AIError, ValueError, TypeError, OverflowError):

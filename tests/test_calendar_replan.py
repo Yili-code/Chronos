@@ -261,3 +261,36 @@ def test_ongoing_booking_that_ends_before_allow_is_rejected(setup):
     reply = asyncio.run(module.callback(planner, 123, 50, state['token'], 'allow', now.replace(minute=31)))
     assert 'Nothing changed' in reply
     calendar.move_event.assert_not_awaited()
+
+
+@pytest.mark.parametrize('text,hour,minute', [
+    ('清空今天現在到下午三點前的所有行程', 15, 0),
+    ('清空今天現在到下午兩點半前的所有事情', 14, 30),
+    ('騰出今天從現在到晚上九點之前的活動', 21, 0),
+    ('清空今天現在到下午3點15分前的行程', 15, 15),
+])
+def test_explicit_same_day_window_is_deterministic(text, hour, minute):
+    result = module.explicit_window(text, NOW)
+    assert result.actionable
+    assert module.datetime.fromisoformat(result.end) == NOW.replace(hour=hour, minute=minute)
+
+
+def test_exact_screenshot_does_not_depend_on_ai(setup):
+    planner, calendar, events, task, now = ongoing_study(setup)
+    planner.ai.parse_replan.side_effect = AssertionError('Exact time must not call AI')
+    reply = asyncio.run(module.preview(planner, 123, '清空今天現在到下午三點前的所有行程', 80, now))
+    assert isinstance(reply, dict)
+    planner.ai.parse_replan.assert_not_awaited()
+    calendar.move_event.assert_not_awaited()
+
+
+def test_past_explicit_cutoff_is_not_shifted_to_another_day(setup):
+    planner, calendar, events, task, now = ongoing_study(setup)
+    reply = asyncio.run(module.preview(planner, 123, '清空今天現在到下午二點前的所有行程', 81, now))
+    assert '14:00 已經過了' in reply
+    planner.ai.parse_replan.assert_not_awaited()
+    calendar.agenda.assert_not_awaited()
+
+
+def test_explicit_window_does_not_ignore_extra_conditions():
+    assert module.explicit_window('清空今天現在到下午三點前的所有行程，改排到明天', NOW) is None
