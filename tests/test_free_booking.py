@@ -35,6 +35,7 @@ def test_reply_previews_personal_event_then_allow_rechecks_and_books_once(store)
     assert 'Added to Calendar' in reply and 'Coffee with friends' in reply
     asyncio.run(free_booking_callback(store,cal,CFG,123,11,token,'allow',NOW))
     cal.insert.assert_awaited_once()
+    assert cal.insert.await_args.args[0]['colorId'] == '6'
     assert store.list_open_tasks()==[]
 
 

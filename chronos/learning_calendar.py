@@ -358,7 +358,7 @@ class LearningCalendar:
             if overlaps(start, end, busy):
                 self.update(task["id"], lambda old: {**old, "status": "queued"})
                 return "That time is now busy. A new proposal will require approval."
-            event = await self.calendar.insert({"id": event_id, "summary": task["title"],
+            event = await self.calendar.insert({"id": event_id, "summary": task["title"], "colorId": "10",
                 "description": "Chronos study block. Approved by the owner. Task #" + str(task["id"]),
                 "start": {"dateTime": state["start"], "timeZone": self.settings.timezone},
                 "end": {"dateTime": state["end"], "timeZone": self.settings.timezone},

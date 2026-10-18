@@ -100,7 +100,7 @@ async def free_booking_callback(db, calendar, settings, chat_id, message_id, tok
                                               *short_task_windows(start.date(),settings.tz,120)]):
             db.mutate_task_action_state(key,lambda old:{**old,'status':'conflict'})
             return 'That slot is no longer free. Nothing booked. Use /free to find another.'
-        event=await calendar.insert({'id':event_id,'summary':state['title'],
+        event=await calendar.insert({'id':event_id,'summary':state['title'],'colorId':'6',
             'start':{'dateTime':state['start'],'timeZone':settings.timezone},
             'end':{'dateTime':state['end'],'timeZone':settings.timezone},
             'visibility':'private','transparency':'opaque',

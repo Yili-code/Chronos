@@ -104,6 +104,7 @@ def test_only_one_proposal_is_shown_until_approval_succeeds(setup):
     assert "booked" in reply
     asyncio.run(planner.callback("approve", task["id"], first["token"], 50))
     assert calendar.insert.await_count == 1
+    assert calendar.insert.await_args.args[0]['colorId'] == '10'
     assert planner.get(task["id"])["status"] == "scheduled"
     calendar.busy.return_value = [(datetime.fromisoformat(first["start"]), datetime.fromisoformat(first["end"]))]
     asyncio.run(planner.tick(NOW))

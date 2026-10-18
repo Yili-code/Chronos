@@ -1,5 +1,11 @@
 # Approval-gated learning calendar
 
+Google Calendar uses blue (`colorId=9`) for fixed courses, green (`10`) for
+Chronos study bookings, and orange (`6`) for personal activities created through
+`/free`. Colors describe the booking source; personal activity titles are not
+classified by AI. Existing bookings retain their color when rescheduled.
+Course series are currently imported separately, rather than created by the runtime.
+
 Chronos can propose a study block after a task is created, write it to Google
 Calendar only after the owner presses **Allow**, and ask for progress after the
 event ends. The five-minute deadline scheduler also drives this workflow, so a
