@@ -15,6 +15,7 @@ from .course_tracking_store import session_from_firestore, session_to_firestore
 from .assignments import Assignment, to_record, from_record, set_deadline, owner_deadline_edit
 from .task_timing import normalize_timing, task_sort_key
 from .task_actions import TaskActions, task_fields
+from .database_metrics import measured
 
 
 class FirestoreDatabase(TaskActions):
@@ -51,6 +52,7 @@ class FirestoreDatabase(TaskActions):
     def _run_task_action(self, operation):
         return self._run_transaction(lambda transaction: operation())
 
+    @measured
     def get_task_action_state(self, key):
         snapshot = self.task_action_state.document(key).get(transaction=self._transaction.get())
         return snapshot.to_dict() if snapshot.exists else None
@@ -81,6 +83,7 @@ class FirestoreDatabase(TaskActions):
                     restored[key] = alias
             transaction.set(self.meta.document("tag_aliases"), restored)
 
+    @measured
     def check_ready(self) -> None:
         self.meta.document("runtime").get()
 
@@ -184,6 +187,7 @@ class FirestoreDatabase(TaskActions):
         snapshot = self.tasks.document(str(task_id)).get(transaction=self._transaction.get())
         return self._task_data(task_id, snapshot.to_dict()) if snapshot.exists else None
 
+    @measured
     def list_open_tasks(self) -> list[dict]:
         query = self.tasks.where(filter=FieldFilter("status", "==", "open"))
         active = self._transaction.get()
@@ -216,6 +220,7 @@ class FirestoreDatabase(TaskActions):
             return {"task_id": data["task_id"], "assignment": item, "task_exists": task.exists}
         return self._run_transaction(read)
 
+    @measured
     def list_assignment_keys(self) -> list[str]:
         return sorted(snapshot.id for snapshot in self.assignments.stream())
 
@@ -263,6 +268,7 @@ class FirestoreDatabase(TaskActions):
             return key
         return self._run_transaction(save)
 
+    @measured
     def list_announcements(self):
         return sorted((snapshot.id, snapshot.to_dict()) for snapshot in self.announcements.stream())
 

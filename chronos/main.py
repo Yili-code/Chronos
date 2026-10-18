@@ -12,6 +12,8 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from .database_metrics import snapshot as database_metrics_snapshot
+from .job_health import tracked_job, KEY as JOB_HEALTH_KEY
 from .db import create_database
 from .ai import AIError, ExternalAI
 from .ai_usage import AIUsageRecorder, format_ai_usage
@@ -233,6 +235,7 @@ def clear_tasks_reply() -> str:
     return f"Deleted {deleted} {noun}.\n\nNo open tasks. All clear."
 
 
+@tracked_job(lambda: db)
 async def send_daily_tasks() -> None:
     if settings.telegram_chat_id and telegram.enabled:
         result = await telegram.send_message(
@@ -342,6 +345,7 @@ async def delete_telegram_messages(chat_id: int, *message_ids: int | None) -> No
             raise HTTPException(status_code=502, detail="Mail interaction cleanup pending")
 
 
+@tracked_job(lambda: db)
 async def send_daily_mail():
     if not settings.enable_gmail:
         return {"enabled": False}
@@ -370,6 +374,7 @@ async def mail_status(x_chronos_scheduler_secret: str | None = Header(default=No
         raise HTTPException(status_code=503, detail=str(error)) from None
 
 
+@tracked_job(lambda: db)
 async def run_study_tick() -> dict:
     await reminders.tick(db, telegram, settings)
     if not settings.enable_study_tracking:
@@ -474,6 +479,8 @@ async def internal_status(x_chronos_scheduler_secret: str | None = Header(defaul
             configured_url = f"{settings.public_base_url.rstrip('/')}/telegram/webhook"
             actual_url = webhook.get("result", {}).get("url") if webhook.get("ok") else None
             snapshot["telegram_webhook"] = "configured" if configured_url and actual_url == configured_url else "mismatch"
+    snapshot["database_operations"] = database_metrics_snapshot()
+    snapshot["jobs"] = await run_in_threadpool(db.get_task_action_state, JOB_HEALTH_KEY) or {}
     snapshot["reminders"] = await run_in_threadpool(reminders.health_snapshot, db)
     return snapshot
 
@@ -497,10 +504,12 @@ async def trigger_daily_mail(x_chronos_scheduler_secret: str | None = Header(def
     return await send_daily_mail()
 
 
+@tracked_job(lambda: db)
 async def run_reminder_tick():
     return await reminders.tick(db, telegram, settings)
 
 
+@tracked_job(lambda: db)
 async def run_deadline_reminders():
     await reminders.tick(db, telegram, settings)
     error = None
@@ -532,6 +541,7 @@ def require_learning_scheduler_secret(value):
         raise HTTPException(status_code=403, detail="Invalid scheduler credential")
 
 
+@tracked_job(lambda: db)
 async def run_evening_agenda():
     return await send_evening_agenda(db, google_calendar, telegram, settings)
 

@@ -12,6 +12,7 @@ from .course_tracking_store import session_from_firestore, session_to_firestore
 from .assignments import Assignment, to_record, from_record, set_deadline, owner_deadline_edit
 from .task_timing import normalize_timing, task_sort_key
 from .task_actions import TaskActions, task_fields
+from .database_metrics import measured
 
 
 SCHEMA = """
@@ -100,6 +101,7 @@ class Database(TaskActions):
         with scope:
             return operation()
 
+    @measured
     def get_task_action_state(self, key):
         with self.connect() as connection:
             row = connection.execute("SELECT state_json FROM task_action_state WHERE state_key=?", (key,)).fetchone()
@@ -173,6 +175,7 @@ class Database(TaskActions):
                     "ALTER TABLE telegram_updates ADD COLUMN delivered_count INTEGER NOT NULL DEFAULT 0"
                 )
 
+    @measured
     def check_ready(self) -> None:
         with self.connect() as connection:
             connection.execute("SELECT 1").fetchone()
@@ -335,6 +338,7 @@ class Database(TaskActions):
             row = connection.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
         return self._task_data(row) if row is not None else None
 
+    @measured
     def list_open_tasks(self) -> list[dict]:
         with self.connect() as connection:
             rows = connection.execute(
@@ -364,6 +368,7 @@ class Database(TaskActions):
             item = replace(item, completed_at=datetime.fromisoformat(task["completed_at"]))
         return {"task_id": row["task_id"], "assignment": item, "task_exists": task is not None}
 
+    @measured
     def list_assignment_keys(self) -> list[str]:
         with self.connect() as connection:
             return [row[0] for row in connection.execute("SELECT source_key FROM assignments ORDER BY source_key")]
@@ -406,6 +411,7 @@ class Database(TaskActions):
             connection.execute('INSERT OR IGNORE INTO announcements VALUES (?, ?)', (key, json.dumps(record)))
         return key
 
+    @measured
     def list_announcements(self):
         with self.connect() as connection:
             return [(row[0], json.loads(row[1])) for row in connection.execute('SELECT source_key, record_json FROM announcements ORDER BY source_key')]
