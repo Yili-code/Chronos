@@ -810,13 +810,39 @@ class LearningCalendar:
             f"Completed {completed}/{total} pages. Continue from page {next_page}.",
             {"completed_pages": completed, "total_pages": total, "next_page": next_page, "session_pages": max(1, completed - previous)})
 
-    def feedback(self, task, token, outcome, actual_minutes, reason="", progress=None):
+    async def prepare_feedback(self, task, outcome, minutes, reason=""):
+        state = self.get(task['id'])
+        if not state or state.get('status') != 'scheduled':
+            return lambda: self.feedback(task, (state or {}).get('token'), outcome, minutes, reason)
+        try:
+            event = await self.calendar.event(state['event_id'])
+            if not event or event.get('status') == 'cancelled':
+                return lambda: 'This booking was cancelled. Use /plan to review it.'
+            if event.get('extendedProperties', {}).get('private', {}).get('chronosToken') != state['token']:
+                return lambda: 'Study booking ownership could not be verified. Use /plan to review it.'
+            end = datetime.fromisoformat(event['end']['dateTime'].replace('Z', '+00:00'))
+            if end.tzinfo is None:
+                raise ValueError('Missing timezone')
+        except (CalendarError, KeyError, ValueError, TypeError):
+            return lambda: 'Unable to verify this booking right now. Please try /studyfeedback again shortly.'
+        if end > datetime.now(self.settings.tz):
+            return lambda: 'This study session has not ended yet. Report after ' + display_time(end.isoformat(), self.settings.tz) + '.'
+        return lambda: self.feedback(task, state['token'], outcome, minutes, reason, verified_booking=state)
+
+    def feedback(self, task, token, outcome, actual_minutes, reason="", progress=None, *, verified_booking=None):
         if outcome not in {"done", "partial", "skipped"} or (actual_minutes is not None and not 0 <= actual_minutes <= 720):
             return "Use /studyfeedback <task-id> <minutes> done|partial|skipped [reason]."
         def record():
             state = self.get(task["id"])
-            if not state or state.get("token") != token or state.get("status") != "awaiting_feedback":
-                return "This session has already been handled or has not ended."
+            if not state or state.get("token") != token:
+                return "This study session is no longer current. Use /plan to review it."
+            if state.get('status') == 'scheduled':
+                if verified_booking is None:
+                    return 'This study session has not ended yet or needs booking verification. Use /studyfeedback to check it.'
+                if state != verified_booking:
+                    return 'This booking changed while checking it. Please try /studyfeedback again.'
+            elif state.get('status') != 'awaiting_feedback':
+                return 'This session has already been handled. Use /plan to review its current status.'
             live = next((item for item in self.db.list_open_tasks() if item["id"] == task["id"]), None)
             if not live or task_fields(live) != state["snapshot"]:
                 return "The task changed after booking. Use /plan to review before marking it complete."

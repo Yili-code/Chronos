@@ -1188,13 +1188,10 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
         return request_plan
     feedback = re.fullmatch(r"/studyfeedback\s+(\d+)\s+(\d+)\s+(done|partial|skipped)(?:\s+(.+))?", normalized, re.DOTALL)
     if feedback:
-        def record_feedback():
-            task = tasks.get_open_by_id(int(feedback[1]))
-            state = learning_calendar().get(int(feedback[1]))
-            if not task or not state:
-                return "No open study session matches that task."
-            return learning_calendar().feedback(task, state["token"], feedback[3], int(feedback[2]), feedback[4] or "")
-        return record_feedback
+        task = tasks.get_open_by_id(int(feedback[1]))
+        if not task:
+            return lambda: "No open study session matches that task."
+        return await learning_calendar().prepare_feedback(task, feedback[3], int(feedback[2]), feedback[4] or "")
     command = normalized[1:].strip() if normalized.startswith("/") else None
     if command is not None and (command == 'announcements' or command.startswith('announcements ')):
         from .announcement_commands import announcements_query

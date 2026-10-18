@@ -117,6 +117,7 @@ Webhook 會驗證 JSON 結構與整數 `update_id`，合法的非文字更新會
 
 Telegram owner menu 可用 `python -m chronos.telegram_menu` 更新並讀回驗證，保留既有項目並加入 `/today`、`/tasks`、`/help`、`/tomorrow`、`/free`。
 行程清單會依學習回報顯示 `✓ Finished`、`◐ Incomplete`、`− Skipped`；已結束但尚未回報的學習行程顯示 `◇ Awaiting`。未來行程與一般 Calendar 事件不會被推定為未執行。
+`/studyfeedback ID minutes done|partial|skipped` 可直接回報已結束的預約，不必等待背景追蹤。仍在 Booked 時會先查證 Calendar 最新結束時間與場次歸屬；尚未結束、已取消或已變更的場次不會寫入回報。
 
 ### Free a calendar window with review
 

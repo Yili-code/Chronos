@@ -76,6 +76,37 @@ def setup(request, tmp_path, monkeypatch):
     return planner, task, calendar, bot
 
 
+@pytest.mark.parametrize('case', ['ended', 'future', 'moved', 'cancelled', 'foreign', 'changed', 'unavailable'])
+def test_manual_feedback_verifies_booking_without_waiting_for_tick(setup, case):
+    from chronos.task_actions import task_fields
+    planner, task, calendar, _ = setup
+    state = {'status': 'scheduled', 'token': 'manual-feedback', 'event_id': 'event',
+             'snapshot': task_fields(task), 'end': (NOW - timedelta(hours=1)).isoformat()}
+    planner.update(task['id'], lambda old: state)
+    event = {'end': {'dateTime': (NOW + timedelta(hours=1) if case in {'future', 'moved'}
+                                else NOW - timedelta(hours=1)).isoformat()},
+             'extendedProperties': {'private': {'chronosToken': 'foreign' if case == 'foreign' else state['token']}}}
+    if case == 'cancelled':
+        event['status'] = 'cancelled'
+    calendar.event.return_value = event
+    if case == 'unavailable':
+        calendar.event.side_effect = CalendarError('Unavailable')
+    action = asyncio.run(planner.prepare_feedback(task, 'skipped', 0))
+    if case == 'changed':
+        planner.update(task['id'], lambda old: {**old, 'event_id': 'replacement'})
+    reply = action()
+    current = planner.get(task['id'])
+    if case == 'ended':
+        assert reply.startswith('Recorded.')
+        assert current['feedback']['outcome'] == 'skipped'
+        assert 'already been handled' in action()
+    else:
+        assert current['status'] == 'scheduled'
+        assert 'feedback' not in current
+        assert not reply.startswith('Recorded.')
+    calendar.insert.assert_not_awaited()
+
+
 def test_slot_avoids_class_and_calendar_and_ends_by_21(setup):
     planner, task, _, _ = setup
     busy = [(NOW.replace(hour=12), NOW.replace(hour=15))]
