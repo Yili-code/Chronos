@@ -131,3 +131,24 @@ def test_today_command(system, monkeypatch):
     assert start.date() == datetime.now(main.settings.tz).date()
     assert start.hour == 0 and end-start == timedelta(days=1)
     main.ai.parse.assert_not_awaited()
+
+
+@pytest.mark.parametrize("outcome,marker", [("done", "✓ Finished"), ("partial", "◐ Incomplete"), ("skipped", "− Skipped"), (None, "◇ Awaiting")])
+def test_agenda_progress_markers(outcome, marker):
+    from unittest.mock import Mock
+    db = Mock()
+    db.get_task_action_state.return_value = {"feedback": {"outcome": outcome}}
+    item = {**event(), "extendedProperties": {"private": {"chronosToken": "old-session"}}}
+    now = NOW + timedelta(days=2)
+    text = "\n".join(render_agenda([item], now.date(), NOW.tzinfo, db=db, now=now))
+    assert "Study graphs\n" + marker in text
+    db.get_task_action_state.assert_called_once_with("learning:history:old-session")
+
+
+def test_future_and_untracked_events_have_no_awaiting_marker():
+    from unittest.mock import Mock
+    db = Mock()
+    db.get_task_action_state.return_value = {}
+    item = {**event(), "extendedProperties": {"private": {"chronosToken": "future"}}}
+    text = "\n".join(render_agenda([item, event()], NOW.date(), NOW.tzinfo, db=db, now=NOW))
+    assert "Awaiting" not in text

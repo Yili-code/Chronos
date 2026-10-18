@@ -6,11 +6,28 @@ from uuid import uuid4
 from .task_timing import display_date
 
 
-def render_agenda(events, day, tz, label="Tomorrow"):
+def render_agenda(events, day, tz, label="Tomorrow", db=None, now=None):
     heading = f"<b>{label} · {display_date(day.isoformat())}</b>"
+    now = now or datetime.now(tz)
     rows = []
     for event in events:
         title = escape((event.get("summary") or "Untitled event")[:500])
+        props = event.get("extendedProperties", {}).get("private", {})
+        token = props.get("chronosToken")
+        marker = None
+        if db is not None and token:
+            state = db.get_task_action_state("learning:history:" + token) or {}
+            if not state and props.get("chronosTask"):
+                current = db.get_task_action_state("learning:task:" + props["chronosTask"]) or {}
+                if current.get("token") == token:
+                    state = current
+            outcome = state.get("feedback", {}).get("outcome")
+            marker = {"done": "✓ Finished", "partial": "◐ Incomplete", "skipped": "− Skipped"}.get(outcome)
+            finish = event.get("end", {}).get("dateTime")
+            if marker is None and finish and datetime.fromisoformat(finish) <= now:
+                marker = "◇ Awaiting"
+        if marker:
+            title += f"\n{marker}"
         if event["start"].get("date"):
             start = event["start"]["date"]
             rows.append((start, f"All day · {title}"))
@@ -31,14 +48,14 @@ def render_agenda(events, day, tz, label="Tomorrow"):
     return parts
 
 
-async def tomorrow_agenda(calendar, settings, now=None, *, day_offset=1):
+async def tomorrow_agenda(calendar, settings, now=None, *, day_offset=1, db=None):
     """Read the full local day live, without changing evening delivery receipts."""
     now = (now or datetime.now(settings.tz)).astimezone(settings.tz)
     day = now.date() + timedelta(days=day_offset)
     start = datetime.combine(day, time.min, settings.tz)
     await calendar.verify_owner()
     events = await calendar.agenda(start, start + timedelta(days=1))
-    return render_agenda(events, day, settings.tz, "Today" if day_offset == 0 else "Tomorrow")
+    return render_agenda(events, day, settings.tz, "Today" if day_offset == 0 else "Tomorrow", db=db, now=now)
 
 
 async def send_evening_agenda(db, calendar, telegram, settings, now=None):
@@ -54,7 +71,7 @@ async def send_evening_agenda(db, calendar, telegram, settings, now=None):
         await calendar.verify_owner()
         start = datetime.combine(day, time.min, settings.tz)
         events = await calendar.agenda(start, start + timedelta(days=1))
-        parts = render_agenda(events, day, settings.tz)
+        parts = render_agenda(events, day, settings.tz, db=db, now=now)
         state = db.mutate_task_action_state(key, lambda old: old or {"parts": parts, "next": 0, "status": "pending"})
     while state["next"] < len(state["parts"]):
         claim = uuid4().hex

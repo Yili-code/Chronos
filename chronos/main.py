@@ -1056,7 +1056,7 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
         command = normalized.split("@")[0].lower()
         label = "Today" if command == "/today" else "Tomorrow"
         try:
-            parts = await tomorrow_agenda(google_calendar, settings, day_offset=0 if command == "/today" else 1)
+            parts = await tomorrow_agenda(google_calendar, settings, day_offset=0 if command == "/today" else 1, db=db)
         except CalendarError:
             return lambda: f"{label}'s agenda is unavailable right now. Please try {command} again shortly."
         return lambda: message_bundle(*({"text": part, "parse_mode": "HTML"} for part in parts))
@@ -1082,7 +1082,7 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
         except CalendarError:
             return lambda: "目前無法讀取行事曆，尚不能確認這段時間是否有安排。沒有建立任務。"
         heading = f"Google Calendar · {day.isoformat()} {begin:02d}:00–{end:02d}:00"
-        parts = render_agenda(events, day, settings.tz)
+        parts = render_agenda(events, day, settings.tz, db=db)
         parts = [part.replace(f"Tomorrow · ", "", 1) for part in parts]
         parts[0] = escape(heading) + "\n\n" + parts[0]
         return lambda: message_bundle(*({"text": part, "parse_mode": "HTML"} for part in parts))
