@@ -130,6 +130,12 @@ at a dead end. An old Allow or duration/time choice only refreshes the view;
 it never approves or modifies the replacement. Proposal and Edit-menu message
 IDs are bound separately so returning to Edit on the original card still works.
 `/planedit <task-id> MM/DD HH:MM minutes` also revises a pending proposal.
+For an already booked task, this command directly moves the existing event,
+independently of the current proposal turn. Natural-language exact times and
+partial-progress remarks are supported. The original event ID is retained;
+Calendar conflicts, deadlines and daily study limits are checked again. An
+uncertain write is reconciled on retry before any further edit is accepted.
+Booked edits currently require an exact time within normal study hours.
 
 Manual entry keeps a chat-level session for two hours, refreshed after invalid
 input. Follow-up text does not need Telegram's reply arrow. `/cancel` returns to

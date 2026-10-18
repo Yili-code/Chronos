@@ -1338,3 +1338,69 @@ def test_earlier_is_available_from_existing_edit_cards(setup):
     reply = asyncio.run(planner.callback('earlier', task['id'], state['token'], 60))
     assert 'Updated' in reply
     calendar.insert.assert_not_awaited()
+
+
+def test_booked_edit_bypasses_other_proposal_and_preserves_progress(setup):
+    from types import SimpleNamespace
+    from chronos.task_actions import task_fields
+    planner, task, calendar, _ = setup
+    old_start = NOW.replace(hour=14)
+    state = {'status': 'scheduled', 'token': 'booked', 'event_id': 'existing',
+             'start': old_start.isoformat(), 'end': (old_start + timedelta(minutes=60)).isoformat(),
+             'minutes': 60, 'snapshot': task_fields(task)}
+    planner.update(task['id'], lambda old: state)
+    planner.db.mutate_task_action_state('learning:day:2026-10-19', lambda old: {'booked': 60})
+    other = planner.db.create_task('Other proposal', None, None, NOW)
+    planner.update(other['id'], lambda old: {'status': 'proposed', 'token': 'other'})
+    event = {'id': 'existing', 'etag': 'v1', '_calendar_id': planner.settings.calendar_id,
+             'start': {'dateTime': state['start']}, 'end': {'dateTime': state['end']},
+             'extendedProperties': {'private': {'chronosTask': str(task['id']), 'chronosToken': 'booked'}}}
+    calendar.event.return_value = event
+    calendar.agenda.return_value = [event]
+    planner.ai = SimpleNamespace(parse_schedule_edit=AsyncMock(return_value=SimpleNamespace(
+        actionable=True, timing='exact', start='2026-10-19T14:30:00+08:00', minutes=30,
+        progress_note='Partly completed')))
+    reply = asyncio.run(planner.revise(task['id'], 'booked', '今天兩點半 已完成部分', NOW))
+    assert 'updated' in reply
+    assert planner.get(task['id'])['progress_note'] == 'Partly completed'
+    assert planner.get(task['id'])['status'] == 'scheduled'
+    assert planner.get(other['id'])['status'] == 'proposed'
+    assert planner.db.get_task_action_state('learning:day:2026-10-19') == {'booked': 30}
+    calendar.insert.assert_not_awaited()
+    calendar.move_event.assert_awaited_once()
+    # A separate event overlapping the desired time must still block the move.
+    calendar.move_event.reset_mock()
+    changed = planner.get(task['id'])
+    event['start']['dateTime'], event['end']['dateTime'] = changed['start'], changed['end']
+    calendar.agenda.return_value = [event, {**event, 'id': 'fixed'}]
+    reply = asyncio.run(planner.revise(task['id'], 'booked', '10/19 14:30 30', NOW))
+    assert 'conflicts' in reply
+    calendar.move_event.assert_not_awaited()
+
+
+def test_booked_edit_recovers_uncertain_calendar_write(setup):
+    from chronos.task_actions import task_fields
+    planner, task, calendar, _ = setup
+    start = NOW.replace(hour=14)
+    state = {'status': 'scheduled', 'token': 'booked', 'event_id': 'existing',
+             'start': start.isoformat(), 'end': (start + timedelta(minutes=60)).isoformat(),
+             'minutes': 60, 'snapshot': task_fields(task)}
+    planner.update(task['id'], lambda old: state)
+    event = {'id': 'existing', 'etag': 'v1', '_calendar_id': planner.settings.calendar_id,
+             'start': {'dateTime': state['start']}, 'end': {'dateTime': state['end']},
+             'extendedProperties': {'private': {'chronosTask': str(task['id']), 'chronosToken': 'booked'}}}
+    calendar.event.return_value = event
+    calendar.agenda.return_value = [event]
+    async def uncertain(event_id, body, etag):
+        event.update(body)
+        event['etag'] = 'v2'
+        raise CalendarError('Uncertain write')
+    calendar.move_event.side_effect = uncertain
+    with pytest.raises(CalendarError):
+        asyncio.run(planner.revise(task['id'], 'booked', '10/19 14:30 30', NOW))
+    assert planner.get(task['id']).get('pending_reschedule')
+    reply = asyncio.run(planner.revise(task['id'], 'booked', '10/19 14:30 30', NOW))
+    assert 'recovered' in reply
+    assert planner.get(task['id'])['start'] == '2026-10-19T14:30:00+08:00'
+    assert 'pending_reschedule' not in planner.get(task['id'])
+    calendar.move_event.assert_awaited_once()
