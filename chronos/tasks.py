@@ -295,6 +295,19 @@ def is_course_scope_task(task: dict) -> bool:
     )
 
 
+def task_title_lines(title: str) -> list[str]:
+    """Separate chapter scope from its course name for narrow screens."""
+    title = display_task_title(title)
+    match = re.fullmatch(
+        r"(.+?)\s+Chapter\s+(\d+(?:\.\d+)?)\s*·\s*Continue pages\s+(\d+)\s*[–—-]\s*(\d+)",
+        title, re.IGNORECASE,
+    )
+    if match:
+        course, chapter, first, last = match.groups()
+        return [course, f"Chapter {chapter} · Pages {first}–{last}"]
+    return [title]
+
+
 def format_task_block(
     task: dict,
     tz,
@@ -305,7 +318,8 @@ def format_task_block(
 ) -> list[str]:
     prefix = f"{position}. " if position is not None else ""
     alert = "🚨 " if urgent_deadline(task, tz, now=now) else ""
-    lines = [f"{prefix}{alert}<b>{escape(display_task_title(task['title']))}</b>"]
+    title, *scope = task_title_lines(task['title'])
+    lines = [f"{prefix}{alert}<b>{escape(title)}</b>", *(escape(line) for line in scope)]
     for label, value in timing_details(task, tz):
         lines.append(f"<b>{label}</b> {escape(value)}")
     if task.get("planning_status") == "postponed":

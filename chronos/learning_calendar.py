@@ -12,7 +12,7 @@ from .course_tracking import COURSE_SCHEDULE
 from .google_calendar import CalendarError
 from .task_actions import task_fields
 from .task_timing import display_time
-from .tasks import is_course_scope_task
+from .tasks import is_course_scope_task, task_title_lines
 
 COURSE_SCOPE_MINUTES = 10
 
@@ -978,12 +978,10 @@ class LearningCalendar:
                 status = labels.get(state["status"], "Review required")
                 if state.get("delivery", "").endswith(("_uncertain", "_sending")):
                     status += " · message delivery needs review"
-                item = f"• <b>#{task['id']}</b> {escape(task['title'])}"
-                progress = state.get("progress") or {}
-                if progress.get("total_pages"):
-                    item += (f"\n  Progress · {progress.get('completed_pages', 0)}/{progress['total_pages']} pages")
-                if state.get("progress_note"):
-                    item += f"\n  {escape(state['progress_note'])}"
+                title, *scope = task_title_lines(task['title'])
+                item = f"• <b>#{task['id']}</b> {escape(title)}"
+                if scope:
+                    item += "\n  " + "\n  ".join(escape(line) for line in scope)
                 groups.setdefault(status, []).append(item)
         for status, tasks in groups.items():
             lines.extend(["", f"<b>{escape(status)}</b>", *tasks])
