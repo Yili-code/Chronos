@@ -11,6 +11,24 @@ from chronos.settings import Settings
 CFG = Settings(_env_file=None, telegram_chat_id=123)
 
 
+@pytest.mark.parametrize('age', [None, 4, 5])
+def test_interrupted_send_never_resends(store, age):
+    _, item = create(store)
+    now = NOW + timedelta(hours=1)
+    def interrupt(old):
+        record = {**old[item['token']], 'status': 'sending', 'claim': 'interrupted'}
+        if age is not None:
+            record['claimed_at'] = (now - timedelta(minutes=age)).isoformat()
+        return {**old, item['token']: record}
+    store.mutate_task_action_state(reminders.KEY, interrupt)
+    telegram = bot()
+    assert asyncio.run(reminders.tick(store, telegram, CFG, now)) == {'sent': 0}
+    assert store.get_task_action_state(reminders.KEY)[item['token']]['status'] == ('sending' if age == 4 else 'uncertain')
+    asyncio.run(reminders.tick(store, telegram, CFG, now + timedelta(minutes=5)))
+    assert store.get_task_action_state(reminders.KEY)[item['token']]['status'] == 'uncertain'
+    telegram.send_message.assert_not_awaited()
+
+
 def create(db, busy=False, uid=10, kind='call', minutes=None):
     ai = AsyncMock()
     ai.parse_reminder.return_value = ReminderOutput(actionable=True, title='Call with Kai',

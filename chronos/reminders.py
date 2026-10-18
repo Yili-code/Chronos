@@ -8,6 +8,20 @@ from uuid import uuid4
 from .telegram import TelegramError
 
 KEY = 'reminders:v1'
+SENDING_TIMEOUT = timedelta(minutes=5)
+
+
+def recover_stale_sends(db, now):
+    def recover(old):
+        items = dict(old or {})
+        for token, item in items.items():
+            if item['status'] == 'sending' and (
+                not item.get('claimed_at')
+                or now - datetime.fromisoformat(item['claimed_at']) >= SENDING_TIMEOUT
+            ):
+                items[token] = {**item, 'status': 'uncertain'}
+        return items
+    return db.mutate_task_action_state(KEY, recover)
 
 
 def preview_expired(item, now):
@@ -104,7 +118,7 @@ async def tick(db, telegram, settings, now=None):
     now = now or datetime.now(settings.tz)
     sent = 0
     failed = 0
-    for token, item in (db.get_task_action_state(KEY) or {}).items():
+    for token, item in recover_stale_sends(db, now).items():
         if item['status'] != 'active' or datetime.fromisoformat(item['start']) > now:
             continue
         claim = uuid4().hex
@@ -112,7 +126,7 @@ async def tick(db, telegram, settings, now=None):
             items = dict(old or {})
             current = items.get(token)
             if current and current['status'] == 'active':
-                items[token] = {**current, 'status': 'sending', 'claim': claim}
+                items[token] = {**current, 'status': 'sending', 'claim': claim, 'claimed_at': now.isoformat()}
             return items
         saved = db.mutate_task_action_state(KEY, reserve)[token]
         if saved.get('claim') != claim:

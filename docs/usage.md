@@ -187,3 +187,5 @@ and Telegram transports; this does not establish a live deployment or delivery.
 ## Reminder confirmation expiry
 
 `/reminders` hides pending overlap confirmations after 30 minutes or once the reminder start time is reached, whichever comes first. Active reminders remain visible. Listing reminders does not change stored state or call AI or Calendar. An expired confirmation cannot activate a reminder; send a new reminder instead.
+
+Interrupted reminder sends become `uncertain` after five minutes. Legacy sending records without timestamps also become uncertain. They remain visible in `/reminders` and are never automatically resent.
