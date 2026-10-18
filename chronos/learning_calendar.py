@@ -386,7 +386,7 @@ class LearningCalendar:
                 except CalendarError as error:
                     from .study_reflow import reconcile
                     await reconcile(self, state)
-                    self.update(task["id"], lambda old: {**old, "status": "needs_replan", "reflow_error": str(error)})
+                    self.update(task["id"], lambda old, message=str(error): {**old, "status": "needs_replan", "reflow_error": message})
                     return ("Calendar rearrangement paused. No new study event was created. "
                         "Some reviewed moves may already have succeeded; they are retained for reconciliation. "
                         f"Use /plan {task['id']} to prepare a fresh proposal. " + str(error))
@@ -979,8 +979,8 @@ class LearningCalendar:
             self.db.mutate_task_action_state("learning:health", lambda old: {"failures": 0})
             return result
         except CalendarError as error:
-            health = self.db.mutate_task_action_state("learning:health", lambda old: {
-                "error": str(error), "failures": (old or {}).get("failures", 0) + 1,
+            health = self.db.mutate_task_action_state("learning:health", lambda old, message=str(error): {
+                "error": message, "failures": (old or {}).get("failures", 0) + 1,
                 "notified": (old or {}).get("notified", False)})
             if health["failures"] >= 2 and not health["notified"]:
                 self.db.mutate_task_action_state("learning:health", lambda old: {**old, "notified": True})

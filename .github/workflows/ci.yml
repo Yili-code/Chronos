@@ -31,6 +31,9 @@ jobs:
           python -m pip install uv==0.12.3
           uv sync --locked --extra dev
 
+      - name: Check undefined names
+        run: uv run --with ruff==0.14.1 ruff check chronos scripts --select F821,F822,F823
+
       - name: Check Python source compilation
         run: uv run python -m compileall -q chronos scripts
 
