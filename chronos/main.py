@@ -633,6 +633,12 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         await deliver_learning_reply(chat_id, update_id, receipt)
         await telegram.answer_callback_query(update.callback_query.id)
         if settings.enable_learning_calendar:
+            # Deliver the next view before removing the card that was acted on.
+            deleted = await telegram.request("deleteMessage", {
+                "chat_id": chat_id, "message_id": source_message.message_id,
+            })
+            if not deleted.get("ok"):
+                logger.warning("Could not remove the handled study notification")
             try:
                 await learning_calendar().tick()
             except CalendarError:
