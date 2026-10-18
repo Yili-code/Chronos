@@ -330,6 +330,7 @@ class ExternalAI:
             "task": "No task was changed",
             "duration estimate": "No AI duration estimate was created",
             "schedule edit": "No study proposal was changed",
+            "calendar replan": "No Calendar arrangement was changed",
             "calendar event title": "No Calendar event was created",
             "class-day decision": "No class-day decision was saved",
             "progress summary": "No progress summary was created",

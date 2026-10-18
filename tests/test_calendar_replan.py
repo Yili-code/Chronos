@@ -178,3 +178,19 @@ def test_webhook_routes_preview_edit_cancel_and_deduplicates(system, monkeypatch
     payload['message']['text'] = '/cancel'
     assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 200
     assert main.db.get_task_action_state(module.key(123))['status'] == 'cancelled'
+
+
+def test_replan_calls_shared_ai_transport_and_validates_schema(monkeypatch):
+    import json
+    import httpx
+    from chronos.ai import ExternalAI
+    from test_ai import config, mock_provider
+    def handler(request):
+        payload = json.loads(request.content)
+        assert 'destination_start' in payload['generationConfig']['responseJsonSchema']['properties']
+        data = {'actionable': True, 'start': NOW.isoformat(),
+                'end': NOW.replace(hour=14).isoformat(), 'destination_start': NOW.replace(hour=14).isoformat()}
+        return httpx.Response(200, json={'candidates': [{'content': {'parts': [{'text': json.dumps(data)}]}}]})
+    mock_provider(monkeypatch, handler)
+    result = asyncio.run(ExternalAI(config()).parse_replan('清空到下午兩點', NOW))
+    assert result.actionable and result.end == NOW.replace(hour=14).isoformat()
