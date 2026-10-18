@@ -109,3 +109,7 @@ Webhook 會驗證 JSON 結構與整數 `update_id`，合法的非文字更新會
 
 
 回到 [本機啟動](getting-started.md) 或 [README](../README.md)。
+
+
+Telegram owner menu 可用 `python -m chronos.telegram_menu` 更新並讀回驗證，保留既有項目並加入 `/today`、`/tasks`、`/help`、`/tomorrow`、`/free`。
+行程清單會依學習回報顯示 `✓ Finished`、`◐ Incomplete`、`− Skipped`；已結束但尚未回報的學習行程顯示 `◇ Awaiting`。未來行程與一般 Calendar 事件不會被推定為未執行。
