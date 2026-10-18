@@ -62,6 +62,30 @@ def test_failed_calendar_does_not_save(store):
     assert not store.get_task_action_state(reminders.KEY)
 
 
+@pytest.mark.parametrize('elapsed', [30, 60])
+def test_list_hides_expired_previews_without_writing(store, elapsed):
+    _, active = create(store)
+    _, pending = create(store, uid=11)
+    before = store.get_task_action_state(reminders.KEY)
+    ai, calendar = AsyncMock(), AsyncMock()
+    reply = asyncio.run(reminders.command(store, ai, calendar, CFG, '/reminders', 123, 12,
+        NOW + timedelta(minutes=elapsed)))
+    assert active['token'] in reply
+    assert pending['token'] not in reply
+    assert store.get_task_action_state(reminders.KEY) == before
+    ai.parse_reminder.assert_not_awaited()
+    calendar.verify_owner.assert_not_awaited()
+    assert 'expired' in reminders.confirm(store, pending['token'], 'allow', 123,
+        NOW + timedelta(minutes=elapsed))
+
+
+def test_list_shows_unexpired_preview(store):
+    _, pending = create(store, busy=True)
+    reply = asyncio.run(reminders.command(store, AsyncMock(), AsyncMock(), CFG,
+        '/reminders', 123, 12, NOW + timedelta(minutes=29)))
+    assert pending['token'] in reply
+
+
 def test_unknown_delivery_never_repeats(store):
     from chronos.telegram import TelegramError
     create(store)

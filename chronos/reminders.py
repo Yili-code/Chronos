@@ -10,6 +10,10 @@ from .telegram import TelegramError
 KEY = 'reminders:v1'
 
 
+def preview_expired(item, now):
+    return now >= datetime.fromisoformat(item['expires_at']) or now >= datetime.fromisoformat(item['start'])
+
+
 def matches(text):
     if text.startswith('/'):
         return bool(re.match(r'^/(?:remind|reminders|cancelreminder)(?:\s|$)', text))
@@ -27,7 +31,8 @@ async def command(db, ai, calendar, settings, text, chat_id, update_id, now=None
     if text.strip() == '/reminders':
         items = (db.get_task_action_state(KEY) or {}).values()
         return '\n\n'.join(f"{item['token']} · {item['status']} · {line(item, settings)}" for item in items
-                           if item['status'] in {'active', 'pending', 'sending', 'uncertain'}) or 'No upcoming reminders.'
+                           if item['status'] in {'active', 'pending', 'sending', 'uncertain'}
+                           and not (item['status'] == 'pending' and preview_expired(item, now))) or 'No upcoming reminders.'
     if text.startswith('/cancelreminder '):
         return cancel(db, text.split(maxsplit=1)[1].strip(), chat_id)
     output = await ai.parse_reminder(re.sub(r'^/remind\s*', '', text), now)
@@ -85,7 +90,7 @@ def confirm(db, token, action, chat_id, now=None):
             items[token] = {**item, 'status': 'cancelled'}
             reply = 'Reminder cancelled.'
         elif action == 'allow' and item['status'] == 'pending':
-            expired = now >= datetime.fromisoformat(item['expires_at']) or now >= datetime.fromisoformat(item['start'])
+            expired = preview_expired(item, now)
             items[token] = {**item, 'status': 'expired' if expired else 'active'}
             reply = 'Preview expired. Send a new reminder.' if expired else 'Reminder added. No completion update needed.'
         return items

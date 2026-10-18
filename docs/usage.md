@@ -182,3 +182,8 @@ and Telegram transports; this does not establish a live deployment or delivery.
 
 `/today` shows each linked task’s fixed ID after its duration, for example
 `180 minutes(123)`. Calendar events without a task reference omit the ID.
+
+
+## Reminder confirmation expiry
+
+`/reminders` hides pending overlap confirmations after 30 minutes or once the reminder start time is reached, whichever comes first. Active reminders remain visible. Listing reminders does not change stored state or call AI or Calendar. An expired confirmation cannot activate a reminder; send a new reminder instead.
