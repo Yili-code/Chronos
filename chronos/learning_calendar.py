@@ -492,10 +492,15 @@ class LearningCalendar:
                 return "This edit menu is no longer active. Use Edit on the latest proposal."
             if action != "manual":
                 return await self.revise(task_id, token, action, now)
-            return {"messages": [{"text": "Describe the duration and start time, e.g. \"One hour soon; partly completed.\"\n\n"
-                "Or send 10/20 15:00 60 or Sunday morning. Omit minutes to keep the current duration.\n"
-                "Continue typing here; /cancel returns to the edit menu.\n"
-                "The revised proposal still needs Allow before booking.",
+            return {"messages": [{"text": "<b>Change study time</b>\n\n"
+                "Reply with a start time, duration, or both.\n\n"
+                "<b>Examples</b>\n"
+                "• One hour on Sunday morning\n"
+                "• Sunday morning — keep the current duration\n"
+                "• <code>10/20 15:00 60</code> — 60 minutes\n\n"
+                "Send your reply here. /cancel returns to the edit menu.\n\n"
+                "Review the revised proposal, then tap <b>Allow</b> to book.",
+                "parse_mode": "HTML",
                 "reply_markup": {"force_reply": True}, "learning_edit": {"task_id": task_id, "token": token}}]}
         if action == "partial" and state["status"] == "awaiting_feedback":
             return {"messages": [{"text": "Report focused minutes | completed pages/total pages | next page.\nExample: 135 | 20/48 | 21\nExclude breaks and phone time. /cancel keeps the session open.",
