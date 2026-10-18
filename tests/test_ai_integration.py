@@ -25,7 +25,9 @@ def test_telegram_uses_external_ai(task_service, monkeypatch):
     monkeypatch.setattr(main.ai, "parse", parse)
     reply = asyncio.run(main.handle_message("新增 工作"))
     assert reply.startswith("<b>Task created</b>")
-    assert "<b>Review external analysis</b>\n<b>Due</b> " in reply
+    assert "<b>Review external analysis</b>" in reply
+    assert "<b>Due</b>" not in reply
+    assert task_service.list_open()[0]["due_at"] is None
     assert "<b>Tasks</b>\n1. " in reply
     assert parse.await_count == 1
     due = datetime(2026, 9, 20, 12, tzinfo=main.settings.tz)
