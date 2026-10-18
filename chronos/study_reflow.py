@@ -21,7 +21,7 @@ def bounds(event, tz):
     raise CalendarError("A calendar event has no usable time. Earlier planning paused.")
 
 
-def movable(event, settings, now):
+def movable(event, settings, now, *, allow_started=False):
     owner = settings.calendar_account.casefold()
     primary = settings.calendar_id.strip().casefold()
     source = event.get("_calendar_id", "").casefold()
@@ -32,7 +32,8 @@ def movable(event, settings, now):
         and event.get("etag") and event.get("eventType", "default") == "default"
         and not event.get("recurringEventId") and not event.get("recurrence")
         and not event.get("attendees") and not event.get("attendeesOmitted")
-        and event.get("start", {}).get("dateTime") and bounds(event, settings.tz)[0] > now
+        and event.get("start", {}).get("dateTime")
+        and bounds(event, settings.tz)[1 if allow_started else 0] > now
         and 0 < (bounds(event, settings.tz)[1] - bounds(event, settings.tz)[0]).total_seconds() <= 180 * 60
         and not re.search(r"上課|課表|課程|\b(class|lecture|laboratory)\b", event.get("summary", ""), re.I))
 
@@ -143,7 +144,8 @@ async def apply(planner, task, state, now):
             if bounds(event, planner.settings.tz) != desired:
                 raise ReflowReviewError("A moved activity changed again. Reflow paused; check /plan.")
         elif event.get("etag") != move["etag"] or not movable(
-                {**event, "_calendar_id": planner.settings.calendar_id}, planner.settings, now):
+                {**event, "_calendar_id": planner.settings.calendar_id}, planner.settings, now,
+                allow_started=bool(state.get("window_replan") and move["task_id"] is not None)):
             raise ReflowReviewError("A reviewed activity changed. Reflow paused; check /plan.")
         if move["task_id"] is not None:
             saved = planner.get(move["task_id"])

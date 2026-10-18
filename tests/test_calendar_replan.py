@@ -194,3 +194,70 @@ def test_replan_calls_shared_ai_transport_and_validates_schema(monkeypatch):
     mock_provider(monkeypatch, handler)
     result = asyncio.run(ExternalAI(config()).parse_replan('清空到下午兩點', NOW))
     assert result.actionable and result.end == NOW.replace(hour=14).isoformat()
+
+def ongoing_study(setup):
+    planner, calendar, events = initialize(setup)
+    request_time = NOW.replace(hour=14, minute=8)
+    planner.ai.parse_replan.return_value = ReplanOutput(actionable=True, start=request_time.isoformat(),
+        end=NOW.replace(hour=15).isoformat(), destination_start=NOW.replace(hour=15).isoformat())
+    task = planner.db.list_open_tasks()[0]
+    event = events['personal']
+    event['start']['dateTime'] = NOW.replace(hour=13).isoformat()
+    event['end']['dateTime'] = NOW.replace(hour=14, minute=30).isoformat()
+    event['extendedProperties'] = {'private': {'chronosTask': str(task['id']), 'chronosToken': 'ongoing-study'}}
+    planner.update(task['id'], lambda old: {'status': 'scheduled', 'token': 'ongoing-study', 'event_id': event['id'],
+        'start': event['start']['dateTime'], 'end': event['end']['dateTime'], 'minutes': 90})
+    planner.db.mutate_task_action_state('learning:day:' + NOW.date().isoformat(), lambda old: {'ongoing-study': 90})
+    return planner, calendar, events, task, request_time
+
+
+def test_ongoing_verified_study_previews_full_duration_and_waits_for_allow(setup):
+    planner, calendar, events, task, now = ongoing_study(setup)
+    result = asyncio.run(module.preview(planner, 123, '清空今天現在到下午三點前的所有行程', 71, now))
+    assert isinstance(result, dict), result
+    from chronos.study_reflow import movable
+    assert not movable(events['personal'], planner.settings, now)
+    message = result['messages'][0]
+    assert '已開始' in message['text'] and '未推定完成進度' in message['text']
+    module.bind(planner.db, 123, 50, message)
+    state = planner.db.get_task_action_state(module.key(123))
+    move = state['calendar_moves'][0]
+    assert move['already_started']
+    assert module.datetime.fromisoformat(move['end']) - module.datetime.fromisoformat(move['start']) == timedelta(minutes=90)
+    assert module.datetime.fromisoformat(move['start']) >= now.replace(hour=15, minute=0)
+    calendar.move_event.assert_not_awaited()
+    assert 'updated' in asyncio.run(module.callback(planner, 123, 50, state['token'], 'allow', now))
+    assert planner.get(task['id'])['minutes'] == 90
+    assert planner.db.list_open_tasks()[0]['status'] == 'open'
+    assert planner.db.list_open_tasks()[0]['due_at'] == task['due_at']
+    asyncio.run(module.callback(planner, 123, 50, state['token'], 'allow', now))
+    assert calendar.move_event.await_count == 1
+
+
+@pytest.mark.parametrize('change', ['awaiting_feedback', 'token', 'state_time', 'pending_edit'])
+def test_ongoing_study_still_requires_verified_live_booking(setup, change):
+    planner, calendar, events, task, now = ongoing_study(setup)
+    if change == 'awaiting_feedback':
+        now = now.replace(hour=14, minute=31)
+        planner.ai.parse_replan.return_value.start = now.isoformat()
+        events['personal']['end']['dateTime'] = now.replace(hour=15).isoformat()
+        planner.update(task['id'], lambda old: {**old, 'end': now.replace(hour=15).isoformat(), 'status': 'awaiting_feedback'})
+    elif change == 'token':
+        events['personal']['extendedProperties']['private']['chronosToken'] = 'changed'
+    elif change == 'state_time':
+        planner.update(task['id'], lambda old: {**old, 'start': NOW.replace(hour=12).isoformat()})
+    else:
+        planner.update(task['id'], lambda old: {**old, 'pending_reschedule': {'marker': 'pending'}})
+    reply = asyncio.run(module.preview(planner, 123, 'free until 3pm', 72, now))
+    assert '不能自動移動' in reply
+    calendar.move_event.assert_not_awaited()
+
+
+def test_ongoing_booking_that_ends_before_allow_is_rejected(setup):
+    planner, calendar, events, task, now = ongoing_study(setup)
+    result = asyncio.run(module.preview(planner, 123, 'free until 3pm', 73, now))
+    module.bind(planner.db, 123, 50, result['messages'][0])
+    state = planner.db.get_task_action_state(module.key(123))
+    reply = asyncio.run(module.callback(planner, 123, 50, state['token'], 'allow', now.replace(minute=31)))
+    assert 'Nothing changed' in reply
+    calendar.move_event.assert_not_awaited()

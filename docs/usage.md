@@ -127,10 +127,13 @@ new window or earliest replacement time (for example `改排到明天以後`); *
 keeps the original arrangement. `/cancel` also exits this edit session. Every
 replacement proposal requires a fresh Allow; old cards cannot approve it.
 
-Only future, owner-created, non-recurring private activities on the configured
-calendar are movable, at most five per proposal. Classes, shared/all-day events,
-secondary calendars, ongoing events and unverified study bookings block the
-whole proposal and are named explicitly. Moves retain event IDs and durations;
+Only owner-created, non-recurring private activities on the configured
+calendar are movable, at most five per proposal. Personal activities must start
+in the future. A verified Chronos study booking may already have started, but
+must not have ended; its preview states that the full original duration is
+retained without inferring completed work. Classes, shared/all-day events,
+secondary calendars, ongoing personal events and unverified study bookings block
+the whole proposal and are named with their blocking reason. Moves retain event IDs and durations;
 tracked study retains its deadline and updates its booking/budget records.
 Destinations are searched after the freed window within seven days, respecting
 study hours, meals, course policy, reservations and daily study limits. Other

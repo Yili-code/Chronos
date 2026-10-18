@@ -18,6 +18,8 @@ def card(state):
     lines = ['<b>Review calendar changes</b>',
              f"Free: {escape(state['start'])} → {escape(state['end'])}"]
     for move in state['calendar_moves']:
+        if move.get('already_started'):
+            lines += ['', '已開始；未推定完成進度，保留原時長。']
         lines += ['', '<b>' + escape(move['title']) + '</b>',
                   f"{move['old_start'][:16].replace('T', ' ')}–{move['old_end'][11:16]}",
                   f"→ {move['start'][:16].replace('T', ' ')}–{move['end'][11:16]}"]
@@ -74,7 +76,7 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
         linked = next((i for i, s in states.items() if s and s.get('event_id') == event['id']
                        and event.get('_calendar_id', '').casefold() in {config.calendar_id.casefold(), config.calendar_account.casefold(), 'primary'}), None)
         props = event.get('extendedProperties', {}).get('private', {})
-        eligible = movable(event, config, now)
+        eligible = movable(event, config, now, allow_started=linked is not None)
         if linked is not None or props.get('chronosTask'):
             saved = states.get(linked) or {}
             eligible = (eligible and saved.get('status') == 'scheduled'
@@ -82,7 +84,19 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
                 and not saved.get('pending_reschedule')
                 and window == tuple(datetime.fromisoformat(saved[k]) for k in ('start', 'end')))
         if not eligible:
-            blocked.append(event.get('summary', 'Untitled activity'))
+            reasons = []
+            if window[1] <= now:
+                reasons.append('活動已結束')
+            elif window[0] <= now and linked is None:
+                reasons.append('已開始，且不是可核對的學習預約')
+            if event.get('recurringEventId') or event.get('recurrence'):
+                reasons.append('重複活動')
+            if event.get('attendees') or event.get('attendeesOmitted'):
+                reasons.append('共用活動')
+            if not event.get('start', {}).get('dateTime'):
+                reasons.append('全天活動')
+            reason = '、'.join(reasons) or '擁有權、課程限制或學習紀錄未通過核對'
+            blocked.append(f"{event.get('summary', 'Untitled activity')} ({window[0]:%H:%M}–{window[1]:%H:%M})：{reason}")
         else:
             selected.append((event, window, linked))
     if blocked:
@@ -120,6 +134,7 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
             'task_id': linked, 'task_token': states[linked]['token'] if linked is not None else None,
             'task_snapshot': task_fields(task) if linked is not None else None,
             'old_start': old[0].isoformat(), 'old_end': old[1].isoformat(),
+            'already_started': old[0] <= now,
             'start': slot[0].isoformat(), 'end': slot[1].isoformat()})
     state = {'status': 'pending', 'token': token, 'chat_id': chat_id, 'start': start.isoformat(),
              'end': end.isoformat(), 'destination_start': destination.isoformat(), 'calendar_moves': moves,
