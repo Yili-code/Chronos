@@ -487,8 +487,10 @@ class LearningCalendar:
     async def revise(self, task_id, token, instruction, now=None):
         if not self.settings.enable_learning_calendar:
             return "Learning calendar is disabled."
+        state = self.get(task_id)
+        booked_edit = state and state.get("status") == "scheduled" and state.get("token") == token
         active = self.sync_queue()
-        if active != task_id:
+        if active != task_id and not booked_edit:
             return self.waiting_turn(active)
         now = now or datetime.now(self.settings.tz)
         claim = uuid4().hex
@@ -498,6 +500,9 @@ class LearningCalendar:
         if lease["claim"] != claim:
             return "Another proposal is being prepared. Reply again shortly."
         try:
+            if booked_edit:
+                from .study_reschedule import reschedule
+                return await reschedule(self, task_id, token, instruction, now)
             return await self._revise(task_id, token, instruction, now)
         finally:
             self.db.mutate_task_action_state("learning:tick", lambda old: {**old, "until": now.isoformat()}
