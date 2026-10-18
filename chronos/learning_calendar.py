@@ -225,6 +225,7 @@ class LearningCalendar:
                 "duration_source": (old or {}).get("duration_source"),
                 "duration_estimate": (old or {}).get("duration_estimate"),
                 "progress_note": (old or {}).get("progress_note", ""),
+                "progress": (old or {}).get("progress"),
                 "retire_on_send": [*((old or {}).get("retire_on_send", [])),
                     *((old or {}).get(key) for key in ("message_id", "edit_message_id") if (old or {}).get(key))]}
             self.db._save_task_action_state(f"learning:task:{task_id}", state)
@@ -285,6 +286,12 @@ class LearningCalendar:
                     f"{display_time(state['start'], self.settings.tz)}–{end:%H:%M} · {state['minutes']} minutes")
             if state.get("progress_note"):
                 text += f"\n\nProgress {escape(state['progress_note'])}"
+            if state.get("calendar_moves"):
+                text += "\n\n<b>Calendar changes on Allow</b>"
+                for move in state["calendar_moves"]:
+                    text += (f"\n{escape(move['title'])}\n"
+                        f"{display_time(move['old_start'], self.settings.tz)}–{datetime.fromisoformat(move['old_end']):%H:%M}"
+                        f" → {display_time(move['start'], self.settings.tz)}–{datetime.fromisoformat(move['end']):%H:%M}")
             estimate = state.get("duration_estimate")
             if state.get("duration_source") == "ai" and estimate:
                 text += (f"\n\nAI estimate {estimate['estimated_minutes']} minutes total · {escape(estimate['confidence'])} confidence"
@@ -293,7 +300,7 @@ class LearningCalendar:
                     text += "\nThis proposal covers one session; more work may remain."
             elif state.get("duration_source") in {"default", "profile"}:
                 text += "\n\nBased on completed sessions." if state["duration_source"] == "profile" else "\n\nDefault estimate; AI estimate unavailable."
-            buttons = self.buttons(task["id"], state, [("approve", "Allow"), ("edit", "Edit"), ("postpone", "Postpone")])
+            buttons = self.buttons(task["id"], state, [("approve", "Allow"), ("edit", "Edit"), ("earlier", "Earlier"), ("postpone", "Postpone")])
         return text, buttons
 
     async def deliver_proposal(self, task, state):
@@ -336,6 +343,17 @@ class LearningCalendar:
             if end > cutoff and state.get("late_window") != {"start": state["start"], "end": state["end"]}:
                 self.update(task["id"], lambda old: {**old, "status": "queued"})
                 return "Late study needs confirmation. A fresh proposal will require approval."
+            if state.get("calendar_moves"):
+                from .study_reflow import apply as apply_reflow
+                try:
+                    await apply_reflow(self, task, state, now)
+                except CalendarError as error:
+                    from .study_reflow import reconcile
+                    await reconcile(self, state)
+                    self.update(task["id"], lambda old: {**old, "status": "needs_replan", "reflow_error": str(error)})
+                    return ("Calendar rearrangement paused. No new study event was created. "
+                        "Some reviewed moves may already have succeeded; they are retained for reconciliation. "
+                        f"Use /plan {task['id']} to prepare a fresh proposal. " + str(error))
             busy = await self.calendar.busy(start, end)
             if overlaps(start, end, busy):
                 self.update(task["id"], lambda old: {**old, "status": "queued"})
@@ -425,6 +443,8 @@ class LearningCalendar:
                 return "This proposal changed or was already approved. No booked event was changed."
             return (f"Postponed · {task['title']}\nWaiting for external conditions. The deadline is unchanged.\n"
                     f"Use /plan {task_id} when ready. The next task will be proposed.")
+        if action == "earlier":
+            return await self.revise(task_id, token, "earlier", now)
         if action == "edit":
             changed = self.update(task_id, lambda old: {**old, "status": "editing"}
                 if old.get("token") == token and old["status"] == "proposed" else old)
@@ -441,6 +461,10 @@ class LearningCalendar:
                 "Continue typing here; /cancel returns to the edit menu.\n"
                 "The revised proposal still needs Allow before booking.",
                 "reply_markup": {"force_reply": True}, "learning_edit": {"task_id": task_id, "token": token}}]}
+        if action == "partial" and state["status"] == "awaiting_feedback":
+            return {"messages": [{"text": "Report focused minutes | completed pages/total pages | next page.\nExample: 135 | 20/48 | 21\nExclude breaks and phone time. /cancel keeps the session open.",
+                "reply_markup": {"force_reply": True},
+                "learning_edit": {"task_id": task_id, "token": token, "mode": "feedback"}}]}
         if action in {"done", "partial", "skipped"}:
             return self.feedback(task, token, action, state["minutes"] if action == "done" else 0 if action == "skipped" else None)
         if action in {"reject", "retry"}:
@@ -479,7 +503,7 @@ class LearningCalendar:
             self.db.mutate_task_action_state("learning:tick", lambda old: {**old, "until": now.isoformat()}
                 if old["claim"] == claim else old)
 
-    async def _revise(self, task_id, token, instruction, now, allow_late=False):
+    async def _revise(self, task_id, token, instruction, now, allow_late=False, calendar_moves=None):
         state = self.get(task_id)
         if not state or state.get("token") != token or state["status"] not in {"proposed", "editing"}:
             return "This proposal has already been handled. Use /plan."
@@ -500,7 +524,7 @@ class LearningCalendar:
             if pending["expires_at"] <= now.isoformat():
                 return "That confirmation expired. Send the requested time again."
             return await self._revise(task_id, token, pending["instruction"], now, allow_late=True)
-        if instruction in {"more", "lots", "shuffle"}:
+        if instruction in {"more", "lots", "shuffle", "earlier"}:
             return await self.suggest_revision(task, state, instruction, now)
         match = re.fullmatch(r"\s*((?:\d{4}-\d{2}-\d{2})|(?:\d{1,2}/\d{1,2}))\s+(\d{1,2}:\d{2})(?:\s+(\d{1,3})(?:\s*(?:minutes|min|分鐘))?)?\s*", instruction, re.IGNORECASE)
         if not match:
@@ -543,6 +567,14 @@ class LearningCalendar:
             elif other["status"] == "proposed" and window[0] > now:
                 pending[other_id] = window
         budget = sum((self.db.get_task_action_state("learning:day:" + day) or {}).values())
+        original_budget = budget
+        for move in calendar_moves or []:
+            if move["task_id"] is not None:
+                other = self.get(move["task_id"])
+                if move["old_start"][:10] == day:
+                    budget -= other["minutes"]
+                if move["start"][:10] == day:
+                    budget += other["minutes"]
         policy = self.db.get_task_action_state("learning:course-calendar-policy")
         classes = class_windows(start.date(), self.settings.tz, policy)
         load = budget + minutes + sum((b-a).total_seconds()/60 for a,b in classes)
@@ -551,7 +583,7 @@ class LearningCalendar:
             return "That day would exceed your class + study limit. Choose another day or a shorter block."
         await self.calendar.verify_owner()
         busy = await self.calendar.busy(start, end)
-        if overlaps(start, end, [*busy, *classes, *hard]):
+        if overlaps(start, end, [*([] if calendar_moves else busy), *classes, *hard]):
             return "That time conflicts with a class, calendar event or approved booking. Choose another time."
         displaced = {other_id for other_id, window in pending.items() if overlaps(start, end, [window])}
         remaining = sorted(((other_id, window) for other_id, window in pending.items()
@@ -576,6 +608,9 @@ class LearningCalendar:
             "end": end.isoformat(), "minutes": minutes, "requested_minutes": minutes, "duration_source": "owner",
             "snapshot": task_fields(task), "delivery": "proposal_pending"}
         revised["retire_on_send"] = [state[key] for key in ("message_id", "edit_message_id") if state.get(key)]
+        revised.pop("calendar_moves", None)
+        if calendar_moves:
+            revised["calendar_moves"] = calendar_moves
         revised.pop("pending_late", None)
         revised.pop("late_window", None)
         if end > normal_stop and allow_late:
@@ -589,7 +624,7 @@ class LearningCalendar:
             fresh = {other_id: self.get(other_id) for other_id in others}
             live_budget = sum((self.db.get_task_action_state("learning:day:" + day) or {}).values())
             if (not current or current.get("token") != token or current["status"] not in {"proposed", "editing"}
-                    or live_budget != budget or any(signature(fresh[k]) != signature(v) for k,v in others.items())):
+                    or live_budget != original_budget or any(signature(fresh[k]) != signature(v) for k,v in others.items())):
                 return False
             self.db._save_task_action_state(f"learning:task:{task_id}", revised)
             for other_id in displaced:
@@ -693,6 +728,27 @@ class LearningCalendar:
         return await self._revise(task["id"], state["token"], f"{slot[0]:%Y-%m-%d %H:%M} {minutes}", now)
 
     async def suggest_revision(self, task, state, option, now):
+        if option == "earlier":
+            stop = datetime.fromisoformat(state["start"])
+            await self.calendar.verify_owner()
+            busy = await self.calendar.busy(now, stop)
+            hard = [(datetime.fromisoformat(other["start"]), datetime.fromisoformat(other["end"]))
+                for item in self.db.list_open_tasks() if item["id"] != task["id"]
+                for other in [self.get(item["id"])] if other and other.get("start") and other["status"] == "creating"]
+            booked = {(now + timedelta(days=i)).date().isoformat():
+                sum((self.db.get_task_action_state("learning:day:" + (now + timedelta(days=i)).date().isoformat()) or {}).values())
+                for i in range(8)}
+            slot = find_slot(task, now, busy, hard, self.settings, state["minutes"], booked,
+                self.db.get_task_action_state("learning:course-calendar-policy"), window=(now, stop))
+            if not slot:
+                from .study_reflow import preview
+                reflow = await preview(self, task, state, now)
+                if not reflow:
+                    return "No earlier arrangement fits while preserving classes, shared events, deadlines and daily limits. Try a shorter block in Edit."
+                slot, moves = reflow
+                return await self._revise(task["id"], state["token"],
+                    f"{slot[0]:%Y-%m-%d %H:%M} {state['minutes']}", now, calendar_moves=moves)
+            return await self._revise(task["id"], state["token"], f"{slot[0]:%Y-%m-%d %H:%M} {state['minutes']}", now)
         extra = 5 if is_course_scope_task(task) else 30
         minutes = min(180, state["minutes"] + extra if option == "more" else
                       state["minutes"] * 2 if option == "lots" else state["minutes"])
@@ -731,7 +787,25 @@ class LearningCalendar:
                     "confirmed calendar events and daily class + study limit. Try a shorter block or another deadline.")
         return await self._revise(task["id"], state["token"], instruction(slot[0]), now)
 
-    def feedback(self, task, token, outcome, actual_minutes, reason=""):
+    def partial_reply(self, task_id, token, instruction):
+        match = re.fullmatch(r"\s*(\d+)\s*\|\s*(\d+)\s*/\s*(\d+)\s*\|\s*(\d+)\s*", instruction)
+        task = next((t for t in self.db.list_open_tasks() if t["id"] == task_id), None)
+        if not task:
+            return "This task is no longer open."
+        if not match:
+            return "Use focused minutes | completed pages/total pages | next page. Example: 135 | 20/48 | 21"
+        minutes, completed, total, next_page = map(int, match.groups())
+        if not 0 < minutes <= 720 or not 0 < completed < total or next_page != completed + 1:
+            return "Check minutes and page counts; next page should follow completed pages."
+        state = self.get(task_id) or {}
+        previous = (state.get("progress") or {}).get("completed_pages", 0)
+        if state.get("status") == "awaiting_feedback" and completed <= previous:
+            return "Completed pages must increase from the previous report."
+        return self.feedback(task, token, "partial", minutes,
+            f"Completed {completed}/{total} pages. Continue from page {next_page}.",
+            {"completed_pages": completed, "total_pages": total, "next_page": next_page, "session_pages": max(1, completed - previous)})
+
+    def feedback(self, task, token, outcome, actual_minutes, reason="", progress=None):
         if outcome not in {"done", "partial", "skipped"} or (actual_minutes is not None and not 0 <= actual_minutes <= 720):
             return "Use /studyfeedback <task-id> <minutes> done|partial|skipped [reason]."
         def record():
@@ -756,6 +830,14 @@ class LearningCalendar:
                 "status": "finished" if outcome == "done" else "queued" if outcome == "partial" else "needs_replan",
                 "feedback": {"outcome": outcome, "actual_minutes": actual_minutes,
                     "reason": reason[:1000], "recorded_at": datetime.now(self.settings.tz).isoformat()}}
+            if outcome == "partial":
+                recorded["progress_note"] = reason[:1000]
+                recorded["duration_estimate"] = None
+                if progress:
+                    recorded["progress"] = progress
+                    remaining = actual_minutes * (progress["total_pages"] - progress["completed_pages"]) / progress["session_pages"]
+                    recorded["requested_minutes"] = max(15, min(180, math.ceil(remaining / 15) * 15))
+                    recorded["duration_source"] = "owner"
             self.db._save_task_action_state("learning:history:" + token, recorded)
             self.db._save_task_action_state(f"learning:task:{task['id']}", recorded)
             return ("Completed and recorded. Future duration suggestions will use your reported time." if outcome == "done"
@@ -786,7 +868,7 @@ class LearningCalendar:
                 "Different duration? For 15 minutes completed, send\n"
                 f"<code>/studyfeedback {task['id']} 15 done</code>")
         return text, self.buttons(task["id"], state,
-            [("done", "Done as planned"), ("partial", "Need more time"), ("skipped", "Did not start")])
+            [("done", "Done as planned"), ("partial", "Partially completed"), ("skipped", "Did not start")])
 
     async def deliver_feedback(self, task, state):
         text, buttons = self.feedback_content(task, state)

@@ -617,7 +617,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             await telegram.answer_callback_query(update.callback_query.id)
         return {"ok": True}
     if update.callback_query and (update.callback_query.data or "").startswith("learn:"):
-        matched = re.fullmatch(r"learn:(approve|edit|postpone|more|lots|shuffle|manual|reject|retry|done|partial|skipped):(\d+):([a-f0-9]{32})", update.callback_query.data)
+        matched = re.fullmatch(r"learn:(approve|edit|earlier|postpone|more|lots|shuffle|manual|reject|retry|done|partial|skipped):(\d+):([a-f0-9]{32})", update.callback_query.data)
         if not matched or source_message.message_id is None:
             raise HTTPException(status_code=400, detail="Invalid study callback")
         receipt = db.get_update(update_id)
@@ -660,14 +660,16 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                 db.mutate_task_action_state(pending_key, lambda old: {} if (old or {}).get("token") == study_edit["token"] else old)
             else:
                 try:
-                    reply = await learning_calendar().revise(study_edit["task_id"], study_edit["token"], instruction)
+                    reply = (learning_calendar().partial_reply(study_edit["task_id"], study_edit["token"], instruction)
+                        if study_edit.get("mode") == "feedback" else
+                        await learning_calendar().revise(study_edit["task_id"], study_edit["token"], instruction))
                 except CalendarError as error:
                     reply = str(error)
                 state = learning_calendar().get(study_edit["task_id"])
-                if not state or state.get("token") != study_edit["token"] or state["status"] != "editing":
+                if not state or state.get("token") != study_edit["token"] or state["status"] != ("awaiting_feedback" if study_edit.get("mode") == "feedback" else "editing"):
                     db.mutate_task_action_state(pending_key, lambda old: {} if (old or {}).get("token") == study_edit["token"] else old)
                 else:
-                    db.mutate_task_action_state(pending_key, lambda old: {"task_id": study_edit["task_id"],
+                    db.mutate_task_action_state(pending_key, lambda old: {**study_edit, "task_id": study_edit["task_id"],
                         "token": study_edit["token"], "expires_at": (datetime.now(settings.tz) + timedelta(hours=2)).isoformat()})
             receipt = db.process_update(update_id, lambda: reply)
         await deliver_learning_reply(chat_id, update_id, receipt)

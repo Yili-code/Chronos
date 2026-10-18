@@ -72,7 +72,7 @@ def test_agenda_expands_pages_normalizes_primary_and_omits_declined():
     calendar.request = AsyncMock(side_effect=[{"items": [first], "nextPageToken": "page2"},
                                             {"items": [cancelled, declined]}])
     result = asyncio.run(calendar.agenda(NOW, NOW + timedelta(days=1)))
-    assert result == [first]
+    assert result == [{**first, "_calendar_id": "primary"}]
     assert calendar.request.await_count == 2
     assert calendar.request.await_args.kwargs["params"]["pageToken"] == "page2"
     assert calendar.request.await_args.args[1] == "calendars/primary/events"

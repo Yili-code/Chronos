@@ -43,12 +43,12 @@ class GoogleCalendar:
             except (httpx.HTTPError, ValueError, KeyError, TypeError):
                 raise CalendarError("Google Calendar authorization is temporarily unavailable.") from None
 
-    async def request(self, method, path, *, body=None, params=None, missing=False):
+    async def request(self, method, path, *, body=None, params=None, missing=False, etag=None):
         token = await self.token()
         try:
             async with httpx.AsyncClient(timeout=25, transport=self.transport) as client:
                 r = await client.request(method, "https://www.googleapis.com/calendar/v3/" + path,
-                    headers={"Authorization": "Bearer " + token}, json=body, params=params)
+                    headers={"Authorization": "Bearer " + token, **({"If-Match": etag} if etag else {})}, json=body, params=params)
             if missing and r.status_code == 404:
                 return None
             if not r.is_success:
@@ -106,12 +106,18 @@ class GoogleCalendar:
                     declined = any(a.get("self") and a.get("responseStatus") == "declined"
                                    for a in event.get("attendees", []))
                     if event.get("status") != "cancelled" and not declined and key not in seen:
-                        events.append(event)
+                        events.append({**event, "_calendar_id": calendar_id})
                         seen.add(key)
                 page = data.get("nextPageToken")
                 if not page:
                     break
         return events
+
+    async def move_event(self, event_id, body, etag):
+        if not etag:
+            raise CalendarError("Event version is missing. Prepare a new proposal.")
+        return await self.request("PATCH", self.events_path() + "/" + quote(event_id, safe=""),
+            body=body, params={"sendUpdates": "none"}, etag=etag)
 
     async def insert(self, body):
         return await self.request("POST", self.events_path(), body=body, params={"sendUpdates": "none"})

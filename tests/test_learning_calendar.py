@@ -300,7 +300,7 @@ def test_edit_replaces_card_and_requires_fresh_approval(setup):
     old = planner.get(task["id"])
     text, buttons = planner.proposal_content(task, old)
     assert "10/19 (Mon)" in text
-    assert [b["text"] for b in buttons] == ["Allow", "Edit", "Postpone"]
+    assert [b["text"] for b in buttons] == ["Allow", "Edit", "Earlier", "Postpone"]
     prompt = asyncio.run(planner.callback("edit", task["id"], old["token"], 50))
     assert len(prompt["messages"][0]["reply_markup"]["inline_keyboard"]) == 5
     prompt = asyncio.run(planner.callback("manual", task["id"], old["token"], 50))
@@ -1084,3 +1084,185 @@ def test_tonight_permission_request_is_deterministic_and_still_needs_confirmatio
     assert pending['pending_late']['instruction']=='2026-10-19 20:00 90'
     assert not pending.get('late_window')
     calendar.insert.assert_not_awaited()
+
+def test_partial_pages_keep_task_open_and_estimate_remaining(setup):
+    planner, task, calendar, _ = setup
+    asyncio.run(planner.tick(NOW))
+    state = planner.get(task['id'])
+    planner.update(task['id'], lambda old: {**old, 'status': 'awaiting_feedback'})
+    reply = planner.partial_reply(task['id'], state['token'], '135 | 20/48 | 21')
+    assert 'Recorded' in reply
+    saved = planner.get(task['id'])
+    assert saved['feedback']['actual_minutes'] == 135
+    assert saved['progress']['next_page'] == 21
+    assert saved['requested_minutes'] == 180
+    assert saved['status'] == 'queued'
+    assert 'already' in planner.partial_reply(task['id'], state['token'], '135 | 20/48 | 21')
+    calendar.insert.assert_not_awaited()
+
+
+def test_earlier_revises_without_calendar_write(setup):
+    planner, task, calendar, _ = setup
+    asyncio.run(planner.tick(NOW))
+    planner.update(task['id'], lambda old: {**old,
+        'start': (NOW + timedelta(days=2)).isoformat(),
+        'end': (NOW + timedelta(days=2, minutes=90)).isoformat()})
+    state = planner.get(task['id'])
+    reply = asyncio.run(planner.callback('earlier', task['id'], state['token'], 50))
+    assert 'Updated' in reply
+    assert planner.get(task['id'])['start'] < state['start']
+    calendar.insert.assert_not_awaited()
+
+
+def reflow_calendar(planner, calendar):
+    from copy import deepcopy
+    start = datetime.fromisoformat('2026-10-18T13:00:00+08:00')
+    def event(key, title, begin, end, **extra):
+        return {'id': key, 'etag': 'v1', 'summary': title, '_calendar_id': 'primary',
+            'creator': {'email': 'owner@example.com'}, 'organizer': {'self': True},
+            'start': {'dateTime': begin.isoformat()}, 'end': {'dateTime': end.isoformat()}, **extra}
+    data = {'personal': event('personal', 'Personal reading', start, start + timedelta(hours=2)),
+        'fixed': event('fixed', 'Shared meeting', start + timedelta(hours=2), start + timedelta(hours=5),
+            attendees=[{'email': 'guest@example.com'}])}
+    async def agenda(begin, end):
+        return [deepcopy(e) for e in data.values()]
+    async def fetch(key):
+        return deepcopy(data.get(key))
+    async def move(key, body, etag):
+        assert data[key]['etag'] == etag
+        data[key].update(deepcopy(body))
+        data[key]['etag'] = 'v2'
+        return deepcopy(data[key])
+    async def busy(begin, end):
+        from chronos.study_reflow import bounds
+        return [bounds(e, planner.settings.tz) for e in data.values()
+            if bounds(e, planner.settings.tz)[0] < end and bounds(e, planner.settings.tz)[1] > begin]
+    calendar.agenda.side_effect = agenda
+    calendar.event.side_effect = fetch
+    calendar.move_event.side_effect = move
+    calendar.busy.side_effect = busy
+    return data, start - timedelta(minutes=30)
+
+
+def test_earlier_personal_moves_are_previewed_then_applied(setup):
+    from chronos.study_reflow import apply
+    from chronos.task_actions import task_fields
+    planner, task, calendar, _ = setup
+    data, now = reflow_calendar(planner, calendar)
+    state = {'token': 'a' * 32, 'status': 'proposed', 'snapshot': task_fields(task),
+        'minutes': 90, 'start': now.replace(hour=18, minute=0).isoformat(),
+        'end': now.replace(hour=19, minute=30).isoformat(), 'message_id': 50}
+    planner.update(task['id'], lambda old: state)
+    reply = asyncio.run(planner.suggest_revision(task, state, 'earlier', now))
+    assert 'Updated' in reply
+    revised = planner.get(task['id'])
+    assert revised['start'] == now.replace(hour=13, minute=0).isoformat()
+    assert revised['calendar_moves'][0]['event_id'] == 'personal'
+    text, _ = planner.proposal_content(task, revised)
+    assert 'Calendar changes on Allow' in text and 'Personal reading' in text
+    calendar.move_event.assert_not_awaited()
+    asyncio.run(apply(planner, task, revised, now))
+    assert data['personal']['start']['dateTime'] == now.replace(hour=18, minute=0).isoformat()
+    assert data['fixed']['etag'] == 'v1'
+    asyncio.run(apply(planner, task, revised, now))
+    assert calendar.move_event.await_count == 1
+
+
+def test_changed_personal_event_invalidates_reflow_before_writes(setup):
+    from chronos.study_reflow import preview, apply
+    planner, task, calendar, _ = setup
+    data, now = reflow_calendar(planner, calendar)
+    state = {'token': 'a' * 32, 'minutes': 90, 'start': now.replace(hour=18, minute=0).isoformat()}
+    slot, moves = asyncio.run(preview(planner, task, state, now))
+    state.update(start=slot[0].isoformat(), end=slot[1].isoformat(), calendar_moves=moves)
+    data['personal']['etag'] = 'externally-edited'
+    with pytest.raises(CalendarError, match='changed'):
+        asyncio.run(apply(planner, task, state, now))
+    calendar.move_event.assert_not_awaited()
+
+
+def test_shared_recurring_and_all_day_events_are_fixed(setup):
+    from chronos.study_reflow import movable
+    planner, _, calendar, _ = setup
+    data, now = reflow_calendar(planner, calendar)
+    assert movable(data['personal'], planner.settings, now)
+    assert not movable(data['fixed'], planner.settings, now)
+    assert not movable({**data['personal'], 'recurringEventId': 'series'}, planner.settings, now)
+    assert not movable({**data['personal'], '_calendar_id': 'secondary'}, planner.settings, now)
+    assert not movable({**data['personal'], 'summary': 'Lecture'}, planner.settings, now)
+    assert not movable({**data['personal'], 'start': {'date': '2026-10-18'},
+        'end': {'date': '2026-10-19'}}, planner.settings, now)
+
+
+def test_calendar_move_sends_conditional_version_header():
+    import httpx
+    config = Settings(_env_file=None, calendar_account='owner@example.com')
+    seen = []
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(412, json={'error': 'version changed'})
+    calendar = GoogleCalendar(config, transport=httpx.MockTransport(handler))
+    calendar.token = AsyncMock(return_value='test-token')
+    with pytest.raises(CalendarError, match='HTTP 412'):
+        asyncio.run(calendar.move_event('personal', {'start': {'dateTime': NOW.isoformat()}}, 'v1'))
+    assert seen[0].headers['If-Match'] == 'v1'
+    assert seen[0].method == 'PATCH'
+    assert seen[0].url.params['sendUpdates'] == 'none'
+
+
+def test_tracked_study_move_reconciles_budget_after_uncertain_write(setup):
+    from chronos.study_reflow import preview, apply, reconcile
+    planner, task, calendar, _ = setup
+    data, now = reflow_calendar(planner, calendar)
+    other = planner.db.create_task('Other study', NOW + timedelta(days=3), None, NOW, {})
+    linked = {'status': 'scheduled', 'token': 'b' * 32, 'event_id': 'personal', 'minutes': 120,
+        'start': data['personal']['start']['dateTime'], 'end': data['personal']['end']['dateTime']}
+    planner.update(other['id'], lambda old: linked)
+    data['personal']['extendedProperties'] = {'private': {'chronosTask': str(other['id']), 'chronosToken': linked['token']}}
+    day = now.date().isoformat()
+    planner.db.mutate_task_action_state('learning:day:' + day, lambda old: {linked['token']: 120})
+    state = {'token': 'a' * 32, 'minutes': 90, 'start': now.replace(hour=18, minute=0).isoformat()}
+    slot, moves = asyncio.run(preview(planner, task, state, now))
+    state.update(start=slot[0].isoformat(), end=slot[1].isoformat(), calendar_moves=moves)
+    original_move = calendar.move_event.side_effect
+    async def uncertain(*args):
+        await original_move(*args)
+        raise CalendarError('Ambiguous response')
+    calendar.move_event.side_effect = uncertain
+    with pytest.raises(CalendarError, match='Ambiguous'):
+        asyncio.run(apply(planner, task, state, now))
+    asyncio.run(reconcile(planner, state))
+    assert planner.get(other['id'])['start'] == moves[0]['start']
+    assert planner.db.get_task_action_state('learning:day:' + day)[linked['token']] == 120
+    asyncio.run(apply(planner, task, state, now))
+    assert calendar.move_event.await_count == 1
+
+
+def test_partial_feedback_replies_stay_in_feedback_flow(system, setup, monkeypatch):
+    client, tasks, bot, config = system
+    _, _, calendar, _ = setup
+    config.enable_learning_calendar = True
+    config.learning_enabled_since = '2020-01-01T00:00:00+08:00'
+    monkeypatch.setattr(main, 'google_calendar', calendar)
+    bot.send_message.return_value = {'ok': True, 'result': {'message_id': 50}}
+    task = tasks.create('Read chapter', NOW + timedelta(days=3))
+    planner = main.learning_calendar()
+    asyncio.run(planner.tick(NOW))
+    state = planner.get(task['id'])
+    planner.update(task['id'], lambda old: {**old, 'status': 'awaiting_feedback'})
+    headers = {'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}
+    payload = {'update_id': 99900, 'callback_query': {'id': 'partial',
+        'data': f"learn:partial:{task['id']}:{state['token']}",
+        'message': {'message_id': 50, 'chat': {'id': 123}}}}
+    assert client.post('/telegram/webhook', json=payload, headers=headers).status_code == 200
+    assert main.db.get_task_action_state('learning:edit-chat:123')['mode'] == 'feedback'
+    for offset, text in enumerate(['invalid report', '135 | 20/48 | 21']):
+        assert client.post('/telegram/webhook', headers=headers, json={
+            'update_id': 99901 + offset, 'message': {'message_id': 99901 + offset,
+                'chat': {'id': 123}, 'text': text}}).status_code == 200
+        if offset == 0:
+            assert main.db.get_task_action_state('learning:edit-chat:123')['mode'] == 'feedback'
+    assert planner.get(task['id'])['progress']['next_page'] == 21
+    assert not main.db.get_task_action_state('learning:edit-chat:123')
+    assert len(tasks.list_open()) == 1
+    main.ai.parse.assert_not_awaited()

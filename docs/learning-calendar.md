@@ -173,7 +173,7 @@ the Calendar event again to honor a changed end time; deleted/cancelled events
 are not recreated. Follow-up is deferred outside 09:00–21:00.
 
 - **Done as planned** records the planned duration and completes the task.
-- **Need more time** leaves the task open with unknown actual duration.
+- **Partially completed** asks for focused minutes, completed/total pages and the next page (for example `135 | 20/48 | 21`). It keeps the task open and uses the observed pace to estimate the remaining block, capped at 180 minutes. Breaks and phone time should be excluded.
   It queues another proposal, which still needs Allow before any calendar write.
 - **Did not start** leaves the task open and records zero study minutes.
 - `/studyfeedback <task-id> <minutes> done|partial|skipped [reason]` records actual
@@ -276,3 +276,5 @@ After a personal-event Allow succeeds and its confirmation is delivered, delete
 the matching preview card. Keep failed or uncertain previews available for retry.
 Cleanup retries reuse the saved update receipt without repeating the booking or
 success message; a missing preview is treated as already cleaned up.
+
+The **Earlier** proposal button searches before the current proposed start, within the deadline and daily limits. It can requeue conflicting unapproved proposals. If no free earlier slot fits, it previews moves of owner-created personal activities and Chronos study bookings. Every old/new time is listed before Allow. Classes, recurring/all-day events, shared events, secondary calendars and unverified events remain fixed. Personal activities stay on the same day; tracked study retains its own deadline. At most five activities move per proposal. Event versions are checked again on Allow. Interrupted writes are reconciled by a durable event marker; successfully applied moves are not automatically rolled back. A paused reflow requires a fresh /plan request. A revised proposal requires Allow.
