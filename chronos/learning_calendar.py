@@ -1003,5 +1003,6 @@ class LearningCalendar:
         if groups:
             lines.extend(["", "<b>Commands</b>",
                 "<code>/plan ID</code> — Request a proposal or resume a task.",
-                "<code>/planedit ID your request</code> — Describe your preferred time and duration naturally."])
+                "<code>/planedit ID your request</code> — Describe your preferred time and duration naturally.",
+                "<code>/studyfeedback ID minutes done|partial|skipped</code> — Record your actual study time and result."])
         return "\n".join(lines).strip() or "No study plans yet."

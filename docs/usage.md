@@ -121,7 +121,10 @@ Telegram owner menu 可用 `python -m chronos.telegram_menu` 更新並讀回驗�
 ### Free a calendar window with review
 
 `/replan 清空今天現在到下午兩點的行程` previews moves for activities overlapping
-that window. Each activity shows its original and proposed date/time. **Allow**
+that window. Complete same-day requests with an explicit morning/afternoon/evening
+cutoff are parsed directly without AI; past cutoffs are rejected without shifting
+to another day. Other phrasing uses the validated AI parser. Each activity shows
+its original and proposed date/time. **Allow**
 applies the reviewed arrangement; **Edit** opens a two-hour text session for a
 new window or earliest replacement time (for example `改排到明天以後`); **Cancel**
 keeps the original arrangement. `/cancel` also exits this edit session. Every
