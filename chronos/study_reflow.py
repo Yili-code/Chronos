@@ -6,6 +6,10 @@ from .google_calendar import CalendarError
 from .task_actions import task_fields
 
 
+class ReflowReviewError(CalendarError):
+    """Approval is stale; no Calendar writes were attempted in this call."""
+
+
 def bounds(event, tz):
     start, end = event.get("start", {}), event.get("end", {})
     if start.get("dateTime") and end.get("dateTime"):
@@ -134,18 +138,18 @@ async def apply(planner, task, state, now):
         applied = props.get("chronosReflow") == marker
         desired = (datetime.fromisoformat(move["start"]), datetime.fromisoformat(move["end"]))
         if not event or event.get("status") == "cancelled":
-            raise CalendarError("A reviewed activity was removed. Reflow paused; check /plan.")
+            raise ReflowReviewError("A reviewed activity was removed. Reflow paused; check /plan.")
         if applied:
             if bounds(event, planner.settings.tz) != desired:
-                raise CalendarError("A moved activity changed again. Reflow paused; check /plan.")
+                raise ReflowReviewError("A moved activity changed again. Reflow paused; check /plan.")
         elif event.get("etag") != move["etag"] or not movable(
                 {**event, "_calendar_id": planner.settings.calendar_id}, planner.settings, now):
-            raise CalendarError("A reviewed activity changed. Reflow paused; check /plan.")
+            raise ReflowReviewError("A reviewed activity changed. Reflow paused; check /plan.")
         if move["task_id"] is not None:
             saved = planner.get(move["task_id"])
             if (not saved or saved.get("token") != move["task_token"] or saved["status"] != "scheduled"
                     or move["task_snapshot"] != task_fields(tasks.get(move["task_id"], {}))):
-                raise CalendarError("A study booking changed. Reflow paused; check /plan.")
+                raise ReflowReviewError("A study booking changed. Reflow paused; check /plan.")
         current[move["event_id"]] = event
     days = {state["start"][:10]} | {m[k][:10] for m in moves for k in ("old_start", "start")}
     budgets = {day: dict(planner.db.get_task_action_state("learning:day:" + day) or {}) for day in days}
@@ -153,13 +157,14 @@ async def apply(planner, task, state, now):
         if move["task_id"] is not None:
             budgets[move["old_start"][:10]].pop(move["task_token"], None)
             budgets[move["start"][:10]][move["task_token"]] = planner.get(move["task_id"])["minutes"]
-    budgets[state["start"][:10]][state["token"]] = state["minutes"]
+    if not state.get("window_replan"):
+        budgets[state["start"][:10]][state["token"]] = state["minutes"]
     policy = planner.db.get_task_action_state("learning:course-calendar-policy")
     for day, bucket in budgets.items():
         classes = class_windows(datetime.fromisoformat(day).date(), planner.settings.tz, policy)
         load = sum(bucket.values()) + sum((b-a).total_seconds()/60 for a,b in classes)
         if load > planner.settings.learning_daily_minutes:
-            raise CalendarError("The reviewed arrangement now exceeds the daily study limit. Prepare a fresh proposal.")
+            raise ReflowReviewError("The reviewed arrangement now exceeds the daily study limit. Prepare a fresh proposal.")
     # Check destinations against all calendars again, including overlapping fixed events.
     begin = min(datetime.fromisoformat(m["start"]) for m in moves)
     end = max(datetime.fromisoformat(m["end"]) for m in moves)
@@ -170,9 +175,18 @@ async def apply(planner, task, state, now):
              if e.get("transparency") != "transparent" and not (
                  e.get("id") in moving_ids and e.get("_calendar_id", "").casefold() in
                  {planner.settings.calendar_id.casefold(), "primary" if planner.settings.calendar_id.casefold() == planner.settings.calendar_account.casefold() else planner.settings.calendar_id.casefold()})]
-    for start, stop in [(state["start"], state["end"]), *((m["start"], m["end"]) for m in moves)]:
+    targets = [(m["start"], m["end"]) for m in moves]
+    if not state.get("window_replan"):
+        targets.append((state["start"], state["end"]))
+    if state.get("window_replan"):
+        fixed += [(datetime.fromisoformat(s["start"]), datetime.fromisoformat(s["end"]))
+                  for t in tasks.values() for s in [planner.get(t["id"])]
+                  if s and s.get("start") and s.get("status") == "creating"]
+    if state.get("window_replan") and overlaps(datetime.fromisoformat(state["start"]), datetime.fromisoformat(state["end"]), fixed):
+        raise ReflowReviewError("The requested window has a new fixed activity. Replanning paused.")
+    for start, stop in targets:
         if datetime.fromisoformat(start) <= now or overlaps(datetime.fromisoformat(start), datetime.fromisoformat(stop), fixed):
-            raise CalendarError("A reviewed destination is now busy or has passed. Reflow paused; check /plan.")
+            raise ReflowReviewError("A reviewed destination is now busy or has passed. Reflow paused; check /plan.")
     for move in moves:
         event = current[move["event_id"]]
         props = event.get("extendedProperties", {}).get("private", {})

@@ -10,6 +10,7 @@ COMMANDS = {
     "help": "Show available commands",
     "tomorrow": "View tomorrow's calendar agenda",
     "free": "Find free calendar slots",
+    "replan": "Review moves to free a calendar window",
 }
 
 

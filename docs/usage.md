@@ -117,3 +117,28 @@ Webhook 會驗證 JSON 結構與整數 `update_id`，合法的非文字更新會
 
 Telegram owner menu 可用 `python -m chronos.telegram_menu` 更新並讀回驗證，保留既有項目並加入 `/today`、`/tasks`、`/help`、`/tomorrow`、`/free`。
 行程清單會依學習回報顯示 `✓ Finished`、`◐ Incomplete`、`− Skipped`；已結束但尚未回報的學習行程顯示 `◇ Awaiting`。未來行程與一般 Calendar 事件不會被推定為未執行。
+
+### Free a calendar window with review
+
+`/replan 清空今天現在到下午兩點的行程` previews moves for activities overlapping
+that window. Each activity shows its original and proposed date/time. **Allow**
+applies the reviewed arrangement; **Edit** opens a two-hour text session for a
+new window or earliest replacement time (for example `改排到明天以後`); **Cancel**
+keeps the original arrangement. `/cancel` also exits this edit session. Every
+replacement proposal requires a fresh Allow; old cards cannot approve it.
+
+Only future, owner-created, non-recurring private activities on the configured
+calendar are movable, at most five per proposal. Classes, shared/all-day events,
+secondary calendars, ongoing events and unverified study bookings block the
+whole proposal and are named explicitly. Moves retain event IDs and durations;
+tracked study retains its deadline and updates its booking/budget records.
+Destinations are searched after the freed window within seven days, respecting
+study hours, meals, course policy, reservations and daily study limits. Other
+natural-language constraints are rejected rather than silently ignored.
+
+Proposals expire after two hours. Allow rechecks event versions, task snapshots,
+calendar conflicts and daily budgets. Calendar writes are sequential, not an
+atomic multi-event transaction: if interrupted, some moves may already exist.
+Use Allow again to reconcile marked moves without applying a second edit.
+Externally changed activities require Calendar inspection; no automatic rollback
+is attempted. Nothing is deleted by `/replan`.

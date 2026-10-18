@@ -33,6 +33,7 @@ from .runtime_health import (
 from .task_actions import UndoConflict
 from .deadline_reminders import send_deadline_reminders
 from .free_time import free_slot_offer
+from . import calendar_replan
 from .free_booking import bind_free_message, preview_free_event, free_booking_callback
 from .evening_agenda import send_evening_agenda, tomorrow_agenda
 from .task_timing import display_time, task_sort_key, timing_details
@@ -71,6 +72,7 @@ HELP_SECTIONS = {
         "/classday &lt;instruction&gt; — confirm a course-specific instruction day\n"
         "/classday YYYY-MM-DD &lt;course-code&gt; class|off|auto — save an exact decision\n"
         "/calendar — view or edit TronClass scan dates\n"
+        "/replan &lt;instruction&gt; — preview moves to free a calendar window\n"
         "/free — find the next free two hours, excluding meals\n"
         "/today — view today’s full calendar agenda\n"
         "/tomorrow — view tomorrow’s full calendar agenda\n"
@@ -293,6 +295,8 @@ async def deliver_learning_reply(chat_id, update_id, receipt):
         raise HTTPException(status_code=502, detail="Study reply pending")
     if message.get("free_booking") and result.get("result", {}).get("message_id") is not None:
         bind_free_message(db, chat_id, result["result"]["message_id"], message)
+    if result.get("result", {}).get("message_id") is not None:
+        calendar_replan.bind(db, chat_id, result["result"]["message_id"], message)
     if message.get("learning_edit"):
         message_id = result.get("result", {}).get("message_id")
         if message_id is None:
@@ -588,6 +592,36 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
     if settings.telegram_chat_id and chat_id != settings.telegram_chat_id:
         raise HTTPException(status_code=403, detail="Unauthorized chat")
     update_id = update.update_id
+    replan_callback = re.fullmatch(r"replan:(allow|edit|cancel):([a-f0-9]{32})", update.callback_query.data or "") if update.callback_query else None
+    replan_session = db.get_task_action_state(calendar_replan.key(chat_id))
+    replan_command = re.fullmatch(r"/replan(?:@[A-Za-z0-9_]+)?(?:\s+(.+))?", source_message.text or "", re.DOTALL)
+    replan_edit = (not update.callback_query and update.message and replan_session
+        and replan_session.get("status") == "editing" and not source_message.reply_to_message
+        and replan_session.get("expires_at", "") > datetime.now(settings.tz).isoformat()
+        and (not (source_message.text or "").startswith("/") or source_message.text == "/cancel"))
+    if replan_callback or replan_command or replan_edit:
+        receipt = db.get_update(update_id)
+        if receipt is None:
+            try:
+                if not settings.enable_learning_calendar:
+                    reply = "Learning calendar is disabled. Nothing changed."
+                elif replan_callback:
+                    reply = await calendar_replan.callback(learning_calendar(), chat_id, source_message.message_id,
+                                                           replan_callback[2], replan_callback[1])
+                elif replan_edit and source_message.text == "/cancel":
+                    reply = await calendar_replan.callback(learning_calendar(), chat_id, replan_session.get("message_id"),
+                                                           replan_session["token"], "cancel")
+                else:
+                    instruction = replan_command[1] if replan_command else source_message.text
+                    reply = (await calendar_replan.preview(learning_calendar(), chat_id, instruction, update_id)
+                             if instruction else "Use /replan 清空今天現在到下午兩點的行程")
+            except CalendarError:
+                reply = "Calendar could not confirm the arrangement. Nothing further was changed. If you pressed Allow, tap it again to recover its result."
+            receipt = db.process_update(update_id, lambda: reply)
+        await deliver_learning_reply(chat_id, update_id, receipt)
+        if update.callback_query:
+            await telegram.answer_callback_query(update.callback_query.id)
+        return {"ok": True}
     free_callback = re.fullmatch(r"free:(allow|cancel):([a-f0-9]{32})", update.callback_query.data or "") if update.callback_query else None
     free_source = (db.get_task_action_state(f"free:message:{chat_id}:{source_message.reply_to_message.message_id}")
                    if source_message.reply_to_message and not update.callback_query else None)
@@ -894,6 +928,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             sent_id = result.get("result", {}).get("message_id")
             if sent_id is not None:
                 bind_free_message(db, chat_id, sent_id, message)
+                calendar_replan.bind(db, chat_id, sent_id, message)
             if message.get("task_id") is not None and sent_id is not None:
                 db.bind_task_message(chat_id, sent_id, message["task_id"])
             if receipt.get("messages"):
