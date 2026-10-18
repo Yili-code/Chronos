@@ -6,6 +6,7 @@ from html import escape
 from uuid import uuid4
 
 from .telegram import TelegramError
+from .reminder_maintenance import compact
 
 KEY = 'reminders:v1'
 SENDING_TIMEOUT = timedelta(minutes=5)
@@ -20,9 +21,9 @@ def recover_stale_sends(db, now):
                 or now - datetime.fromisoformat(item['claimed_at']) >= SENDING_TIMEOUT
             ):
                 items[token] = {**item, 'status': 'uncertain'}
-        return items
+        return compact(items, now)
     snapshot = db.get_task_action_state(KEY) or {}
-    if not any(item['status'] == 'sending' and (not item.get('claimed_at')
+    if compact(snapshot, now) == snapshot and not any(item['status'] == 'sending' and (not item.get('claimed_at')
         or now - datetime.fromisoformat(item['claimed_at']) >= SENDING_TIMEOUT) for item in snapshot.values()):
         return snapshot
     return db.mutate_task_action_state(KEY, recover)
