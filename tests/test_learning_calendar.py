@@ -819,9 +819,10 @@ def test_postpone_webhook_is_idempotent_and_plan_resumes_explicitly(system, setu
     assert planner.get(task["id"])["token"] == token
     resume = {"update_id": 99871, "message": {"message_id": 51, "chat": {"id": 123}, "text": f"/plan {task['id']}"}}
     assert client.post("/telegram/webhook", json=resume, headers=headers).status_code == 200
-    assert planner.get(task["id"])["status"] == "queued"
+    assert planner.get(task["id"])["status"] == "proposed"
+    assert planner.get(other["id"])["status"] == "queued"
     assert "planning_status" not in tasks.get_open_by_id(task["id"])
-    assert "queued" in asyncio.run(planner.callback("approve", task["id"], state["token"], 50))
+    assert "messages" in asyncio.run(planner.callback("approve", task["id"], state["token"], 50))
     calendar.insert.assert_not_awaited()
 
 
@@ -1436,3 +1437,26 @@ def test_booked_edit_recovers_uncertain_calendar_write(setup):
     assert planner.get(task['id'])['start'] == '2026-10-19T14:30:00+08:00'
     assert 'pending_reschedule' not in planner.get(task['id'])
     calendar.move_event.assert_awaited_once()
+
+
+def test_explicit_plan_prioritizes_requested_task_and_invalidates_old_card(setup):
+    planner, task, calendar, _ = setup
+    asyncio.run(planner.tick(NOW))
+    old = planner.get(task["id"])
+    other = planner.db.create_task("Requested next", NOW + timedelta(days=3), "general", NOW)
+    reply = planner.request_proposal(other["id"])
+    assert f"#{other['id']} is next" in reply
+    assert planner.get(task["id"])["status"] == "queued"
+    assert planner.get(task["id"])["token"] != old["token"]
+    asyncio.run(planner.tick(NOW))
+    assert planner.get(other["id"])["status"] == "proposed"
+    calendar.insert.assert_not_awaited()
+
+
+def test_explicit_plan_preserves_booking_in_progress(setup):
+    planner, task, calendar, _ = setup
+    planner.update(task["id"], lambda old: {"status": "creating", "token": "locked"})
+    planner.db.mutate_task_action_state("learning:proposal-queue", lambda old: {"active_task_id": task["id"]})
+    assert "already booked" in planner.request_proposal(task["id"])
+    assert planner.get(task["id"])["token"] == "locked"
+    calendar.insert.assert_not_awaited()

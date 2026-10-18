@@ -89,8 +89,11 @@ is read-only. Proposal preparation may wait until 09:00 during quiet hours.
 
 ## One proposal at a time
 
-The owner sees one current study proposal. New requests join a queue without
-reserving a time or daily budget. Edit keeps the same task active. Only a
+The owner sees one current study proposal. Automatic requests join a queue without
+reserving a time or daily budget. An explicit `/plan ID` gives that task the next
+approval turn, queues other unapproved proposals, and invalidates their old buttons.
+Existing bookings remain unchanged. While a Calendar write is in progress, the
+command reports the blocking task and asks the owner to retry after confirmation. Edit keeps the same task active. Only a
 successful, reconciled booking after Allow releases the turn and immediately
 prepares the next proposal against the updated Calendar and daily budget.
 Retries, uncertain writes and unavailable slots keep the current turn. Scheduled

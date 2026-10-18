@@ -1180,11 +1180,7 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
                 return "Learning calendar is disabled."
             if tasks.get_open_by_id(task_id) is None:
                 return "That task is not open. Use /tasks."
-            state = learning_calendar().get(task_id)
-            if state and state["status"] in {"creating", "scheduled", "awaiting_feedback"}:
-                return "A session is already booked or awaiting feedback. Use the existing card first."
-            learning_calendar().update(task_id, lambda old: {**(old or {}), "status": "queued"})
-            return "Study proposal requested. Calendar writing still waits for your approval."
+            return learning_calendar().request_proposal(task_id)
         return request_plan
     feedback = re.fullmatch(r"/studyfeedback\s+(\d+)\s+(\d+)\s+(done|partial|skipped)(?:\s+(.+))?", normalized, re.DOTALL)
     if feedback:

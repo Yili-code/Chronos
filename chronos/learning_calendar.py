@@ -181,6 +181,42 @@ class LearningCalendar:
                 self.db.mutate_task_action_state("learning:proposal-queue", lambda old: {**old,
                     "retire_message_ids": [value for value in old.get("retire_message_ids", []) if value != message_id]})
 
+    def request_proposal(self, task_id):
+        """Atomically give an explicit owner request the next approval turn."""
+        def request():
+            state = self.get(task_id) or {}
+            queue = self.db.get_task_action_state("learning:proposal-queue") or {}
+            active = queue.get("active_task_id")
+            active_state = self.get(active) if active is not None else None
+            if state.get("status") in {"creating", "scheduled", "awaiting_feedback"}:
+                return "A session is already booked or awaiting feedback. Use the existing card first."
+            if active_state and active_state.get("status") == "creating":
+                return f"Calendar confirmation for task #{active} is in progress. Try /plan {task_id} after it finishes."
+            retired = list(queue.get("retire_message_ids", []))
+            updates = {}
+            for task in self.db.list_open_tasks():
+                old = self.get(task["id"])
+                if not old or old.get("status") not in {"queued", "planning", "proposed", "editing", "no_slot"}:
+                    continue
+                retired.extend(old[key] for key in ("message_id", "edit_message_id") if old.get(key))
+                replacement = {**old, "status": "queued", "token": uuid4().hex,
+                    "requested_minutes": old.get("requested_minutes") or old.get("minutes")}
+                for key in ("start", "end", "message_id", "edit_message_id"):
+                    replacement.pop(key, None)
+                updates[task["id"]] = replacement
+            current = updates.get(task_id, state)
+            for key, replacement in updates.items():
+                self.db._save_task_action_state(f"learning:task:{key}", replacement)
+            self.db._save_task_action_state(f"learning:task:{task_id}",
+                {**current, "status": "queued", "token": uuid4().hex})
+            self.db._save_task_action_state("learning:proposal-queue", {**queue,
+                "active_task_id": task_id, "retire_message_ids": list(dict.fromkeys(retired))})
+            hour = datetime.now(self.settings.tz).hour
+            timing = ("Preparing its proposal" if self.settings.learning_start_hour <= hour < self.settings.learning_end_hour
+                else f"Proposal preparation resumes at {self.settings.learning_start_hour:02d}:00 after quiet hours")
+            return f"Task #{task_id} is next. {timing}; Calendar writing requires Allow."
+        return self.db._run_task_action(request)
+
     def waiting_turn(self, active):
         return (f"Confirm or edit the current proposal first (task #{active}). This task is queued."
                 if active else "This task is queued. The next proposal will be prepared shortly.")
