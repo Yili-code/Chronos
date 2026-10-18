@@ -9,6 +9,7 @@ from collections.abc import Callable
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, Header, HTTPException, Request
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .db import create_database
@@ -444,7 +445,7 @@ async def live() -> dict:
 
 
 @app.get("/ready")
-async def ready() -> dict:
+def ready() -> dict:
     try:
         return readiness_snapshot(db, settings)
     except (RuntimeConfigurationError, OSError, RuntimeError, ValueError):
@@ -459,7 +460,7 @@ async def internal_status(x_chronos_scheduler_secret: str | None = Header(defaul
         raise HTTPException(status_code=403, detail="Invalid scheduler credential")
     snapshot = configured_components(settings)
     try:
-        readiness_snapshot(db, settings)
+        await run_in_threadpool(readiness_snapshot, db, settings)
     except (RuntimeConfigurationError, OSError, RuntimeError, ValueError):
         snapshot["readiness"] = "failed"
     else:
@@ -473,6 +474,7 @@ async def internal_status(x_chronos_scheduler_secret: str | None = Header(defaul
             configured_url = f"{settings.public_base_url.rstrip('/')}/telegram/webhook"
             actual_url = webhook.get("result", {}).get("url") if webhook.get("ok") else None
             snapshot["telegram_webhook"] = "configured" if configured_url and actual_url == configured_url else "mismatch"
+    snapshot["reminders"] = await run_in_threadpool(reminders.health_snapshot, db)
     return snapshot
 
 
