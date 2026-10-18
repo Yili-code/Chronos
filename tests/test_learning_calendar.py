@@ -1266,3 +1266,25 @@ def test_partial_feedback_replies_stay_in_feedback_flow(system, setup, monkeypat
     assert not main.db.get_task_action_state('learning:edit-chat:123')
     assert len(tasks.list_open()) == 1
     main.ai.parse.assert_not_awaited()
+
+
+@pytest.mark.parametrize('change', ['budget', 'deadline'])
+def test_reflow_approval_rechecks_limits_and_task_deadline(setup, change):
+    from chronos.study_reflow import preview, apply
+    planner, task, calendar, _ = setup
+    data, now = reflow_calendar(planner, calendar)
+    other = planner.db.create_task('Other study', NOW + timedelta(days=3), None, NOW, {})
+    linked = {'status': 'scheduled', 'token': 'b' * 32, 'event_id': 'personal', 'minutes': 120,
+        'start': data['personal']['start']['dateTime'], 'end': data['personal']['end']['dateTime']}
+    planner.update(other['id'], lambda old: linked)
+    data['personal']['extendedProperties'] = {'private': {'chronosTask': str(other['id']), 'chronosToken': linked['token']}}
+    state = {'token': 'a' * 32, 'minutes': 90, 'start': now.replace(hour=18, minute=0).isoformat()}
+    slot, moves = asyncio.run(preview(planner, task, state, now))
+    state.update(start=slot[0].isoformat(), end=slot[1].isoformat(), calendar_moves=moves)
+    if change == 'budget':
+        planner.db.mutate_task_action_state('learning:day:' + now.date().isoformat(), lambda old: {'other-session': 500})
+    else:
+        planner.db.edit_task_with_undo(other['id'], 'Other study', now, None, {})
+    with pytest.raises(CalendarError):
+        asyncio.run(apply(planner, task, state, now))
+    calendar.move_event.assert_not_awaited()

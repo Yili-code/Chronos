@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, time
 import re
 
 from .google_calendar import CalendarError
+from .task_actions import task_fields
 
 
 def bounds(event, tz):
@@ -110,6 +111,7 @@ async def preview(planner, task, state, now):
             moves.append({"event_id": event["id"], "etag": event["etag"],
                 "title": event.get("summary", "Personal activity")[:100], "task_id": key,
                 "task_token": states[key]["token"] if key is not None else None,
+                "task_snapshot": task_fields(tasks[key]) if key is not None else None,
                 "old_start": window[0].isoformat(), "old_end": window[1].isoformat(),
                 "start": destination[0].isoformat(), "end": destination[1].isoformat()})
         if len(moves) == len(displaced):
@@ -120,11 +122,12 @@ async def preview(planner, task, state, now):
 
 async def apply(planner, task, state, now):
     """Replay uncertain writes using an event marker; never repeat a different edit."""
-    from .learning_calendar import overlaps
+    from .learning_calendar import overlaps, class_windows
     moves = state["calendar_moves"]
     marker = state["token"]
     # Re-read every event before the first write. Changed events invalidate approval.
     current = {}
+    tasks = {t["id"]: t for t in planner.db.list_open_tasks()}
     for move in moves:
         event = await planner.calendar.event(move["event_id"])
         props = (event or {}).get("extendedProperties", {}).get("private", {})
@@ -140,9 +143,23 @@ async def apply(planner, task, state, now):
             raise CalendarError("A reviewed activity changed. Reflow paused; check /plan.")
         if move["task_id"] is not None:
             saved = planner.get(move["task_id"])
-            if not saved or saved.get("token") != move["task_token"] or saved["status"] != "scheduled":
+            if (not saved or saved.get("token") != move["task_token"] or saved["status"] != "scheduled"
+                    or move["task_snapshot"] != task_fields(tasks.get(move["task_id"], {}))):
                 raise CalendarError("A study booking changed. Reflow paused; check /plan.")
         current[move["event_id"]] = event
+    days = {state["start"][:10]} | {m[k][:10] for m in moves for k in ("old_start", "start")}
+    budgets = {day: dict(planner.db.get_task_action_state("learning:day:" + day) or {}) for day in days}
+    for move in moves:
+        if move["task_id"] is not None:
+            budgets[move["old_start"][:10]].pop(move["task_token"], None)
+            budgets[move["start"][:10]][move["task_token"]] = planner.get(move["task_id"])["minutes"]
+    budgets[state["start"][:10]][state["token"]] = state["minutes"]
+    policy = planner.db.get_task_action_state("learning:course-calendar-policy")
+    for day, bucket in budgets.items():
+        classes = class_windows(datetime.fromisoformat(day).date(), planner.settings.tz, policy)
+        load = sum(bucket.values()) + sum((b-a).total_seconds()/60 for a,b in classes)
+        if load > planner.settings.learning_daily_minutes:
+            raise CalendarError("The reviewed arrangement now exceeds the daily study limit. Prepare a fresh proposal.")
     # Check destinations against all calendars again, including overlapping fixed events.
     begin = min(datetime.fromisoformat(m["start"]) for m in moves)
     end = max(datetime.fromisoformat(m["end"]) for m in moves)
