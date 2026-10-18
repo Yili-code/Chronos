@@ -179,3 +179,6 @@ Telegram cannot guarantee exactly-once delivery.
 
 Validation covers SQLite and a Firestore transaction fake with mocked Calendar
 and Telegram transports; this does not establish a live deployment or delivery.
+
+`/today` shows each linked task’s fixed ID after its duration, for example
+`180 minutes(123)`. Calendar events without a task reference omit the ID.

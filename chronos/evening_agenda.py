@@ -1,12 +1,13 @@
 """Cloud-driven tomorrow agenda with per-part durable delivery receipts."""
 from datetime import datetime, timedelta, time
 from html import escape
+import re
 from uuid import uuid4
 
 from .task_timing import display_date
 
 
-def render_agenda(events, day, tz, label="Tomorrow", db=None, now=None):
+def render_agenda(events, day, tz, label="Tomorrow", db=None, now=None, show_task_ids=False):
     heading = f"<b>{label} · {display_date(day.isoformat())}</b>"
     now = now or datetime.now(tz)
     rows = []
@@ -43,9 +44,11 @@ def render_agenda(events, day, tz, label="Tomorrow", db=None, now=None):
             start = datetime.fromisoformat(event["start"]["dateTime"]).astimezone(tz)
             end = datetime.fromisoformat(event["end"]["dateTime"]).astimezone(tz)
             duration = round((end - start).total_seconds() / 60)
+            task_id = str(props.get("chronosTask", ""))
+            task_suffix = f"({task_id})" if show_task_ids and re.fullmatch(r"[1-9][0-9]*", task_id) else ""
             begin = start.strftime("%H:%M") if start.date() == day else start.strftime("%m/%d %H:%M")
             stop = end.strftime("%H:%M") if end.date() == day else end.strftime("%m/%d %H:%M")
-            rows.append((start.isoformat(), f"{begin}–{stop} · {duration} minutes\n{title}"))
+            rows.append((start.isoformat(), f"{begin}–{stop} · {duration} minutes{task_suffix}\n{title}"))
     parts, text = [], heading
     for _, row in sorted(rows):
         if len(text) + len(row) > 3000:
@@ -63,7 +66,7 @@ async def tomorrow_agenda(calendar, settings, now=None, *, day_offset=1, db=None
     start = datetime.combine(day, time.min, settings.tz)
     await calendar.verify_owner()
     events = await calendar.agenda(start, start + timedelta(days=1))
-    return render_agenda(events, day, settings.tz, "Today" if day_offset == 0 else "Tomorrow", db=db, now=now)
+    return render_agenda(events, day, settings.tz, "Today" if day_offset == 0 else "Tomorrow", db=db, now=now, show_task_ids=day_offset == 0)
 
 
 async def send_evening_agenda(db, calendar, telegram, settings, now=None):

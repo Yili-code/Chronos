@@ -123,10 +123,20 @@ def test_today_command(system, monkeypatch):
     from chronos import main
     from datetime import datetime
     calendar = AsyncMock()
-    calendar.agenda.return_value = []
+    calendar.agenda.return_value = [
+        {**event(), "extendedProperties": {"private": {"chronosTask": "123"}}},
+        {**event("Personal event"), "id": "personal"},
+        {**event("Invalid task reference"), "id": "invalid",
+         "extendedProperties": {"private": {"chronosTask": "<invalid>"}}},
+    ]
     monkeypatch.setattr(main, "google_calendar", calendar)
     output = asyncio.run(main.prepare_message("/TODAY@ChronosBot"))()
     assert "Today" in output["messages"][0]["text"]
+    text = output["messages"][0]["text"]
+    assert "90 minutes(123)\nStudy graphs" in text
+    assert "90 minutes\nPersonal event" in text
+    assert "90 minutes\nInvalid task reference" in text
+    assert "<invalid>" not in text
     start, end = calendar.agenda.await_args.args
     assert start.date() == datetime.now(main.settings.tz).date()
     assert start.hour == 0 and end-start == timedelta(days=1)
