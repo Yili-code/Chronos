@@ -142,3 +142,33 @@ atomic multi-event transaction: if interrupted, some moves may already exist.
 Use Allow again to reconcile marked moves without applying a second edit.
 Externally changed activities require Calendar inspection; no automatic rollback
 is attempted. Nothing is deleted by `/replan`.
+
+## One-time reminders
+
+Send `/remind 今天下午五點半和 Kai 通電話`, or a natural message containing
+`提醒`, `通電話`, `打電話`, or `meeting`. Ambiguous dates or AM/PM require a new,
+clearer message; no reminder is created until the time is explicit.
+
+Calls and meetings default to 30 minutes. An explicit duration overrides this
+value; other reminders occupy a one-minute interval for overlap detection.
+Chronos checks the connected Calendar busy intervals and active reminders.
+Calendar failures prevent creation. A conflict creates only a pending preview:
+choose **Add anyway** or **Cancel**. To change the time, cancel the preview and
+send a new request. Approval expires after 30 minutes or at the reminder's start.
+
+`/reminders` lists reminders and their IDs; `/cancelreminder <id>` cancels an
+active reminder or pending preview. Reminders do not create tasks or Calendar
+events, require no completion update, and leave the active list after delivery.
+A confirmed overlap does not reschedule other activities.
+
+The local scheduler checks every minute. Cloud delivery uses the existing
+`/internal/learning`, `/internal/study`, and `/internal/deadlines` ticks, so its
+latency follows the configured Scheduler cadence (the base deployment's deadline
+job runs every five minutes). Notifications can arrive late after downtime.
+Delivery claims prevent concurrent or repeated ticks from sending twice. An
+ambiguous Telegram outcome remains `uncertain` (or `sending` after an interrupted
+process) and is visible in `/reminders`; it is not automatically resent because
+Telegram cannot guarantee exactly-once delivery.
+
+Validation covers SQLite and a Firestore transaction fake with mocked Calendar
+and Telegram transports; this does not establish a live deployment or delivery.

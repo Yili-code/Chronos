@@ -33,6 +33,7 @@ from .runtime_health import (
 from .task_actions import UndoConflict
 from .deadline_reminders import send_deadline_reminders
 from .free_time import free_slot_offer
+from . import reminders
 from . import calendar_replan
 from .free_booking import bind_free_message, preview_free_event, free_booking_callback
 from .evening_agenda import send_evening_agenda, tomorrow_agenda
@@ -76,6 +77,8 @@ HELP_SECTIONS = {
         "/free — find the next free two hours, excluding meals\n"
         "/today — view today’s full calendar agenda\n"
         "/tomorrow — view tomorrow’s full calendar agenda\n"
+        "/remind &lt;description and time&gt; — add a one-time reminder\n"
+        "/reminders — list reminders; /cancelreminder &lt;id&gt; cancels one\n"
         "/plan — inspect study proposals and Calendar connection\n"
         "/plan &lt;task-id&gt; — request a proposal or resume a postponed task\n"
         "/planedit &lt;task-id&gt; MM/DD HH:MM minutes — revise a proposal before Allow\n"
@@ -250,6 +253,7 @@ async def lifespan(_: FastAPI):
     if settings.enable_gmail:
         mail_workflow().require_config()
     if settings.enable_internal_scheduler:
+        scheduler.add_job(run_reminder_tick, "interval", minutes=1, id="personal_reminders", replace_existing=True, max_instances=1)
         scheduler.add_job(send_daily_tasks, "cron", hour=8, minute=0, id="daily_tasks", replace_existing=True)
         scheduler.add_job(run_deadline_reminders, "interval", minutes=5, id="deadline_reminders", replace_existing=True, max_instances=1)
         if settings.enable_learning_calendar:
@@ -366,6 +370,7 @@ async def mail_status(x_chronos_scheduler_secret: str | None = Header(default=No
 
 
 async def run_study_tick() -> dict:
+    await reminders.tick(db, telegram, settings)
     if not settings.enable_study_tracking:
         return {"enabled": False}
     if not settings.telegram_chat_id or not telegram.enabled:
@@ -490,7 +495,12 @@ async def trigger_daily_mail(x_chronos_scheduler_secret: str | None = Header(def
     return await send_daily_mail()
 
 
+async def run_reminder_tick():
+    return await reminders.tick(db, telegram, settings)
+
+
 async def run_deadline_reminders():
+    await reminders.tick(db, telegram, settings)
     error = None
     try:
         result = await send_deadline_reminders(db, telegram, settings)
@@ -552,6 +562,7 @@ async def learning_status(x_chronos_scheduler_secret: str | None = Header(defaul
 @app.post("/internal/learning")
 async def learning_tick(x_chronos_scheduler_secret: str | None = Header(default=None)):
     require_learning_scheduler_secret(x_chronos_scheduler_secret)
+    await reminders.tick(db, telegram, settings)
     try:
         return await learning_calendar().tick()
     except CalendarError as error:
@@ -592,6 +603,24 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
     if settings.telegram_chat_id and chat_id != settings.telegram_chat_id:
         raise HTTPException(status_code=403, detail="Unauthorized chat")
     update_id = update.update_id
+    reminder_callback = re.fullmatch(r"reminder:(allow|cancel):([a-f0-9]{16})", update.callback_query.data or "") if update.callback_query else None
+    reminder_text = (source_message.text or "").strip()
+    if reminder_callback or (update.message and not source_message.reply_to_message and reminders.matches(reminder_text)):
+        receipt = db.get_update(update_id)
+        if receipt is None:
+            try:
+                if reminder_callback:
+                    reply = reminders.confirm(db, reminder_callback[2], reminder_callback[1], chat_id)
+                else:
+                    reply = await reminders.command(db, ai, google_calendar, settings,
+                                                    reminder_text, chat_id, update_id)
+            except (AIError, CalendarError):
+                reply = "Reminder could not be prepared or checked for overlaps. Nothing added; please try again."
+            receipt = db.process_update(update_id, lambda: reply)
+        await deliver_learning_reply(chat_id, update_id, receipt)
+        if reminder_callback:
+            await telegram.answer_callback_query(update.callback_query.id)
+        return {"ok": True}
     replan_callback = re.fullmatch(r"replan:(allow|edit|cancel):([a-f0-9]{32})", update.callback_query.data or "") if update.callback_query else None
     replan_session = db.get_task_action_state(calendar_replan.key(chat_id))
     replan_command = re.fullmatch(r"/replan(?:@[A-Za-z0-9_]+)?(?:\s+(.+))?", source_message.text or "", re.DOTALL)
