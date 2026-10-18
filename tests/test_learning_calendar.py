@@ -367,9 +367,9 @@ def test_edit_replaces_card_and_requires_fresh_approval(setup):
     old = planner.get(task["id"])
     text, buttons = planner.proposal_content(task, old)
     assert "10/19 (Mon)" in text
-    assert [b["text"] for b in buttons] == ["Allow", "Edit", "Earlier", "Postpone"]
+    assert [b["text"] for b in buttons] == ["Allow", "Edit", "Earlier", "Later", "Longer", "Shorter", "Postpone"]
     prompt = asyncio.run(planner.callback("edit", task["id"], old["token"], 50))
-    assert len(prompt["messages"][0]["reply_markup"]["inline_keyboard"]) == 6
+    assert len(prompt["messages"][0]["reply_markup"]["inline_keyboard"]) == 8
     prompt = asyncio.run(planner.callback("manual", task["id"], old["token"], 50))
     assert prompt["messages"][0]["reply_markup"]["force_reply"]
     assert "no longer available" in asyncio.run(planner.callback("approve", task["id"], old["token"], 50))
@@ -698,7 +698,7 @@ def test_weekday_period_respects_duration_conflicts_and_stays_editable(setup):
     state = planner.get(task["id"])
     planner.update(task["id"], lambda old: {**old, "status": "editing", "minutes": 180})
     menu = planner.edit_menu(task["id"], planner.get(task["id"]))
-    assert len(menu["messages"][0]["reply_markup"]["inline_keyboard"]) == 4
+    assert len(menu["messages"][0]["reply_markup"]["inline_keyboard"]) == 6
     calendar.busy.return_value = [(NOW.replace(day=20, hour=10, minute=30), NOW.replace(day=20, hour=12))]
     reply = asyncio.run(planner.revise(task["id"], state["token"], "星期二早上", NOW))
     assert "No continuous 180-minute slot" in reply
@@ -1459,4 +1459,21 @@ def test_explicit_plan_preserves_booking_in_progress(setup):
     planner.db.mutate_task_action_state("learning:proposal-queue", lambda old: {"active_task_id": task["id"]})
     assert "already booked" in planner.request_proposal(task["id"])
     assert planner.get(task["id"])["token"] == "locked"
+    calendar.insert.assert_not_awaited()
+
+
+@pytest.mark.parametrize("action", ["later", "longer", "shorter"])
+def test_direct_proposal_adjustments_require_fresh_approval(setup, action):
+    planner, task, calendar, _ = setup
+    asyncio.run(planner.tick(NOW))
+    old = planner.get(task["id"])
+    reply = asyncio.run(planner.callback(action, task["id"], old["token"], 50))
+    current = planner.get(task["id"])
+    assert reply.startswith("Updated")
+    assert current["token"] != old["token"]
+    if action == "later":
+        assert datetime.fromisoformat(current["start"]) > datetime.fromisoformat(old["start"])
+        assert current["minutes"] == old["minutes"]
+    else:
+        assert current["minutes"] == old["minutes"] + (30 if action == "longer" else -30)
     calendar.insert.assert_not_awaited()

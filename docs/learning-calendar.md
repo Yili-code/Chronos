@@ -295,3 +295,10 @@ success message; a missing preview is treated as already cleaned up.
 The **Earlier** proposal button searches before the current proposed start, within the deadline and daily limits. It can requeue conflicting unapproved proposals. If no free earlier slot fits, it previews moves of owner-created personal activities and Chronos study bookings. Every old/new time is listed before Allow. Classes, recurring/all-day events, shared events, secondary calendars and unverified events remain fixed. Personal activities stay on the same day; tracked study retains its own deadline. At most five activities move per proposal. Event versions are checked again on Allow. Interrupted writes are reconciled by a durable event marker; successfully applied moves are not automatically rolled back. A paused reflow requires a fresh /plan request. A revised proposal requires Allow.
 
 Agenda status also recognizes a completed task for its current study-session token, even if it was completed through `/done` without study feedback. Earlier sessions retain their own reported outcomes. This is a read-only display rule: it does not invent actual minutes, add duration-profile samples or modify feedback history.
+
+
+Proposal cards offer Earlier / Later and Longer / Shorter directly. Later searches
+strictly after the current start while respecting deadlines, availability and daily
+limits. Longer and Shorter adjust by 30 minutes (5 minutes for course-scope checks),
+within 10–180 minutes, keeping the start when feasible. Each change produces a new
+proposal and requires Allow. Proposal buttons use two columns for mobile readability.

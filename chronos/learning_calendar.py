@@ -229,7 +229,7 @@ class LearningCalendar:
             return
         try:
             result = await self.telegram.send_message(self.settings.telegram_chat_id, text,
-                parse_mode="HTML", reply_markup={"inline_keyboard": [buttons]})
+                parse_mode="HTML", reply_markup={"inline_keyboard": [buttons[i:i+2] for i in range(0, len(buttons), 2)] if kind == "proposal" else [buttons]})
         except Exception:
             self.update(task_id, lambda old: {**old, "delivery": kind + "_uncertain"})
             raise CalendarError("Study message delivery is uncertain. Inspect /plan before retrying.") from None
@@ -336,7 +336,7 @@ class LearningCalendar:
                     text += "\nThis proposal covers one session; more work may remain."
             elif state.get("duration_source") in {"default", "profile"}:
                 text += "\n\nBased on completed sessions." if state["duration_source"] == "profile" else "\n\nDefault estimate; AI estimate unavailable."
-            buttons = self.buttons(task["id"], state, [("approve", "Allow"), ("edit", "Edit"), ("earlier", "Earlier"), ("postpone", "Postpone")])
+            buttons = self.buttons(task["id"], state, [("approve", "Allow"), ("edit", "Edit"), ("earlier", "Earlier"), ("later", "Later"), ("longer", "Longer"), ("shorter", "Shorter"), ("postpone", "Postpone")])
         return text, buttons
 
     async def deliver_proposal(self, task, state):
@@ -351,7 +351,7 @@ class LearningCalendar:
             values.append(("more", f"A bit longer · {more} min"))
         if lots > more:
             values.append(("lots", f"Much longer · {lots} min"))
-        options = self.buttons(task_id, state, [*values, ("earlier", "Earlier"), ("shuffle", "Random other time"), ("manual", "Choose manually"),
+        options = self.buttons(task_id, state, [*values, ("shorter", "Shorter"), ("earlier", "Earlier"), ("later", "Later"), ("shuffle", "Random other time"), ("manual", "Choose manually"),
             ("postpone", "Postpone")])
         return {"messages": [{"text": f"Current proposal · {display_time(state['start'], self.settings.tz)} · {state['minutes']} minutes\n"
             "How would you like to change this proposal?\n"
@@ -436,7 +436,7 @@ class LearningCalendar:
         menu_action = action in {"more", "lots", "shuffle", "manual"}
         expected_message = state.get("edit_message_id", state.get("message_id")) if menu_action else state.get("message_id")
         valid_message = (message_id in {state.get("message_id"), state.get("edit_message_id")}
-                         if action in {"postpone", "earlier"} else expected_message == message_id)
+                         if action in {"postpone", "earlier", "later", "longer", "shorter"} else expected_message == message_id)
         if state.get("token") != token or not valid_message:
             # Old buttons may request a fresh view, but can never approve or
             # apply an obsolete duration/time choice to a replacement proposal.
@@ -449,7 +449,7 @@ class LearningCalendar:
                     return "The proposal changed. Open Edit on the latest card."
                 text, buttons = self.proposal_content(task, state)
                 return {"messages": [{"text": "This proposal was updated. Review the latest version below.\n\n" + text,
-                    "parse_mode": "HTML", "reply_markup": {"inline_keyboard": [buttons]},
+                    "parse_mode": "HTML", "reply_markup": {"inline_keyboard": [buttons[i:i+2] for i in range(0, len(buttons), 2)]},
                     "learning_proposal": {"task_id": task_id, "token": state["token"]}}]}
             return "This proposal has already been handled. Check /plan for its current status."
         now = datetime.now(self.settings.tz)
@@ -479,8 +479,8 @@ class LearningCalendar:
                 return "This proposal changed or was already approved. No booked event was changed."
             return (f"Postponed · {task['title']}\nWaiting for external conditions. The deadline is unchanged.\n"
                     f"Use /plan {task_id} when ready. The next task will be proposed.")
-        if action == "earlier":
-            return await self.revise(task_id, token, "earlier", now)
+        if action in {"earlier", "later", "longer", "shorter"}:
+            return await self.revise(task_id, token, "more" if action == "longer" else action, now)
         if action == "edit":
             changed = self.update(task_id, lambda old: {**old, "status": "editing"}
                 if old.get("token") == token and old["status"] == "proposed" else old)
@@ -570,7 +570,7 @@ class LearningCalendar:
             if pending["expires_at"] <= now.isoformat():
                 return "That confirmation expired. Send the requested time again."
             return await self._revise(task_id, token, pending["instruction"], now, allow_late=True)
-        if instruction in {"more", "lots", "shuffle", "earlier"}:
+        if instruction in {"more", "lots", "shuffle", "earlier", "later", "shorter"}:
             return await self.suggest_revision(task, state, instruction, now)
         match = re.fullmatch(r"\s*((?:\d{4}-\d{2}-\d{2})|(?:\d{1,2}/\d{1,2}))\s+(\d{1,2}:\d{2})(?:\s+(\d{1,3})(?:\s*(?:minutes|min|分鐘))?)?\s*", instruction, re.IGNORECASE)
         if not match:
@@ -797,12 +797,14 @@ class LearningCalendar:
             return await self._revise(task["id"], state["token"], f"{slot[0]:%Y-%m-%d %H:%M} {state['minutes']}", now)
         extra = 5 if is_course_scope_task(task) else 30
         minutes = min(180, state["minutes"] + extra if option == "more" else
-                      state["minutes"] * 2 if option == "lots" else state["minutes"])
-        if option != "shuffle" and minutes <= state["minutes"]:
+                      state["minutes"] * 2 if option == "lots" else max(10, state["minutes"] - extra) if option == "shorter" else state["minutes"])
+        if option in {"more", "lots"} and minutes <= state["minutes"]:
             return "This block is already at the 180-minute limit. Choose manually or request another study block."
+        if option == "shorter" and minutes >= state["minutes"]:
+            return "This block is already at the 10-minute minimum. Choose manually for another time."
         def instruction(start):
             return f"{start:%Y-%m-%d %H:%M} {minutes}"
-        if option != "shuffle" and datetime.fromisoformat(state["start"]) > now:
+        if option not in {"shuffle", "later"} and datetime.fromisoformat(state["start"]) > now:
             reply = await self._revise(task["id"], state["token"], instruction(datetime.fromisoformat(state["start"])), now)
             if reply.startswith("Updated"):
                 return reply
@@ -818,15 +820,16 @@ class LearningCalendar:
             sum((self.db.get_task_action_state("learning:day:" + (now + timedelta(days=i)).date().isoformat()) or {}).values())
             for i in range(8)}
         policy = self.db.get_task_action_state("learning:course-calendar-policy")
+        window = (max(now, datetime.fromisoformat(state["start"]) + timedelta(minutes=5)), now + timedelta(days=7)) if option == "later" else None
         slot = find_slot(task, now, busy, reservations, self.settings, minutes, booked, policy,
-                         randomize=option == "shuffle")
+                         randomize=option == "shuffle", window=window)
         if not slot:
             # Unapproved proposals can move. Only an approved/in-flight booking
             # may make actual Calendar availability unavailable to an owner edit.
             hard = [(datetime.fromisoformat(s["start"]), datetime.fromisoformat(s["end"]))
                     for s in states if s and s.get("start") and s["status"] == "creating"]
             slot = find_slot(task, now, busy, hard, self.settings, minutes, booked, policy,
-                             randomize=option == "shuffle")
+                             randomize=option == "shuffle", window=window)
         if not slot:
             return (f"No alternative fits a continuous {minutes}-minute block before the deadline within your "
                     f"{self.settings.learning_start_hour:02d}:00–{self.settings.learning_end_hour:02d}:00 hours, "
