@@ -21,6 +21,10 @@ def recover_stale_sends(db, now):
             ):
                 items[token] = {**item, 'status': 'uncertain'}
         return items
+    snapshot = db.get_task_action_state(KEY) or {}
+    if not any(item['status'] == 'sending' and (not item.get('claimed_at')
+        or now - datetime.fromisoformat(item['claimed_at']) >= SENDING_TIMEOUT) for item in snapshot.values()):
+        return snapshot
     return db.mutate_task_action_state(KEY, recover)
 
 
@@ -45,7 +49,7 @@ async def command(db, ai, calendar, settings, text, chat_id, update_id, now=None
     if text.strip() == '/reminders':
         items = (db.get_task_action_state(KEY) or {}).values()
         return '\n\n'.join(f"{item['token']} · {item['status']} · {line(item, settings)}" for item in items
-                           if item['status'] in {'active', 'pending', 'sending', 'uncertain'}
+                           if item['status'] in {'active', 'pending', 'sending', 'uncertain', 'failed'}
                            and not (item['status'] == 'pending' and preview_expired(item, now))) or 'No upcoming reminders.'
     if text.startswith('/cancelreminder '):
         return cancel(db, text.split(maxsplit=1)[1].strip(), chat_id)
@@ -121,6 +125,8 @@ async def tick(db, telegram, settings, now=None):
     for token, item in recover_stale_sends(db, now).items():
         if item['status'] != 'active' or datetime.fromisoformat(item['start']) > now:
             continue
+        if item.get('next_retry_at') and now < datetime.fromisoformat(item['next_retry_at']):
+            continue
         claim = uuid4().hex
         def reserve(old):
             items = dict(old or {})
@@ -137,13 +143,33 @@ async def tick(db, telegram, settings, now=None):
             if result.get('ok'):
                 status = 'sent'
                 sent += 1
-            elif 400 <= result.get('error_code', 500) < 500:
+            elif result.get('error_code') == 429:
                 status = 'active'
+            elif 400 <= result.get('error_code', 500) < 500:
+                status = 'failed'
         except TelegramError:
             pass
-        db.mutate_task_action_state(KEY, lambda old: {**old, token: {**old[token], 'status': status}})
+        def finish(old):
+            items = dict(old or {})
+            current = items.get(token)
+            if current and current.get('claim') == claim:
+                updated = {**current, 'status': status, 'updated_at': now.isoformat()}
+                if status == 'active':
+                    delay = max(60, int(result.get('parameters', {}).get('retry_after', 60)))
+                    updated['next_retry_at'] = (now + timedelta(seconds=delay)).isoformat()
+                items[token] = updated
+            return items
+        db.mutate_task_action_state(KEY, finish)
         if status != 'sent':
             failed += 1
     if failed:
         raise RuntimeError(f'{failed} reminder deliveries pending or uncertain; inspect reminder state before retrying')
     return {'sent': sent}
+
+
+def health_snapshot(db):
+    counts = {}
+    for item in (db.get_task_action_state(KEY) or {}).values():
+        status = item['status']
+        counts[status] = counts.get(status, 0) + 1
+    return {'counts': counts, 'attention_required': sum(counts.get(s, 0) for s in ('uncertain', 'failed'))}

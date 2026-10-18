@@ -128,12 +128,12 @@ def test_failed_reminder_does_not_block_later_delivery(store, failure):
     with pytest.raises(RuntimeError, match='1 reminder deliveries'):
         asyncio.run(reminders.tick(store, telegram, CFG, NOW + timedelta(hours=1)))
     saved = store.get_task_action_state(reminders.KEY)
-    assert saved[first['token']]['status'] == ('uncertain' if failure == 'transport' else 'active')
+    assert saved[first['token']]['status'] == ('uncertain' if failure == 'transport' else 'failed')
     assert saved[second['token']]['status'] == 'sent'
     assert telegram.send_message.await_count == 2
     telegram.send_message.side_effect = None
     asyncio.run(reminders.tick(store, telegram, CFG, NOW + timedelta(hours=2)))
-    assert telegram.send_message.await_count == (2 if failure == 'transport' else 3)
+    assert telegram.send_message.await_count == 2
 
 
 def test_webhook_natural_reminder_and_redelivery(system,monkeypatch):
@@ -165,3 +165,24 @@ def test_reminder_uses_shared_provider_transport(monkeypatch):
     mock_provider(monkeypatch,handler)
     parsed=asyncio.run(ExternalAI(config()).parse_reminder('今天下午一點通電話',NOW))
     assert parsed.kind=='call' and parsed.minutes is None
+
+
+def test_rate_limit_waits_before_retrying(store):
+    _, item = create(store)
+    now = NOW + timedelta(hours=1)
+    telegram = bot()
+    telegram.send_message.return_value = {'ok': False, 'error_code': 429, 'parameters': {'retry_after': 120}}
+    with pytest.raises(RuntimeError):
+        asyncio.run(reminders.tick(store, telegram, CFG, now))
+    assert asyncio.run(reminders.tick(store, telegram, CFG, now + timedelta(seconds=60))) == {'sent': 0}
+    assert telegram.send_message.await_count == 1
+    telegram.send_message.return_value = {'ok': True}
+    assert asyncio.run(reminders.tick(store, telegram, CFG, now + timedelta(seconds=120))) == {'sent': 1}
+    assert reminders.health_snapshot(store) == {'counts': {'sent': 1}, 'attention_required': 0}
+
+
+def test_idle_tick_does_not_write(store):
+    from unittest.mock import patch
+    with patch.object(store, 'mutate_task_action_state', wraps=store.mutate_task_action_state) as mutate:
+        assert asyncio.run(reminders.tick(store, bot(), CFG, NOW)) == {'sent': 0}
+        mutate.assert_not_called()
