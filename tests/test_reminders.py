@@ -72,6 +72,28 @@ def test_unknown_delivery_never_repeats(store):
     telegram.send_message.assert_awaited_once()
 
 
+@pytest.mark.parametrize('failure', ['transport', 'rejected'])
+def test_failed_reminder_does_not_block_later_delivery(store, failure):
+    from chronos.telegram import TelegramError
+    _, first = create(store)
+    _, second = create(store, uid=11)
+    reminders.confirm(store, second['token'], 'allow', 123, NOW)
+    telegram = bot()
+    telegram.send_message.side_effect = [
+        TelegramError('Unknown') if failure == 'transport' else {'ok': False, 'error_code': 400},
+        {'ok': True},
+    ]
+    with pytest.raises(RuntimeError, match='1 reminder deliveries'):
+        asyncio.run(reminders.tick(store, telegram, CFG, NOW + timedelta(hours=1)))
+    saved = store.get_task_action_state(reminders.KEY)
+    assert saved[first['token']]['status'] == ('uncertain' if failure == 'transport' else 'active')
+    assert saved[second['token']]['status'] == 'sent'
+    assert telegram.send_message.await_count == 2
+    telegram.send_message.side_effect = None
+    asyncio.run(reminders.tick(store, telegram, CFG, NOW + timedelta(hours=2)))
+    assert telegram.send_message.await_count == (2 if failure == 'transport' else 3)
+
+
 def test_webhook_natural_reminder_and_redelivery(system,monkeypatch):
     from datetime import datetime
     client,tasks,telegram,cfg=system

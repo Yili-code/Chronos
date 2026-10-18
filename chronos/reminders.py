@@ -98,6 +98,7 @@ async def tick(db, telegram, settings, now=None):
         return {'sent': 0}
     now = now or datetime.now(settings.tz)
     sent = 0
+    failed = 0
     for token, item in (db.get_task_action_state(KEY) or {}).items():
         if item['status'] != 'active' or datetime.fromisoformat(item['start']) > now:
             continue
@@ -123,5 +124,7 @@ async def tick(db, telegram, settings, now=None):
             pass
         db.mutate_task_action_state(KEY, lambda old: {**old, token: {**old[token], 'status': status}})
         if status != 'sent':
-            raise RuntimeError('Reminder delivery pending or uncertain; inspect reminder state before retrying')
+            failed += 1
+    if failed:
+        raise RuntimeError(f'{failed} reminder deliveries pending or uncertain; inspect reminder state before retrying')
     return {'sent': sent}
