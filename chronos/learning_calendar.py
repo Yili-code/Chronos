@@ -315,7 +315,7 @@ class LearningCalendar:
             values.append(("more", f"A bit longer · {more} min"))
         if lots > more:
             values.append(("lots", f"Much longer · {lots} min"))
-        options = self.buttons(task_id, state, [*values, ("shuffle", "Random other time"), ("manual", "Choose manually"),
+        options = self.buttons(task_id, state, [*values, ("earlier", "Earlier"), ("shuffle", "Random other time"), ("manual", "Choose manually"),
             ("postpone", "Postpone")])
         return {"messages": [{"text": f"Current proposal · {display_time(state['start'], self.settings.tz)} · {state['minutes']} minutes\n"
             "How would you like to change this proposal?\n"
@@ -400,7 +400,7 @@ class LearningCalendar:
         menu_action = action in {"more", "lots", "shuffle", "manual"}
         expected_message = state.get("edit_message_id", state.get("message_id")) if menu_action else state.get("message_id")
         valid_message = (message_id in {state.get("message_id"), state.get("edit_message_id")}
-                         if action == "postpone" else expected_message == message_id)
+                         if action in {"postpone", "earlier"} else expected_message == message_id)
         if state.get("token") != token or not valid_message:
             # Old buttons may request a fresh view, but can never approve or
             # apply an obsolete duration/time choice to a replacement proposal.
