@@ -966,8 +966,6 @@ class LearningCalendar:
             return {"enabled": True, "waiting_for": "calendar authorization and activation"}
         now = now or datetime.now(self.settings.tz)
         now = now.astimezone(self.settings.tz)
-        if not self.settings.learning_start_hour <= now.hour < self.settings.learning_end_hour:
-            return {"quiet_hours": True}
         claim = uuid4().hex
         lease = self.db.mutate_task_action_state("learning:tick", lambda old: {
             "claim": claim, "until": (now + timedelta(minutes=10)).isoformat()}
@@ -1006,6 +1004,9 @@ class LearningCalendar:
                 await self.follow_up(task, state, now)
             elif state["status"] == "awaiting_feedback" and state.get("delivery") == "feedback_pending":
                 await self.deliver_feedback(task, state)
+        # Quiet hours restrict automatic proposals, not approved-session lifecycle work.
+        if not self.settings.learning_start_hour <= now.hour < self.settings.learning_end_hour:
+            return {"enabled": True, "quiet_hours": True, "proposals_checked": 0}
         active = self.sync_queue()
         # Day buckets retain approved load after task completion without scanning
         # the ever-growing feedback history on every scheduler tick.

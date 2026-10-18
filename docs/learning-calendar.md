@@ -183,9 +183,13 @@ with blank lines, and use concise English with one concrete actual-duration exam
 The result buttons remain the primary path; detailed outcome syntax is omitted
 from the card to keep the check-in short.
 
-At the end of a booked event, the next daytime tick sends one check-in. It reads
+At the end of a booked event, the next scheduler tick sends one check-in. It reads
 the Calendar event again to honor a changed end time; deleted/cancelled events
-are not recreated. Follow-up is deferred outside 09:00–21:00.
+are not recreated. Check-ins and pending delivery retries run at any hour, including 21:00 and
+after midnight for owner-approved late sessions. Only automatic proposal
+preparation is deferred outside 09:00–21:00; the default planning cutoff
+remains 21:00. Explicit late edits retain their session-specific confirmation
+and Allow approval flow.
 
 - **Done as planned** records the planned duration and completes the task.
 - **Partially completed** asks for focused minutes, completed/total pages and the next page (for example `135 | 20/48 | 21`). It keeps the task open and uses the observed pace to estimate the remaining block, capped at 180 minutes. Breaks and phone time should be excluded.

@@ -205,7 +205,7 @@ def test_ended_event_follows_up_once_and_feedback_is_durable(setup):
     assert history["feedback"]["reason"] == "Finished faster"
 
 
-def test_edited_calendar_end_is_respected_and_quiet_hours_send_nothing(setup):
+def test_edited_calendar_end_is_respected_after_proposal_cutoff(setup):
     planner, task, calendar, bot = setup
     asyncio.run(planner.tick(NOW))
     state = planner.get(task["id"])
@@ -216,7 +216,8 @@ def test_edited_calendar_end_is_respected_and_quiet_hours_send_nothing(setup):
     asyncio.run(planner.tick(end + timedelta(minutes=1)))
     assert planner.get(task["id"])["status"] == "scheduled"
     asyncio.run(planner.tick(NOW.replace(hour=21)))
-    assert bot.send_message.await_count == 1
+    assert bot.send_message.await_count == 2
+    assert planner.get(task["id"])["status"] == "awaiting_feedback"
 
 
 def test_no_slot_and_calendar_error_do_not_silently_book(setup):
@@ -1477,3 +1478,24 @@ def test_direct_proposal_adjustments_require_fresh_approval(setup, action):
     else:
         assert current["minutes"] == old["minutes"] + (30 if action == "longer" else -30)
     calendar.insert.assert_not_awaited()
+
+
+@pytest.mark.parametrize("finish", ["2026-10-19T21:00:00+08:00", "2026-10-19T23:30:00+08:00", "2026-10-20T00:30:00+08:00"])
+def test_checkins_run_after_cutoff_without_new_proposals(setup, finish):
+    planner, task, calendar, bot = setup
+    asyncio.run(planner.tick(NOW))
+    state = planner.get(task['id'])
+    asyncio.run(planner.callback('approve', task['id'], state['token'], 50))
+    end = datetime.fromisoformat(finish)
+    calendar.event.return_value = {'end': {'dateTime': finish},
+        'extendedProperties': {'private': {'chronosToken': state['token']}}}
+    # The live Calendar end can extend past the originally booked end.
+    asyncio.run(planner.tick(end - timedelta(minutes=1)))
+    assert planner.get(task['id'])['status'] == 'scheduled'
+    queued = planner.db.create_task('Next study block', None, None, NOW)
+    asyncio.run(planner.tick(end))
+    asyncio.run(planner.tick(end + timedelta(minutes=5)))
+    assert planner.get(task['id'])['status'] == 'awaiting_feedback'
+    assert bot.send_message.await_count == 2
+    assert planner.get(queued['id']) is None
+    calendar.insert.assert_awaited_once()
