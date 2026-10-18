@@ -322,6 +322,13 @@ class Database(TaskActions):
             row = connection.execute("SELECT * FROM tasks WHERE id = ?", (cursor.lastrowid,)).fetchone()
         return self._task_data(row)
 
+    def continue_task(self, task, title, now):
+        """Close a session task and create its successor in the caller's transaction."""
+        successor = self.create_task(title, datetime.fromisoformat(task['due_at']) if task.get('due_at') else None,
+                                     task.get('project'), now, task.get('timing'))
+        self.complete_task(task['id'], now)
+        return successor
+
     def get_task(self, task_id: int) -> dict | None:
         """Read a task including completion evidence; never changes learning feedback."""
         with self.connect() as connection:

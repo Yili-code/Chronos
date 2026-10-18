@@ -1097,7 +1097,11 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
             reply = str(error)
         return lambda: reply
     if normalized == "/plan":
-        return lambda: message_bundle({"text": learning_calendar().status(), "parse_mode": "HTML"})
+        def plan_status():
+            planner = learning_calendar()
+            parts = [planner.status(), planner.status(booked_only=True)]
+            return message_bundle(*({"text": part, "parse_mode": "HTML"} for part in parts if part))
+        return plan_status
     replan = re.fullmatch(r"/plan\s+#?(\d+)", normalized)
     if replan:
         task_id = int(replan[1])

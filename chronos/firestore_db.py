@@ -165,6 +165,20 @@ class FirestoreDatabase(TaskActions):
         active = self._transaction.get()
         return create(active) if active is not None else self._run_transaction(create)
 
+    def continue_task(self, task, title, now):
+        """Read linked records before staging any transaction writes."""
+        transaction = self._transaction.get()
+        linked = list(self.assignments.where(filter=FieldFilter('task_id', '==', task['id'])).stream(transaction=transaction))
+        successor = self.create_task(title, datetime.fromisoformat(task['due_at']) if task.get('due_at') else None,
+                                     task.get('project'), now, task.get('timing'))
+        transaction.update(self.tasks.document(str(task['id'])),
+                           {'status': 'done', 'completed_at': now.isoformat()})
+        for assignment in linked:
+            data = assignment.to_dict()
+            data['record']['completed_at'] = now.isoformat()
+            transaction.set(assignment.reference, data)
+        return successor
+
     def get_task(self, task_id: int) -> dict | None:
         """Read completion evidence with the active transaction when present."""
         snapshot = self.tasks.document(str(task_id)).get(transaction=self._transaction.get())

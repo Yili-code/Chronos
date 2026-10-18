@@ -108,6 +108,10 @@ Study 預設關閉，包含 NTOU / TronClass 特定課表與課程 ID；不是�
 Webhook 會驗證 JSON 結構與整數 `update_id`，合法的非文字更新會略過。每筆 message 或 callback 的代辦變更與處理紀錄會一起儲存在 SQLite 或 Firestore；動態位置會在同一 transaction 內解析成永久 ID，重送同一 update 不會重複新增、完成、修改、改期或清除，重啟後仍有效。多訊息回覆會逐則保存 delivery progress，後續 webhook retry 從第一則未確認訊息繼續。若 Telegram 已收到某則訊息而程式尚未記錄送達就中斷，該則文字仍可能重複，但代辦不會重複變更。去重與 pending-edit 紀錄目前不會自動清除；完成或取消 retry 會刪除對應 pending edit。
 
 
+`/plan` 依狀態分組，已排程的任務另發一則訊息。使用 `/plan ID` 請求提案或恢復任務；`/planedit ID 明天晚上七點，讀一小時` 可用自然語言修改提案。
+
+部分完成的學習回報會將原任務結案，並建立剩餘工作的接續任務；原回報與任務歷史仍保留。頁數回報會把下一頁至總頁數寫入新任務，沿用期限與專案，並根據本次閱讀速度估算剩餘時間。重複回報不會重複建立任務，Calendar 寫入仍需確認。
+
 回到 [本機啟動](getting-started.md) 或 [README](../README.md)。
 
 

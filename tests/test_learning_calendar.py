@@ -15,6 +15,40 @@ from chronos import main
 
 NOW = datetime.fromisoformat("2026-10-19T09:00:00+08:00")
 
+
+def test_plan_groups_pending_work_and_separates_booked_tasks(setup):
+    planner, task, _, _ = setup
+    other = planner.db.create_task('Remaining chapter', None, None, NOW)
+    booked = planner.db.create_task('Booked chapter', None, None, NOW)
+    for item, status in ((task, 'proposed'), (other, 'needs_replan'), (booked, 'scheduled')):
+        planner.update(item['id'], lambda old, status=status: {'status': status})
+    pending = planner.status()
+    assert pending.count('<b>To arrange</b>') == 1
+    assert 'Remaining chapter' in pending and 'Booked chapter' not in pending
+    assert '/planedit ID your request' in pending
+    assert 'Report progress' not in pending
+    assert 'Booked chapter' in planner.status(booked_only=True)
+    assert 'Remaining chapter' not in planner.status(booked_only=True)
+
+
+def test_partial_report_closes_old_task_and_creates_one_successor(setup):
+    from chronos.task_actions import task_fields
+    planner, task, calendar, _ = setup
+    planner.update(task['id'], lambda old: {
+        'status': 'awaiting_feedback', 'token': 'handoff', 'snapshot': task_fields(task)})
+    reply = planner.partial_reply(task['id'], 'handoff', '135 | 20/48 | 21')
+    assert 'Recorded' in reply
+    assert planner.db.get_task(task['id'])['status'] == 'done'
+    successor = planner.db.list_open_tasks()[0]
+    assert 'Continue pages 21–48' in successor['title']
+    assert successor['project'] == task['project']
+    assert successor['due_at'] == task['due_at']
+    assert planner.get(successor['id'])['requested_minutes'] == 180
+    assert planner.get(successor['id'])['status'] == 'queued'
+    planner.partial_reply(task['id'], 'handoff', '135 | 20/48 | 21')
+    assert len(planner.db.list_open_tasks()) == 1
+    calendar.insert.assert_not_awaited()
+
 @pytest.fixture(params=["sqlite", "firestore"])
 def setup(request, tmp_path, monkeypatch):
     import chronos.learning_calendar as module
@@ -270,9 +304,10 @@ def test_partial_feedback_preserves_evidence_and_queues_another_approval(setup):
     end = datetime.fromisoformat(state["end"])
     asyncio.run(planner.tick(end + timedelta(minutes=1)))
     planner.feedback(task, state["token"], "partial", 45, "Need another chapter")
-    assert planner.get(task["id"])["status"] == "queued"
+    assert planner.get(task["id"])["status"] == "finished"
+    successor_id = planner.get(task["id"])["successor_task_id"]
     asyncio.run(planner.tick(end + timedelta(minutes=5)))
-    new = planner.get(task["id"])
+    new = planner.get(successor_id)
     assert new["status"] == "proposed" and new["token"] != state["token"]
     assert calendar.insert.await_count == 1
     assert planner.db.get_task_action_state("learning:history:" + state["token"])["feedback"]["actual_minutes"] == 45
@@ -1085,7 +1120,7 @@ def test_tonight_permission_request_is_deterministic_and_still_needs_confirmatio
     assert not pending.get('late_window')
     calendar.insert.assert_not_awaited()
 
-def test_partial_pages_keep_task_open_and_estimate_remaining(setup):
+def test_partial_pages_close_task_and_estimate_successor_remaining(setup):
     planner, task, calendar, _ = setup
     asyncio.run(planner.tick(NOW))
     state = planner.get(task['id'])
@@ -1096,8 +1131,9 @@ def test_partial_pages_keep_task_open_and_estimate_remaining(setup):
     assert saved['feedback']['actual_minutes'] == 135
     assert saved['progress']['next_page'] == 21
     assert saved['requested_minutes'] == 180
-    assert saved['status'] == 'queued'
-    assert 'already' in planner.partial_reply(task['id'], state['token'], '135 | 20/48 | 21')
+    assert saved['status'] == 'finished'
+    assert planner.get(saved['successor_task_id'])['status'] == 'queued'
+    assert 'no longer open' in planner.partial_reply(task['id'], state['token'], '135 | 20/48 | 21')
     calendar.insert.assert_not_awaited()
 
 

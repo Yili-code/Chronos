@@ -825,7 +825,6 @@ class LearningCalendar:
                                         + actual_minutes) / (min(samples, 4) + 1)}
             if outcome == "done":
                 self.db.complete_task(task["id"], datetime.now(self.settings.tz))
-            self.db._save_task_action_state("learning:profile", profile)
             recorded = {**state,
                 "status": "finished" if outcome == "done" else "queued" if outcome == "partial" else "needs_replan",
                 "feedback": {"outcome": outcome, "actual_minutes": actual_minutes,
@@ -838,10 +837,21 @@ class LearningCalendar:
                     remaining = actual_minutes * (progress["total_pages"] - progress["completed_pages"]) / progress["session_pages"]
                     recorded["requested_minutes"] = max(15, min(180, math.ceil(remaining / 15) * 15))
                     recorded["duration_source"] = "owner"
+                title = re.sub(r" · Continue.*$", "", task['title'])
+                title += (f" · Continue pages {progress['next_page']}–{progress['total_pages']}"
+                          if progress else f" · Continue: {reason[:200]}" if reason else " · Continue remaining work")
+                successor = self.db.continue_task(task, title, datetime.now(self.settings.tz))
+                recorded['status'] = 'finished'
+                recorded['successor_task_id'] = successor['id']
+                continuation = {key: recorded[key] for key in
+                                ('progress', 'progress_note', 'requested_minutes', 'duration_source') if key in recorded}
+                continuation.update(status='queued', predecessor_task_id=task['id'])
+                self.db._save_task_action_state(f"learning:task:{successor['id']}", continuation)
+            self.db._save_task_action_state("learning:profile", profile)
             self.db._save_task_action_state("learning:history:" + token, recorded)
             self.db._save_task_action_state(f"learning:task:{task['id']}", recorded)
             return ("Completed and recorded. Future duration suggestions will use your reported time." if outcome == "done"
-                    else "Recorded. Another proposal will be prepared; writing still requires approval." if outcome == "partial"
+                    else f"Recorded. Task #{task['id']} completed; remaining work saved as #{successor['id']}." if outcome == "partial"
                     else "Recorded. Use /plan to request another proposal; writing still requires approval.")
         return self.db._run_task_action(record)
 
@@ -948,33 +958,47 @@ class LearningCalendar:
         await self.retire_cards()
         return {"enabled": True, "proposals_checked": processed}
 
-    def status(self):
-        lines = ["<b>Learning calendar</b>",
-            f"Hours {self.settings.learning_start_hour:02d}:00–{self.settings.learning_end_hour:02d}:00",
-            f"Default duration {self.settings.learning_minutes} minutes",
-            "Course scope checks 10 minutes by default",
-            f"Class + study limit {self.settings.learning_daily_minutes // 60} hours/day",
-            "Every calendar write requires your Allow button."]
-        lines.append("Confirm the current proposal to see the next task.")
+    def status(self, *, booked_only=False):
+        lines = []
         if not self.calendar.configured():
             lines.append("Google Calendar authorization is still required.")
         labels = {"planning": "Finding a time", "queued": "Waiting for a proposal",
-            "proposed": "Waiting for your Allow", "creating": "Calendar confirmation pending",
+            "proposed": "To arrange", "creating": "Calendar confirmation pending",
             "editing": "Waiting for your revised time",
             "scheduled": "Booked", "awaiting_feedback": "Waiting for your progress",
-            "no_slot": "No available study time", "needs_replan": "Needs another study block",
-            "postponed": "Waiting for external conditions · resume with /plan",
+            "no_slot": "No available study time", "needs_replan": "To arrange",
+            "postponed": "Waiting for external conditions",
             "rejected": "Skipped", "cancelled": "Calendar event removed", "finished": "Completed"}
+        groups = {}
         for task in self.db.list_open_tasks():
             state = self.get(task["id"])
             if state:
+                if (state["status"] == "scheduled") != booked_only:
+                    continue
                 status = labels.get(state["status"], "Review required")
                 if state.get("delivery", "").endswith(("_uncertain", "_sending")):
                     status += " · message delivery needs review"
-                lines.append(f"#{task['id']} {escape(task['title'])} · {status}")
+                item = f"• <b>#{task['id']}</b> {escape(task['title'])}"
+                progress = state.get("progress") or {}
+                if progress.get("total_pages"):
+                    item += (f"\n  Progress · {progress.get('completed_pages', 0)}/{progress['total_pages']} pages")
+                if state.get("progress_note"):
+                    item += f"\n  {escape(state['progress_note'])}"
+                groups.setdefault(status, []).append(item)
+        for status, tasks in groups.items():
+            lines.extend(["", f"<b>{escape(status)}</b>", *tasks])
+        if booked_only:
+            return "\n".join(lines).strip() if groups else ""
         profile = self.db.get_task_action_state("learning:profile") or {}
+        reports = []
         for subject, evidence in profile.items():
             if evidence.get("samples", 0) >= 3:
-                lines.append(f"{escape(subject)} · {evidence['samples']} completed reports · "
+                reports.append(f"{escape(subject)} · {evidence['samples']} completed reports · "
                              f"average {round(evidence['average_minutes'])} minutes")
-        return "\n".join(lines)
+        if reports:
+            lines.extend(["", "<b>Learning history</b>", *reports])
+        if groups:
+            lines.extend(["", "<b>Commands</b>",
+                "<code>/plan ID</code> — Request a proposal or resume a task.",
+                "<code>/planedit ID your request</code> — Describe your preferred time and duration naturally."])
+        return "\n".join(lines).strip() or "No study plans yet."
