@@ -152,3 +152,39 @@ def test_future_and_untracked_events_have_no_awaiting_marker():
     item = {**event(), "extendedProperties": {"private": {"chronosToken": "future"}}}
     text = "\n".join(render_agenda([item, event()], NOW.date(), NOW.tzinfo, db=db, now=NOW))
     assert "Awaiting" not in text
+
+
+def test_completed_task_resolves_current_awaiting_without_inventing_feedback(store):
+    task = store.create_task('Check operating system class scope', None, None, NOW)
+    key = 'learning:task:' + str(task['id'])
+    state = {'token': 'current-session', 'status': 'awaiting_feedback'}
+    store.mutate_task_action_state(key, lambda old: state)
+    assert store.get_task(task['id'])['status'] == 'open'
+    item = {**event(task['title']), 'extendedProperties': {'private': {
+        'chronosTask': str(task['id']), 'chronosToken': state['token']}}}
+    now = NOW + timedelta(days=2)
+    assert 'Awaiting' in '\n'.join(render_agenda([item], now.date(), NOW.tzinfo, db=store, now=now))
+    store.complete_task(task['id'], now)
+    text = '\n'.join(render_agenda([item], now.date(), NOW.tzinfo, db=store, now=now))
+    assert '✓ Finished' in text and 'Awaiting' not in text
+    assert store.get_task(task['id'])['status'] == 'done'
+    assert store.get_task(9999999) is None
+    assert store.get_task_action_state(key) == state
+    assert store.get_task_action_state('learning:history:current-session') is None
+    assert store.get_task_action_state('learning:profile') is None
+
+
+def test_completed_task_preserves_prior_session_outcome_and_token_boundary(store):
+    task = store.create_task('Read chapter', None, None, NOW)
+    store.mutate_task_action_state('learning:task:' + str(task['id']),
+        lambda old: {'token': 'current-session', 'status': 'awaiting_feedback'})
+    store.complete_task(task['id'], NOW)
+    props = {'chronosTask': str(task['id']), 'chronosToken': 'prior-session'}
+    item = {**event(), 'extendedProperties': {'private': props}}
+    now = NOW + timedelta(days=2)
+    text = '\n'.join(render_agenda([item], now.date(), NOW.tzinfo, db=store, now=now))
+    assert 'Awaiting' in text and 'Finished' not in text
+    store.mutate_task_action_state('learning:history:prior-session',
+        lambda old: {'feedback': {'outcome': 'partial', 'actual_minutes': 135}})
+    text = '\n'.join(render_agenda([item], now.date(), NOW.tzinfo, db=store, now=now))
+    assert 'Incomplete' in text and 'Finished' not in text

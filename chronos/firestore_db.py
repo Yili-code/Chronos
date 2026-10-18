@@ -165,6 +165,11 @@ class FirestoreDatabase(TaskActions):
         active = self._transaction.get()
         return create(active) if active is not None else self._run_transaction(create)
 
+    def get_task(self, task_id: int) -> dict | None:
+        """Read completion evidence with the active transaction when present."""
+        snapshot = self.tasks.document(str(task_id)).get(transaction=self._transaction.get())
+        return self._task_data(task_id, snapshot.to_dict()) if snapshot.exists else None
+
     def list_open_tasks(self) -> list[dict]:
         query = self.tasks.where(filter=FieldFilter("status", "==", "open"))
         active = self._transaction.get()

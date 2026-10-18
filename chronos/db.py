@@ -322,6 +322,12 @@ class Database(TaskActions):
             row = connection.execute("SELECT * FROM tasks WHERE id = ?", (cursor.lastrowid,)).fetchone()
         return self._task_data(row)
 
+    def get_task(self, task_id: int) -> dict | None:
+        """Read a task including completion evidence; never changes learning feedback."""
+        with self.connect() as connection:
+            row = connection.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        return self._task_data(row) if row is not None else None
+
     def list_open_tasks(self) -> list[dict]:
         with self.connect() as connection:
             rows = connection.execute(

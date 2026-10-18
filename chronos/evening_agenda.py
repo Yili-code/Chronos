@@ -16,6 +16,7 @@ def render_agenda(events, day, tz, label="Tomorrow", db=None, now=None):
         token = props.get("chronosToken")
         marker = None
         if db is not None and token:
+            current = None
             state = db.get_task_action_state("learning:history:" + token) or {}
             if not state and props.get("chronosTask"):
                 current = db.get_task_action_state("learning:task:" + props["chronosTask"]) or {}
@@ -23,6 +24,13 @@ def render_agenda(events, day, tz, label="Tomorrow", db=None, now=None):
                     state = current
             outcome = state.get("feedback", {}).get("outcome")
             marker = {"done": "✓ Finished", "partial": "◐ Incomplete", "skipped": "− Skipped"}.get(outcome)
+            task_id = str(props.get("chronosTask", ""))
+            if marker is None and task_id.isdecimal():
+                current = current if current is not None else db.get_task_action_state("learning:task:" + task_id) or {}
+                if current.get("token") == token:
+                    task = db.get_task(int(task_id))
+                    if task and task.get("status") == "done":
+                        marker = "✓ Finished"
             finish = event.get("end", {}).get("dateTime")
             if marker is None and finish and datetime.fromisoformat(finish) <= now:
                 marker = "◇ Awaiting"
