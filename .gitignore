@@ -28,3 +28,5 @@ output/pdf/
 *-job.out.log
 *-job.err.log
 enable-scheduler.*.log
+
+.test-tmp*

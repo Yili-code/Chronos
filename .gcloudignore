@@ -27,3 +27,5 @@ output/
 *-job.out.log
 *-job.err.log
 enable-scheduler.*.log
+
+.test-tmp*

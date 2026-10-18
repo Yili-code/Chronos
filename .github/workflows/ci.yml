@@ -31,6 +31,9 @@ jobs:
           python -m pip install uv==0.12.3
           uv sync --locked --extra dev
 
+      - name: Check Python source compilation
+        run: uv run python -m compileall -q chronos scripts
+
       - name: Run tests
         run: uv run python -m pytest -q --junitxml=python-test-results.xml
 
