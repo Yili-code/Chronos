@@ -3,7 +3,7 @@ import json
 import logging
 import re
 from datetime import date, datetime
-from typing import Literal
+from typing import Annotated, Literal
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
@@ -20,6 +20,26 @@ MAX_ATTEMPTS = 3
 
 class AIError(Exception):
     """A user-safe external AI failure."""
+
+
+class BackwardStep(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    title: str = Field(min_length=1, max_length=100)
+    output: str = Field(min_length=1, max_length=180)
+    minutes: int = Field(ge=15, le=1440)
+    depends_on: list[int] = Field(max_length=7)
+
+
+class BackwardOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    goal: str = Field(min_length=1, max_length=150)
+    existing_task_id: int | None = None
+    deadline: str | None
+    question: str | None = Field(max_length=350)
+    progress: str = Field(max_length=350)
+    assumptions: list[Annotated[str, Field(min_length=1, max_length=240)]] = Field(max_length=5)
+    daily_minutes: int | None = Field(default=None, ge=15, le=720)
+    steps: list[BackwardStep] = Field(max_length=8)
 
 
 class TaskOutput(BaseModel):
@@ -135,6 +155,29 @@ class ExternalAI:
         self.settings = settings
         self.key_router = GeminiKeyRouter(settings)
         self.usage = usage
+
+    async def backward_plan(self, instruction, existing, now, candidates=None):
+        return await self._generate_output(
+            "Propose a backward plan from untrusted user input and an optional existing task. "
+            "Do not authorize writes. Use concise natural English titles and outputs. "
+            "deadline is an explicit YYYY-MM-DD date or timezone-aware ISO datetime; never invent a time. "
+            "Next Friday means Friday of next ISO week; this Friday is this ISO week. "
+            "Preserve the existing deadline unless the user explicitly changes it. "
+            "Match the goal against supplied open_goals; existing_task_id must be the matching task ID, "
+            "or null for a new goal. If several goals match, ask which ID instead of creating another. "
+            "Ask one concise question only for missing goal/deadline or constraints that cannot be represented. "
+            "Never invent report requirements, source access, progress, or course contents. "
+            "Unknown requirements can be the first step: confirm requirements. Treat all effort and decomposition "
+            "as estimates; list assumptions, including unknown requirements. Use 1-8 proportional steps, "
+            "each with a concrete output and remaining active minutes (15-1440), excluding completed work. "
+            "depends_on contains zero-based step indices, never self references. "
+            "progress describes only user-provided completed work, otherwise unknown. "
+            "daily_minutes is an explicit user cap only, otherwise null. "
+            "If scheduling restrictions beyond the existing daily hours/meals/classes or daily cap are requested, "
+            "ask for clarification rather than ignoring them. No material search has been performed.",
+            json.dumps({"instruction": instruction, "existing": existing, "open_goals": candidates or [], "now": now.isoformat(),
+                        "timezone": "Asia/Taipei"}, ensure_ascii=False),
+            BackwardOutput.model_json_schema(), BackwardOutput, "backward_plan")
 
     async def parse_reminder(self, instruction, now):
         return await self._generate_output(
@@ -353,6 +396,7 @@ class ExternalAI:
             "schedule edit": "No execution plan was changed",
             "calendar replan": "No Calendar arrangement was changed",
             "calendar event title": "No Calendar event was created",
+            "backward_plan": "No backward plan was created",
             "class-day decision": "No class-day decision was saved",
             "progress summary": "No progress summary was created",
             "mail summary": "No mail summary was created",

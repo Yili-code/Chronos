@@ -95,6 +95,8 @@ async def free_booking_callback(db, calendar, settings, chat_id, message_id, tok
     if event is None:
         start,end=(datetime.fromisoformat(state[k]).astimezone(settings.tz) for k in ('start','end'))
         busy=await calendar.busy(start,end)
+        from .backward_planning import reserved_windows
+        busy = [*busy, *reserved_windows(db)]
         policy=db.get_task_action_state('learning:course-calendar-policy')
         if start <= now or overlaps(start,end,[*busy,*class_windows(start.date(),settings.tz,policy),
                                               *short_task_windows(start.date(),settings.tz,120)]):

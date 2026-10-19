@@ -5,6 +5,8 @@ from .settings import Settings
 from .telegram import TelegramClient
 
 COMMANDS = {
+    "command": "Break down a goal before its deadline",
+    "backward": "Review goal and step progress",
     "plan": "Review task plans",
     "today": "View today's calendar agenda",
     "tasks": "View open tasks",

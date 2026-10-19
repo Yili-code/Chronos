@@ -38,6 +38,7 @@ from .deadline_reminders import send_deadline_reminders
 from .free_time import free_slot_offer
 from . import reminders
 from . import calendar_replan
+from .backward_planning import BackwardPlanner
 from .free_booking import bind_free_message, preview_free_event, free_booking_callback
 from .evening_agenda import send_evening_agenda, tomorrow_agenda
 from .task_timing import display_time, task_sort_key, timing_details
@@ -83,6 +84,9 @@ HELP_SECTIONS = {
         "/remind &lt;description and time&gt; — add a one-time reminder\n"
         "/reminders — list reminders; /cancelreminder &lt;id&gt; cancels one\n"
         "/plan — review execution plans and Calendar connection\n"
+        "/command &lt;goal and deadline&gt; — preview a backward plan\n"
+        "/command #&lt;task-id&gt; — decompose an existing goal\n"
+        "/backward [task-id] — view linked step progress\n"
         "/plan &lt;task-id&gt; — request or reopen an execution plan\n"
         "/planedit &lt;task-id&gt; MM/DD HH:MM minutes — adjust a plan before confirmation\n"
         "/taskupdate &lt;task-id&gt; &lt;minutes&gt; done|partial|skipped [reason] — record the outcome\n"
@@ -280,6 +284,16 @@ def learning_calendar():
 
 async def deliver_learning_reply(chat_id, update_id, receipt):
     if receipt["delivered"]:
+        return
+    if any(m.get('backward_plan') for m in receipt.get('messages', [])):
+        for count, part in enumerate(receipt['messages'][receipt.get('delivered_count', 0):], receipt.get('delivered_count', 0)+1):
+            result = await telegram.send_message(chat_id, part['text'],
+                **{k: part[k] for k in ('parse_mode', 'reply_markup') if k in part})
+            if not result.get('ok') or result.get('result', {}).get('message_id') is None:
+                raise HTTPException(status_code=502, detail='Backward preview delivery pending')
+            BackwardPlanner(db, google_calendar, ai, settings).bind(chat_id, result['result']['message_id'], part)
+            db.mark_update_message_delivered(update_id, count)
+        db.mark_update_delivered(update_id)
         return
     message = (receipt.get("messages") or [{"text": receipt["reply"]}])[0]
     options = {key: message[key] for key in ("parse_mode", "reply_markup") if key in message}
@@ -600,6 +614,40 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
     if settings.telegram_chat_id and chat_id != settings.telegram_chat_id:
         raise HTTPException(status_code=403, detail="Unauthorized chat")
     update_id = update.update_id
+    backward = BackwardPlanner(db, google_calendar, ai, settings)
+    backward_match = re.fullmatch(r'backward:(allow|edit|cancel):([a-f0-9]{32})', update.callback_query.data or '') if update.callback_query else None
+    backward_command = re.fullmatch(r'/command(?:@[A-Za-z0-9_]+)?(?:\s+(.+))?', source_message.text or '', re.DOTALL) if update.message else None
+    backward_progress = re.fullmatch(r'/backward(?:@[A-Za-z0-9_]+)?(?:\s+#?(\d+))?', source_message.text or '') if update.message else None
+    backward_session = backward.session(chat_id)
+    backward_state = db.get_task_action_state('backward:plan:'+backward_session['token']) if backward_session.get('token') else None
+    backward_reply = (update.message and not update.callback_query and backward_state
+        and backward_state['status'] in {'clarifying', 'editing'}
+        and backward_state['expires_at'] > datetime.now(settings.tz).isoformat()
+        and (not (source_message.text or '').startswith('/') or source_message.text == '/cancel'))
+    if backward_match or backward_command or backward_progress or backward_reply:
+        receipt = db.get_update(update_id)
+        if receipt is None:
+            try:
+                if backward_match:
+                    reply = await backward.callback(chat_id, source_message.message_id, backward_match[2], backward_match[1])
+                elif backward_progress:
+                    linked = db.get_task_action_state('backward:goal:'+backward_progress[1]) if backward_progress[1] else backward_session
+                    reply = backward.progress(linked['token'], chat_id) if linked else 'No matching plan. Use /command #<task-id>.'
+                elif backward_reply and source_message.text == '/cancel':
+                    cancelled = db.mutate_task_action_state('backward:plan:'+backward_state['token'],
+                        lambda old: {**old, 'status': 'cancelled'} if old['status'] in {'editing', 'clarifying'} else old)
+                    reply = ('Cancelled. No tasks/events created.' if cancelled['status'] == 'cancelled'
+                             else 'This plan changed. Review /backward; approved work is preserved.')
+                else:
+                    instruction = backward_command[1] if backward_command else source_message.text
+                    reply = await backward.preview(chat_id, instruction, update_id) if instruction else 'Use /command 下週五要交資料庫報告, or /command #<task-id>.'
+            except (AIError, CalendarError, ValueError):
+                reply = 'Planning or Calendar availability could not be verified. No feasible plan is claimed. Retry /command; if already approved, use Confirm schedule to recover the recorded writes.'
+            receipt = db.process_update(update_id, lambda: reply)
+        await deliver_learning_reply(chat_id, update_id, receipt)
+        if backward_match:
+            await telegram.answer_callback_query(update.callback_query.id)
+        return {'ok': True}
     reminder_callback = re.fullmatch(r"reminder:(allow|cancel):([a-f0-9]{16})", update.callback_query.data or "") if update.callback_query else None
     reminder_text = (source_message.text or "").strip()
     if reminder_callback or (update.message and not source_message.reply_to_message and reminders.matches(reminder_text)):

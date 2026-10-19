@@ -1,4 +1,18 @@
-# Chronos 歷史驗證快照
+# Chronos 驗證紀錄
+
+## 2026-10-19 · Backward Planning 本機驗證
+
+- 完整 Python suite：`1088 passed`，一項既有 Starlette/httpx deprecation warning。
+- 新功能 suite：`47 passed`，含真實 AI transport 的 MockTransport schema 驗證、SQLite、
+  禁止 read-after-write 的 Firestore test double 與 Telegram webhook。
+- Ruff `F821,F822,F823`、Python compilation、文件連結（50 個，0 缺漏）、whitespace check 通過。
+- Windows sandbox 的 asyncio socketpair 初始化會停滯；測試在受控的 sandbox 外執行。
+- 沒有建立真實 Calendar 測試活動，也沒有傳送測試 Telegram 訊息。
+- 此紀錄是 local validation，不代表正式環境已完成端到端驗證。發布後另需確認 revision traffic、
+  `/ready` release SHA、runtime integration 與 Telegram webhook。使用及限制見
+  [Backward Planning](docs/backward-planning.md)。
+
+## 以下為歷史驗證快照
 
 更新日期：2026-10-07（Asia/Taipei）
 

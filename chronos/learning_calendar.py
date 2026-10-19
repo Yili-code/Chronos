@@ -185,6 +185,8 @@ class LearningCalendar:
         """Atomically give an explicit owner request the next approval turn."""
         def request():
             state = self.get(task_id) or {}
+            if state.get('status') == 'backward_managed':
+                return f'This task belongs to a backward plan. Use /backward {task_id} to review progress.'
             queue = self.db.get_task_action_state("learning:proposal-queue") or {}
             active = queue.get("active_task_id")
             active_state = self.get(active) if active is not None else None
@@ -406,6 +408,8 @@ class LearningCalendar:
                         "Some reviewed moves may already have succeeded; they are retained for reconciliation. "
                         f"Use /plan {task['id']} to prepare a fresh execution plan. " + str(error))
             busy = await self.calendar.busy(start, end)
+            from .backward_planning import reserved_windows
+            busy = [*busy, *reserved_windows(self.db)]
             if overlaps(start, end, busy):
                 self.update(task["id"], lambda old: {**old, "status": "queued"})
                 return "That time is now busy. A new execution plan will require approval."
@@ -444,6 +448,8 @@ class LearningCalendar:
             return "This task is no longer open. No event was created."
         if not state:
             return f"No saved execution plan for this task. Use /plan {task_id}."
+        if state.get('status') == 'backward_managed':
+            return f'This task belongs to a backward plan. Use /backward {task_id}.'
         if state["status"] == "postponed":
             return f"This task is waiting for external conditions. Use /plan {task_id} when ready."
         if state["status"] in {"queued", "planning", "proposed", "editing", "no_slot", "rejected"} and task_id != active:
@@ -1060,6 +1066,7 @@ class LearningCalendar:
             "scheduled": "Scheduled", "awaiting_feedback": "Awaiting outcome",
             "no_slot": "No viable time block", "needs_replan": "Needs replanning",
             "postponed": "Deferred",
+            "backward_managed": "Backward plan · /backward ID",
             "rejected": "Skipped", "cancelled": "Schedule removed", "finished": "Completed"}
         groups = {}
         for task in self.db.list_open_tasks():
