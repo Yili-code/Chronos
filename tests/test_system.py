@@ -356,6 +356,36 @@ def test_help_expands_full_syntax_by_category(system):
     bot.answer_callback_query.assert_awaited_with('help-back')
 
 
+@pytest.mark.parametrize('text', ['/help backward', '/help@ChronosBot backward'])
+def test_backward_help_is_read_only_and_available_from_help_menu(system, monkeypatch, text):
+    client, tasks, bot, _ = system
+    planning = AsyncMock()
+    calendar_read = AsyncMock()
+    monkeypatch.setattr(main.ai, 'backward_plan', planning)
+    monkeypatch.setattr(main.google_calendar, 'verify_owner', calendar_read)
+    headers = {'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}
+    payload = {'update_id': 504, 'message': {'chat': {'id': 123}, 'text': text}}
+    assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 200
+    assert bot.send_message.await_args.args[1] == main.HELP_SECTIONS['backward']
+    assert 'Nothing is created before confirmation' in main.HELP_SECTIONS['backward']
+    assert bot.send_message.await_args.kwargs['reply_markup'] == main.HELP_BACK_KEYBOARD
+    assert any(button['callback_data'] == 'help:backward'
+               for row in main.HELP_KEYBOARD['inline_keyboard'] for button in row)
+    send_count = bot.send_message.await_count
+    payload = {'update_id': 505, 'callback_query': {'id': 'help-backward', 'data': 'help:backward',
+        'message': {'message_id': 77, 'chat': {'id': 123}}}}
+    for _ in range(2):
+        assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 200
+    assert bot.send_message.await_count == send_count
+    bot.request.assert_awaited_once_with('editMessageText', {
+        'chat_id': 123, 'message_id': 77, 'text': main.HELP_SECTIONS['backward'],
+        'parse_mode': 'HTML', 'reply_markup': main.HELP_BACK_KEYBOARD})
+    planning.assert_not_awaited()
+    calendar_read.assert_not_awaited()
+    main.ai.parse.assert_not_awaited()
+    assert tasks.list_open() == []
+
+
 def test_daily_reminder_schedule(system):
     client, service, bot, config = system
     job = main.scheduler.get_job('daily_tasks')

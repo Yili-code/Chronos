@@ -84,15 +84,26 @@ HELP_SECTIONS = {
         "/remind &lt;description and time&gt; — add a one-time reminder\n"
         "/reminders — list reminders; /cancelreminder &lt;id&gt; cancels one\n"
         "/plan — review execution plans and Calendar connection\n"
-        "/backward &lt;goal and deadline&gt; — preview a backward plan\n"
-        "/backward #&lt;task-id&gt; — decompose an existing goal\n"
-        "/backward progress [task-id] — view linked step progress\n"
+        "/help backward — deadline planning usage and examples\n"
         "/plan &lt;task-id&gt; — request or reopen an execution plan\n"
         "/planedit &lt;task-id&gt; MM/DD HH:MM minutes — adjust a plan before confirmation\n"
         "/taskupdate &lt;task-id&gt; &lt;minutes&gt; done|partial|skipped [reason] — record the outcome\n"
         "/ai_usage — inspect today's core AI requests\n"
         "/announcements [page] — list saved announcements\n"
         "/announcement &lt;version-id&gt; [page] — read a saved announcement"
+    ),
+    "backward": (
+        "<b>Backward Planning</b>\n"
+        "See the required outputs, estimated effort and available time before a deadline.\n\n"
+        "/backward &lt;goal and deadline&gt; — preview steps and work slots\n"
+        "/backward #&lt;task-id&gt; — plan an existing goal without duplicating it\n"
+        "/backward progress [task-id] — review the latest plan or a specific goal\n\n"
+        "Example: <code>/backward 下週五要交資料庫報告</code>\n"
+        "Include completed work and limits, such as 每天最多90分鐘.\n\n"
+        "Review the preview, then Confirm schedule, Adjust plan, or Cancel. "
+        "Nothing is created before confirmation.\n"
+        "Date-only deadlines conservatively finish work the previous day, Asia/Taipei. "
+        "Insufficient capacity is reported instead of forcing a schedule."
     ),
     "assignments": (
         "<b>Assignments</b>\n"
@@ -106,7 +117,8 @@ HELP_KEYBOARD = {
             {"text": "Tasks", "callback_data": "help:tasks"},
             {"text": "Planning", "callback_data": "help:study"},
         ],
-        [{"text": "Assignments", "callback_data": "help:assignments"}],
+        [{"text": "Backward Planning", "callback_data": "help:backward"},
+         {"text": "Assignments", "callback_data": "help:assignments"}],
     ]
 }
 HELP_BACK_KEYBOARD = {
@@ -640,13 +652,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                              else 'This plan changed. Review /backward progress; approved work is preserved.')
                 else:
                     instruction = backward_command[1] if backward_command else source_message.text
-                    reply = await backward.preview(chat_id, instruction, update_id) if instruction else (
-                        'Backward Planning\n'
-                        '/backward <goal and deadline> — preview steps and available work slots\n'
-                        '/backward #<task-id> — plan an existing goal without duplicating it\n'
-                        '/backward progress [task-id] — review the latest plan or a specific goal\n\n'
-                        'Example: /backward 下週五要交資料庫報告\n'
-                        'Review the preview, then Confirm schedule, Adjust plan, or Cancel. Nothing is created before confirmation.')
+                    reply = await backward.preview(chat_id, instruction, update_id) if instruction else 'Use /help backward for planning instructions.'
             except (AIError, CalendarError, ValueError):
                 reply = 'Planning or Calendar availability could not be verified. No feasible plan is claimed. Retry /backward; if already approved, use Confirm schedule to recover the recorded writes.'
             receipt = db.process_update(update_id, lambda: reply)
@@ -933,7 +939,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                     "parse_mode": "HTML",
                     "reply_markup": HELP_KEYBOARD,
                 })
-            elif data and re.fullmatch(r"help:(?:tasks|study|assignments)", data):
+            elif data and re.fullmatch(r"help:(?:tasks|study|backward|assignments)", data):
                 section = data.split(":", 1)[1]
                 action = lambda section=section: message_bundle({
                     "text": HELP_SECTIONS[section],
@@ -974,7 +980,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
     help_callback = (
         update.callback_query is not None
         and re.fullmatch(
-            r"help:(?:index|tasks|study|assignments)",
+            r"help:(?:index|tasks|study|backward|assignments)",
             update.callback_query.data or "",
         )
     )
@@ -1297,7 +1303,7 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
             return message_bundle({"text": "掃描校曆已更新。\n\n" + render_calendar_overrides(updated),
                                    "parse_mode": "HTML"})
         return update_calendar
-    help_section = re.fullmatch(r"help\s+(tasks|study|planning|assignments)", command or "", re.IGNORECASE)
+    help_section = re.fullmatch(r"help(?:@[A-Za-z0-9_]+)?\s+(tasks|study|planning|backward|assignments)", command or "", re.IGNORECASE)
     if help_section:
         section = help_section.group(1).lower()
         if section == "planning":

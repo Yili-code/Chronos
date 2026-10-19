@@ -5,7 +5,6 @@ from .settings import Settings
 from .telegram import TelegramClient
 
 COMMANDS = {
-    "backward": "Plan a deadline goal or review progress",
     "plan": "Review task plans",
     "today": "View today's calendar agenda",
     "tasks": "View open tasks",
@@ -30,6 +29,8 @@ async def register_menu(client, chat_id):
     merged = {item["command"]: item["description"] for item in commands}
     # Remove the placeholder accidentally registered by the first planning release.
     merged.pop('command', None)
+    # Discover planning through /help backward rather than a bare /backward entry.
+    merged.pop('backward', None)
     merged.update(COMMANDS)
     expected = [{"command": key, "description": value} for key, value in merged.items()]
     result = await client.request("setMyCommands", {"scope": scope, "commands": expected})
