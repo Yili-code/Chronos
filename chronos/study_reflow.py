@@ -173,10 +173,14 @@ async def apply(planner, task, state, now):
     agenda = await planner.calendar.agenda(min(begin, datetime.fromisoformat(state["start"])),
                                            max(end, datetime.fromisoformat(state["end"])))
     moving_ids = {m["event_id"] for m in moves}
-    fixed = [bounds(e, planner.settings.tz) for e in agenda
-             if e.get("transparency") != "transparent" and not (
-                 e.get("id") in moving_ids and e.get("_calendar_id", "").casefold() in
-                 {planner.settings.calendar_id.casefold(), "primary" if planner.settings.calendar_id.casefold() == planner.settings.calendar_account.casefold() else planner.settings.calendar_id.casefold()})]
+    nonmoving_events = [(e, bounds(e, planner.settings.tz)) for e in agenda if not (
+        e.get("id") in moving_ids and e.get("_calendar_id", "").casefold() in
+        {planner.settings.calendar_id.casefold(),
+         "primary" if planner.settings.calendar_id.casefold() == planner.settings.calendar_account.casefold()
+         else planner.settings.calendar_id.casefold()})]
+    fixed_events = [(event, window) for event, window in nonmoving_events
+                    if event.get("transparency") != "transparent"]
+    fixed = [window for _, window in fixed_events]
     targets = [(m["start"], m["end"]) for m in moves]
     if not state.get("window_replan"):
         targets.append((state["start"], state["end"]))
@@ -184,7 +188,20 @@ async def apply(planner, task, state, now):
         fixed += [(datetime.fromisoformat(s["start"]), datetime.fromisoformat(s["end"]))
                   for t in tasks.values() for s in [planner.get(t["id"])]
                   if s and s.get("start") and s.get("status") == "creating"]
-    if state.get("window_replan") and overlaps(datetime.fromisoformat(state["start"]), datetime.fromisoformat(state["end"]), fixed):
+    expected_blockers = {(item["event_id"], item.get("calendar_id", "").casefold()): item
+                         for item in state.get("blocked_events", [])}
+    current_blockers = {(event.get("id"), event.get("_calendar_id", "").casefold()): (event, window)
+                        for event, window in nonmoving_events}
+    for identity, expected in expected_blockers.items():
+        current_blocker = current_blockers.get(identity)
+        expected_window = tuple(datetime.fromisoformat(expected[key]) for key in ("old_start", "old_end"))
+        if (not current_blocker or current_blocker[0].get("etag") != expected.get("etag")
+                or current_blocker[1] != expected_window):
+            raise ReflowReviewError("A fixed activity changed. Prepare a fresh proposal.")
+    unexpected = [window for event, window in fixed_events
+                  if (event.get("id"), event.get("_calendar_id", "").casefold()) not in expected_blockers]
+    if state.get("window_replan") and overlaps(
+            datetime.fromisoformat(state["start"]), datetime.fromisoformat(state["end"]), unexpected):
         raise ReflowReviewError("The requested window has a new fixed activity. Replanning paused.")
     for start, stop in targets:
         if datetime.fromisoformat(start) <= now or overlaps(datetime.fromisoformat(start), datetime.fromisoformat(stop), fixed):

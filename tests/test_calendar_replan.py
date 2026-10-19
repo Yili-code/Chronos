@@ -103,6 +103,43 @@ def test_fixed_activity_blocks_whole_preview(setup, kind):
     calendar.move_event.assert_not_awaited()
 
 
+def test_fixed_activity_does_not_block_other_reviewed_moves(setup):
+    planner, calendar, events = initialize(setup)
+    fixed = deepcopy(events['personal'])
+    fixed.update(id='fixed', etag='fixed-v1', summary='Shared class', recurrence=['weekly'])
+    fixed['start']['dateTime'] = NOW.replace(hour=10, minute=30).isoformat()
+    fixed['end']['dateTime'] = NOW.replace(hour=11, minute=30).isoformat()
+    events['fixed'] = fixed
+
+    result = asyncio.run(module.preview(planner, 123, 'free window', 2, NOW))
+
+    assert isinstance(result, dict), result
+    text = result['messages'][0]['text']
+    assert 'Still occupied' in text and 'Shared class' in text and 'Read &lt;book&gt;' in text
+    module.bind(planner.db, 123, 50, result['messages'][0])
+    state = planner.db.get_task_action_state(module.key(123))
+    assert len(state['blocked_events']) == 1
+    assert len(state['calendar_moves']) == 1
+    assert 'updated' in asyncio.run(module.callback(planner, 123, 50, state['token'], 'allow', NOW))
+    assert calendar.move_event.await_count == 1
+
+
+def test_changed_fixed_activity_invalidates_partial_review(setup):
+    planner, calendar, events = initialize(setup)
+    fixed = deepcopy(events['personal'])
+    fixed.update(id='fixed', etag='fixed-v1', summary='Shared class', recurrence=['weekly'])
+    events['fixed'] = fixed
+    result = asyncio.run(module.preview(planner, 123, 'free window', 3, NOW))
+    module.bind(planner.db, 123, 50, result['messages'][0])
+    state = planner.db.get_task_action_state(module.key(123))
+    events['fixed']['etag'] = 'changed'
+
+    reply = asyncio.run(module.callback(planner, 123, 50, state['token'], 'allow', NOW))
+
+    assert 'Nothing changed' in reply
+    calendar.move_event.assert_not_awaited()
+
+
 def test_write_timeout_recovers_without_duplicate_move(setup):
     planner, calendar, events = initialize(setup)
     state, _ = proposal(planner)
@@ -273,6 +310,17 @@ def test_explicit_same_day_window_is_deterministic(text, hour, minute):
     result = module.explicit_window(text, NOW)
     assert result.actionable
     assert module.datetime.fromisoformat(result.end) == NOW.replace(hour=hour, minute=minute)
+
+
+def test_afternoon_window_is_deterministic():
+    result = module.explicit_window('清空今天下午的行程', NOW)
+    assert result.actionable
+    assert module.datetime.fromisoformat(result.start) == NOW.replace(hour=13, minute=0)
+    assert module.datetime.fromisoformat(result.end) == NOW.replace(hour=18, minute=0)
+
+    during_afternoon = NOW.replace(hour=14, minute=20)
+    result = module.explicit_window('清空今天下午的行程', during_afternoon)
+    assert module.datetime.fromisoformat(result.start) == during_afternoon
 
 
 def test_exact_screenshot_does_not_depend_on_ai(setup):

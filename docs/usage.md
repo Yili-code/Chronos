@@ -124,7 +124,8 @@ Telegram owner menu 可用 `python -m chronos.telegram_menu` 更新並讀回驗�
 `/replan 清空今天現在到下午兩點的行程` previews moves for activities overlapping
 that window. Complete same-day requests with an explicit morning/afternoon/evening
 cutoff are parsed directly without AI; past cutoffs are rejected without shifting
-to another day. Other phrasing uses the validated AI parser. Each activity shows
+to another day. `清空今天下午的行程` deterministically means 13:00–18:00.
+Other phrasing uses the validated AI parser. Each activity shows
 its original and proposed date/time. **Allow**
 applies the reviewed arrangement; **Edit** opens a two-hour text session for a
 new window or earliest replacement time (for example `改排到明天以後`); **Cancel**
@@ -136,8 +137,9 @@ calendar are movable, at most five per proposal. Personal activities must start
 in the future. A verified Chronos study booking may already have started, but
 must not have ended; its preview states that the full original duration is
 retained without inferring completed work. Classes, shared/all-day events,
-secondary calendars, ongoing personal events and unverified study bookings block
-the whole proposal and are named with their blocking reason. Moves retain event IDs and durations;
+secondary calendars, ongoing personal events and unverified study bookings stay
+in place and are named with their blocking reason. Other eligible activities can
+still be reviewed and moved; if none are eligible, no proposal is created. Moves retain event IDs and durations;
 tracked study retains its deadline and updates its booking/budget records.
 Destinations are searched after the freed window within seven days, respecting
 study hours, meals, course policy, reservations and daily study limits. Other

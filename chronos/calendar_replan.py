@@ -17,7 +17,12 @@ def key(chat_id):
 
 def card(state):
     lines = ['<b>Review calendar changes</b>',
-             f"Free: {escape(state['start'])} → {escape(state['end'])}"]
+             f"Requested window: {escape(state['start'])} → {escape(state['end'])}"]
+    blocked = state.get('blocked_events', [])
+    if blocked:
+        lines += ['', '<b>Still occupied</b>',
+                  'These activities stay in place. Allow moves only the movable activities below.']
+        lines += [escape(item['description']) for item in blocked]
     for move in state['calendar_moves']:
         if move.get('already_started'):
             lines += ['', '已開始；未推定完成進度，保留原時長。']
@@ -40,11 +45,19 @@ def bind(db, chat_id, message_id, message):
 
 def explicit_window(instruction, now):
     """Resolve a complete, explicit same-day request without model ambiguity."""
+    normalized = re.sub(r"\s+", "", instruction)
+    if re.fullmatch(
+            r"(?:清空|騰出|空出)今天下午(?:的)?(?:所有)?(?:行程|事情|安排|活動)[。！!]?",
+            normalized):
+        start = max(now, now.replace(hour=13, minute=0, second=0, microsecond=0))
+        end = now.replace(hour=18, minute=0, second=0, microsecond=0)
+        return ReplanOutput(actionable=True, start=start.isoformat(), end=end.isoformat(),
+                            destination_start=end.isoformat())
     match = re.fullmatch(
         r"(?:清空|騰出|空出)今天(?:從)?(?:現在|目前)到(?:今天)?"
         r"(上午|中午|下午|晚上)([0-9一二三四五六七八九十兩]{1,3})點"
         r"(半|[0-9一二三四五六七八九十兩]{1,3}分)?(?:之?前)?(?:的)?(?:所有)?(?:行程|事情|安排|活動)[。！!]?",
-        re.sub(r"\s+", "", instruction))
+        normalized)
     if not match:
         return None
     def number(text):
@@ -131,12 +144,18 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
             if not event.get('start', {}).get('dateTime'):
                 reasons.append('全天活動')
             reason = '、'.join(reasons) or '擁有權、課程限制或學習紀錄未通過核對'
-            blocked.append(f"{event.get('summary', 'Untitled activity')} ({window[0]:%H:%M}–{window[1]:%H:%M})：{reason}")
+            description = f"{event.get('summary', 'Untitled activity')} ({window[0]:%H:%M}–{window[1]:%H:%M})：{reason}"
+            blocked.append({'event_id': event['id'], 'calendar_id': event.get('_calendar_id', ''),
+                'etag': event.get('etag'), 'old_start': window[0].isoformat(), 'old_end': window[1].isoformat(),
+                'description': description})
+            if event.get('transparency') != 'transparent':
+                fixed.append(window)
         else:
             selected.append((event, window, linked))
-    if blocked:
-        return '無法完整騰出時段，以下活動不能自動移動：\n' + '\n'.join(blocked) + '\n未變更任何行程。'
     if not selected:
+        if blocked:
+            return '無法完整騰出時段，以下活動不能自動移動：\n' + \
+                '\n'.join(item['description'] for item in blocked) + '\n未變更任何行程。'
         return '這段時間沒有需要移動的活動。未變更任何行程。'
     if len(selected) > 5:
         return '一次最多調整五個活動，請縮小時段。未變更任何行程。'
@@ -173,6 +192,7 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
             'start': slot[0].isoformat(), 'end': slot[1].isoformat()})
     state = {'status': 'pending', 'token': token, 'chat_id': chat_id, 'start': start.isoformat(),
              'end': end.isoformat(), 'destination_start': destination.isoformat(), 'calendar_moves': moves,
+             'blocked_events': blocked,
              'window_replan': True, 'minutes': 0, 'expires_at': (now + timedelta(hours=2)).isoformat()}
     def save(old):
         return old if old and old.get('status') == 'creating' else state
