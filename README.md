@@ -53,8 +53,8 @@ Job 使用獨立的 `chronos-collector` service account，只取得 CAS、Telegr
 
 ## 期限倒推與拆解
 
-`/command 下週五要交資料庫報告` 先提出步驟、估時與工作時段，確認後才建立子任務與 Calendar 活動。
-`/command #42` 沿用既有目標，`/backward 42` 查看進度。容量不足會顯示缺口，不硬塞行程。
+`/backward 下週五要交資料庫報告` 先提出步驟、估時與工作時段，確認後才建立子任務與 Calendar 活動。
+`/backward #42` 沿用既有目標，`/backward progress 42` 查看進度。容量不足會顯示缺口，不硬塞行程。
 沿用既有 Calendar 授權及作息；日期精度、緩衝與恢復方式見 [Backward Planning](docs/backward-planning.md)。
 
 ## 從一筆代辦開始

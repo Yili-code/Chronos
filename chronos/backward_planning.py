@@ -139,7 +139,7 @@ class BackwardPlanner:
     def progress(self, token, chat):
         state = self.db.get_task_action_state(key(token))
         if not state or state['chat_id'] != chat:
-            return 'No matching plan. Use /command #<task-id>.'
+            return 'No matching plan. Use /backward #<task-id>.'
         lines = [f"Backward plan · {state['goal']}", f"Status: {state['status']}"]
         completed = 0
         for i, step in enumerate(state['steps']):
@@ -199,7 +199,7 @@ class BackwardPlanner:
             if len(matches) == 1:
                 existing = matches[0]
             elif matches:
-                return 'Several goals match. Select ' + ', '.join(f"/command #{t['id']}" for t in matches)
+                return 'Several goals match. Select ' + ', '.join(f"/backward #{t['id']}" for t in matches)
         if existing:
             linked = self.db.get_task_action_state(f"backward:goal:{existing['id']}")
             if linked:
@@ -323,7 +323,7 @@ class BackwardPlanner:
         if state['status'] == 'created':
             return self.progress(token, chat)
         if state['status'] in {'cancelled', 'superseded', 'conflict'}:
-            return 'This preview is no longer active. Use /command #<goal-id> or describe the goal again.'
+            return 'This preview is no longer active. Use /backward #<goal-id> or describe the goal again.'
         if action in {'cancel', 'edit'}:
             def change(old):
                 if old['status'] in {'creating', 'partial', 'created'}:

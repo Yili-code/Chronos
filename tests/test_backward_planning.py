@@ -359,7 +359,7 @@ def test_webhook_command_confirmation_and_redelivery(system, monkeypatch):
     monkeypatch.setattr(main.ai, 'backward_plan', ai.backward_plan)
     bot.send_message.return_value = {'ok': True, 'result': {'message_id': 51}}
     headers = {'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}
-    payload = {'update_id': 91001, 'message': {'message_id': 50, 'chat': {'id': 123}, 'text': '/command Report'}}
+    payload = {'update_id': 91001, 'message': {'message_id': 50, 'chat': {'id': 123}, 'text': '/backward Report'}}
     assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 200
     assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 200
     assert ai.backward_plan.await_count == 1 and tasks.list_open() == []
@@ -377,10 +377,53 @@ def test_webhook_edited_command_does_not_replay_planning(system, monkeypatch):
     model = AsyncMock()
     monkeypatch.setattr(main.ai, 'backward_plan', model)
     response = client.post('/telegram/webhook', headers={'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}, json={
-        'update_id': 91003, 'edited_message': {'message_id': 50, 'chat': {'id': 123}, 'text': '/command Report'}})
+        'update_id': 91003, 'edited_message': {'message_id': 50, 'chat': {'id': 123}, 'text': '/backward Report'}})
     assert response.status_code == 200
     model.assert_not_awaited()
     assert tasks.list_open() == []
+
+
+@pytest.mark.parametrize('text', ['/backward', '/backward@ChronosBot', '/backward progress', '/backward progress #999', '/command Report'])
+def test_webhook_usage_progress_and_retired_placeholder_never_plan(system, monkeypatch, text):
+    client, tasks, bot, cfg = system
+    model = AsyncMock()
+    monkeypatch.setattr(main.ai, 'backward_plan', model)
+    response = client.post('/telegram/webhook', headers={'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}, json={
+        'update_id': 91005, 'message': {'message_id': 55, 'chat': {'id': 123}, 'text': text}})
+    assert response.status_code == 200
+    model.assert_not_awaited()
+    main.ai.parse.assert_not_awaited()
+    assert tasks.list_open() == []
+    reply = bot.send_message.await_args.args[1]
+    if text in {'/backward', '/backward@ChronosBot'}:
+        assert '/backward progress [task-id]' in reply and 'Nothing is created before confirmation' in reply
+    elif text.startswith('/command'):
+        assert 'Unknown command' in reply
+    else:
+        assert 'No matching plan' in reply
+
+
+def test_webhook_fixed_id_starts_planning_and_progress_does_not_call_ai(system, monkeypatch):
+    client, tasks, bot, cfg = system
+    cfg.enable_learning_calendar = True
+    now = datetime.now(TZ)
+    task = tasks.create('Submit database report', timing={'due_date': (now+timedelta(days=10)).date().isoformat()})
+    planner, cal, ai, events = setup(main.db, output(deadline=(now+timedelta(days=10)).date().isoformat()))
+    monkeypatch.setattr(main, 'google_calendar', cal)
+    monkeypatch.setattr(main.ai, 'backward_plan', ai.backward_plan)
+    bot.send_message.return_value = {'ok': True, 'result': {'message_id': 56}}
+    headers = {'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}
+    payload = {'update_id': 91006, 'message': {'message_id': 55, 'chat': {'id': 123}, 'text': f"/backward #{task['id']}"}}
+    assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 200
+    assert ai.backward_plan.await_count == 1
+    token = planner.session(123)['token']
+    state = main.db.get_task_action_state(key(token))
+    assert state['parent_id'] == task['id'] and len(tasks.list_open()) == 1
+    main.db.mutate_task_action_state(f"backward:goal:{task['id']}", lambda old: {'token': token})
+    payload = {'update_id': 91007, 'message': {'message_id': 57, 'chat': {'id': 123}, 'text': f"/backward progress #{task['id']}"}}
+    assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 200
+    assert 'Progress: 0/3' in bot.send_message.await_args.args[1]
+    assert ai.backward_plan.await_count == 1 and not events
 
 
 def test_long_preview_delivery_resumes_without_repeating_sent_parts(system):

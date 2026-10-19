@@ -5,14 +5,14 @@
 ## Telegram 使用
 
 ```text
-/command 下週五要交資料庫報告
-/command #42
-/command #42 已完成資料蒐集，每天最多90分鐘
-/backward
-/backward 42
+/backward 下週五要交資料庫報告
+/backward #42
+/backward #42 已完成資料蒐集，每天最多90分鐘
+/backward progress
+/backward progress 42
 ```
 
-`/command #42` 使用任務固定 ID，沿用目標與期限，不是 `/tasks` 清單位置。
+`/backward #42` 使用任務固定 ID，沿用目標與期限，不是 `/tasks` 清單位置。
 自然語言會把既有 open tasks 提供給 AI 配對；程式驗證返回的 ID，完全相同標題也會重用。
 模糊配對仍可能需要使用者指出 ID；固定 ID 最可靠。已有計畫的目標顯示進度，保留已完成工作。
 
@@ -70,7 +70,8 @@ webhook 回傳可重試錯誤。已提交任務與關係保留。
 若 owner 修改／取消已建立活動，或剩餘時段新增衝突，恢復停止並保留資料，不覆寫、不刪除、
 不自動換時段；需先檢查既有安排。
 
-`/backward ID` 可由目標或步驟查看關係與比例。用 `/tasks` 查當下位置，再 `/done <position>`
+`/backward progress ID` 可由目標或步驟查看關係與比例，省略 ID 查看最近計畫。
+單獨 `/backward` 顯示用法。用 `/tasks` 查當下位置，再 `/done <position>`
 完成一步；不會自動完成目標。目標也由使用者明確完成。
 
 ## 設定、限制與驗證

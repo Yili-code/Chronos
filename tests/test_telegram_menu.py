@@ -5,8 +5,9 @@ from chronos.telegram_menu import COMMANDS, register_menu
 
 
 def test_registration_preserves_existing_commands_and_verifies_owner_scope():
-    existing = [{"command": "custom", "description": "Custom command"}]
-    expected = existing + [{"command": k, "description": v} for k, v in COMMANDS.items()]
+    existing = [{"command": "custom", "description": "Custom command"},
+                {"command": "command", "description": "Accidental placeholder"}]
+    expected = existing[:1] + [{"command": k, "description": v} for k, v in COMMANDS.items()]
     client = AsyncMock()
     client.request.side_effect = [
         {"ok": True, "result": []}, {"ok": True, "result": existing},

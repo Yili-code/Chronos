@@ -84,9 +84,9 @@ HELP_SECTIONS = {
         "/remind &lt;description and time&gt; — add a one-time reminder\n"
         "/reminders — list reminders; /cancelreminder &lt;id&gt; cancels one\n"
         "/plan — review execution plans and Calendar connection\n"
-        "/command &lt;goal and deadline&gt; — preview a backward plan\n"
-        "/command #&lt;task-id&gt; — decompose an existing goal\n"
-        "/backward [task-id] — view linked step progress\n"
+        "/backward &lt;goal and deadline&gt; — preview a backward plan\n"
+        "/backward #&lt;task-id&gt; — decompose an existing goal\n"
+        "/backward progress [task-id] — view linked step progress\n"
         "/plan &lt;task-id&gt; — request or reopen an execution plan\n"
         "/planedit &lt;task-id&gt; MM/DD HH:MM minutes — adjust a plan before confirmation\n"
         "/taskupdate &lt;task-id&gt; &lt;minutes&gt; done|partial|skipped [reason] — record the outcome\n"
@@ -616,8 +616,8 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
     update_id = update.update_id
     backward = BackwardPlanner(db, google_calendar, ai, settings)
     backward_match = re.fullmatch(r'backward:(allow|edit|cancel):([a-f0-9]{32})', update.callback_query.data or '') if update.callback_query else None
-    backward_command = re.fullmatch(r'/command(?:@[A-Za-z0-9_]+)?(?:\s+(.+))?', source_message.text or '', re.DOTALL) if update.message else None
-    backward_progress = re.fullmatch(r'/backward(?:@[A-Za-z0-9_]+)?(?:\s+#?(\d+))?', source_message.text or '') if update.message else None
+    backward_command = re.fullmatch(r'/backward(?:@[A-Za-z0-9_]+)?(?:\s+(.+))?', source_message.text or '', re.DOTALL) if update.message else None
+    backward_progress = re.fullmatch(r'/backward(?:@[A-Za-z0-9_]+)?\s+progress(?:\s+#?(\d+))?', source_message.text or '') if update.message else None
     backward_session = backward.session(chat_id)
     backward_state = db.get_task_action_state('backward:plan:'+backward_session['token']) if backward_session.get('token') else None
     backward_reply = (update.message and not update.callback_query and backward_state
@@ -632,17 +632,23 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                     reply = await backward.callback(chat_id, source_message.message_id, backward_match[2], backward_match[1])
                 elif backward_progress:
                     linked = db.get_task_action_state('backward:goal:'+backward_progress[1]) if backward_progress[1] else backward_session
-                    reply = backward.progress(linked['token'], chat_id) if linked else 'No matching plan. Use /command #<task-id>.'
+                    reply = backward.progress(linked['token'], chat_id) if linked else 'No matching plan. Use /backward #<task-id>.'
                 elif backward_reply and source_message.text == '/cancel':
                     cancelled = db.mutate_task_action_state('backward:plan:'+backward_state['token'],
                         lambda old: {**old, 'status': 'cancelled'} if old['status'] in {'editing', 'clarifying'} else old)
                     reply = ('Cancelled. No tasks/events created.' if cancelled['status'] == 'cancelled'
-                             else 'This plan changed. Review /backward; approved work is preserved.')
+                             else 'This plan changed. Review /backward progress; approved work is preserved.')
                 else:
                     instruction = backward_command[1] if backward_command else source_message.text
-                    reply = await backward.preview(chat_id, instruction, update_id) if instruction else 'Use /command 下週五要交資料庫報告, or /command #<task-id>.'
+                    reply = await backward.preview(chat_id, instruction, update_id) if instruction else (
+                        'Backward Planning\n'
+                        '/backward <goal and deadline> — preview steps and available work slots\n'
+                        '/backward #<task-id> — plan an existing goal without duplicating it\n'
+                        '/backward progress [task-id] — review the latest plan or a specific goal\n\n'
+                        'Example: /backward 下週五要交資料庫報告\n'
+                        'Review the preview, then Confirm schedule, Adjust plan, or Cancel. Nothing is created before confirmation.')
             except (AIError, CalendarError, ValueError):
-                reply = 'Planning or Calendar availability could not be verified. No feasible plan is claimed. Retry /command; if already approved, use Confirm schedule to recover the recorded writes.'
+                reply = 'Planning or Calendar availability could not be verified. No feasible plan is claimed. Retry /backward; if already approved, use Confirm schedule to recover the recorded writes.'
             receipt = db.process_update(update_id, lambda: reply)
         await deliver_learning_reply(chat_id, update_id, receipt)
         if backward_match:

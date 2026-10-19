@@ -186,7 +186,7 @@ class LearningCalendar:
         def request():
             state = self.get(task_id) or {}
             if state.get('status') == 'backward_managed':
-                return f'This task belongs to a backward plan. Use /backward {task_id} to review progress.'
+                return f'This task belongs to a backward plan. Use /backward progress {task_id} to review progress.'
             queue = self.db.get_task_action_state("learning:proposal-queue") or {}
             active = queue.get("active_task_id")
             active_state = self.get(active) if active is not None else None
@@ -449,7 +449,7 @@ class LearningCalendar:
         if not state:
             return f"No saved execution plan for this task. Use /plan {task_id}."
         if state.get('status') == 'backward_managed':
-            return f'This task belongs to a backward plan. Use /backward {task_id}.'
+            return f'This task belongs to a backward plan. Use /backward progress {task_id}.'
         if state["status"] == "postponed":
             return f"This task is waiting for external conditions. Use /plan {task_id} when ready."
         if state["status"] in {"queued", "planning", "proposed", "editing", "no_slot", "rejected"} and task_id != active:
@@ -1066,7 +1066,7 @@ class LearningCalendar:
             "scheduled": "Scheduled", "awaiting_feedback": "Awaiting outcome",
             "no_slot": "No viable time block", "needs_replan": "Needs replanning",
             "postponed": "Deferred",
-            "backward_managed": "Backward plan · /backward ID",
+            "backward_managed": "Backward plan · /backward progress ID",
             "rejected": "Skipped", "cancelled": "Schedule removed", "finished": "Completed"}
         groups = {}
         for task in self.db.list_open_tasks():

@@ -1,8 +1,8 @@
 # Chronos — Telegram Task Assistant
 
-Backward Planning: `/command Submit the database report next Friday` previews steps, effort,
-dependencies, real Calendar slots and reserved buffer. `/command #42` reuses a goal;
-`/backward 42` shows linked progress. Confirmation is required before creating tasks/events.
+Backward Planning: `/backward Submit the database report next Friday` previews steps, effort,
+dependencies, real Calendar slots and reserved buffer. `/backward #42` reuses a goal;
+`/backward progress 42` shows linked progress. Confirmation is required before creating tasks/events.
 Date-only deadlines conservatively finish work the previous day. See [planning rules and recovery](docs/backward-planning.md).
 
 **Turn Chinese or English messages into personal tasks, manage them in your own Telegram bot, and receive a daily list of unfinished tasks.**

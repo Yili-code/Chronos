@@ -1,6 +1,6 @@
 # Gemini 與 Telegram 指令參考
 
-期限倒推：`/command 下週五要交資料庫報告`；既有目標：`/command #42`；進度：`/backward 42`。
+期限倒推：`/backward 下週五要交資料庫報告`；既有目標：`/backward #42`；進度：`/backward progress 42`。
 確認前不新增任務或活動。日期精度、容量缺口與部分失敗恢復見 [Backward Planning](backward-planning.md)。
 
 Telegram 的自然語言新增、Telegram 改期共用 Gemini API，不啟動本地模型。程式呼叫 Gemini 原生 `generateContent` endpoint，要求 JSON response 並再次驗證輸出 schema。
