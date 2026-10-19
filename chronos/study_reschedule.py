@@ -86,7 +86,7 @@ async def reschedule(planner, task_id, token, instruction, now):
         'extendedProperties': {**event.get('extendedProperties', {}),
                                'private': {**props, 'chronosReschedule': pending['marker']}}}, pending['etag'])
     record(planner, task_id, token, pending)
-    return f"Study booking updated\n{pending['start']} · {pending['minutes']} minutes" + (
+    return f"Work block updated\n{pending['start']} · {pending['minutes']} minutes" + (
         '\n' + pending['progress_note'] if pending['progress_note'] else '')
 
 

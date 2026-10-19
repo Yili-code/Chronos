@@ -1,25 +1,26 @@
-# Approval-gated learning calendar
+# Approval-gated task planning
 
 Google Calendar uses blue (`colorId=9`) for fixed courses, green (`10`) for
-Chronos study bookings, and orange (`6`) for personal activities created through
+Chronos work blocks, and orange (`6`) for personal activities created through
 `/free`. Colors describe the booking source; personal activity titles are not
 classified by AI. Existing bookings retain their color when rescheduled.
 Course series are currently imported separately, rather than created by the runtime.
 
-Chronos can propose a study block after a task is created, write it to Google
-Calendar only after the owner presses **Allow**, and ask for progress after the
+Chronos can prepare an execution plan after a task is created, write its work block to Google
+Calendar only after YiLi presses **Confirm schedule**, and ask for the outcome after the
 event ends. The five-minute deadline scheduler also drives this workflow, so a
 missed webhook tick recovers without leaving the computer on.
 
 ## Owner rules
 
-- Study blocks start at or after 09:00 and end at or before 21:00, Asia/Taipei.
+- Work blocks start at or after 09:00 and end at or before 21:00, Asia/Taipei.
 - Every day, 12:00–13:00 and 17:00–18:00 allow only tasks of at most
   10 minutes. Longer blocks cannot overlap either window. Automatic scheduling,
   random alternatives, manual edits and approval rechecks enforce this rule;
   existing Calendar events remain unchanged.
 - AI estimates remaining active work from the task title/project and completed-session
-  evidence. Proposals show total minutes, confidence and assumptions; they do not
+  evidence. This estimate drives the proposed time range but is not repeated on the
+  execution-plan card; it does not
   imply access to course material. The structured estimate accepts 10–1440 minutes,
   rounds session length up to five minutes, and caps each proposed session at 180.
   Larger estimates explicitly indicate remaining work, without automatically
@@ -27,7 +28,7 @@ missed webhook tick recovers without leaving the computer on.
 - Owner-chosen durations and the course-scope rule take priority over AI. Estimates
   are cached with the task snapshot across retries and requeues; task changes cause
   a fresh estimate. Invalid/unavailable AI responses fall back to completed-session
-  averages (at least three reports) or 90 minutes, visibly labelled. No retry loop
+  averages (at least three reports) or 90 minutes. No retry loop
   is added to each scheduler tick; another replan can try estimation again.
 - Course-scope checks, using the same English/Chinese classifier as the task-list
   grouping, default to 10 minutes. This rule takes priority over learned averages
@@ -35,7 +36,7 @@ missed webhook tick recovers without leaving the computer on.
   survives rescheduling or postponement. Scope checks accept 10–180 minutes;
   other manual blocks also accept a 10-minute minimum. Their quick duration choices
   add five minutes or double the duration (10 becomes 15 or 20 minutes).
-- Fixed course hours plus reserved/completed study blocks total at most 540
+- Fixed course hours plus reserved/completed work blocks total at most 540
   minutes per day, on weekdays and weekends. Completing a task does not reset
   that day's budget. Nonstudy personal events block availability but do not count
   as study hours.
@@ -43,10 +44,10 @@ missed webhook tick recovers without leaving the computer on.
   timetable. A persisted `learning:course-calendar-policy` controls the teaching
   dates and excluded exam/holiday dates. Without it, slots are conservatively
   blocked. Google availability does not replace the timetable.
-- Each proposal displays MM/DD (weekday), start/end time and duration. No calendar write
-  occurs without an owner callback bound to that exact proposal card.
-- Check availability again on approval. Changed tasks, expired proposals or new
-  conflicts require another proposal and another approval.
+- Each execution plan displays MM/DD (weekday) and its start/end time once. No calendar write
+  occurs without an owner callback bound to that exact plan card.
+- Check availability again on approval. Changed tasks, expired plans or new
+  conflicts require another plan and another approval.
 - If no block fits, report it. Never relax the cap or move the deadline silently.
 
 ## Authorization and deployment
@@ -83,21 +84,22 @@ Check `/ready` for the deployed release and `/plan` for connection/workflow stat
 Also verify the existing `chronos-deadline-reminders` Scheduler job is enabled
 and targets `/internal/deadlines` every five minutes.
 
-Only tasks created after the activation timestamp receive automatic proposals.
-Use `/plan <task-id>` to request a proposal for an existing task. `/plan` by itself
-is read-only. Proposal preparation may wait until 09:00 during quiet hours.
+Only tasks created after the activation timestamp receive automatic plans.
+Use `/plan <task-id>` to request an execution plan for an existing task. `/plan` by itself
+is read-only. Automatic planning may wait until 09:00 during quiet hours; the deadline
+reminder's **Plan tasks** action prepares it immediately.
 
-## One proposal at a time
+## One execution plan at a time
 
-The owner sees one current study proposal. Automatic requests join a queue without
+YiLi sees one current execution plan. Automatic requests join a queue without
 reserving a time or daily budget. An explicit `/plan ID` gives that task the next
 approval turn, queues other unapproved proposals, and invalidates their old buttons.
 Existing bookings remain unchanged. While a Calendar write is in progress, the
 command reports the blocking task and asks the owner to retry after confirmation. Edit keeps the same task active. Only a
-successful, reconciled booking after Allow releases the turn and immediately
-prepares the next proposal against the updated Calendar and daily budget.
+successful, reconciled booking after **Confirm schedule** releases the turn and immediately
+prepares the next plan against the updated Calendar and daily budget.
 Retries, uncertain writes and unavailable slots keep the current turn. Scheduled
-session check-ins run independently, even while another proposal waits for Allow.
+work-block check-ins run independently, even while another plan waits for confirmation.
 
 The durable `learning:proposal-queue` turn is claimed transactionally. On upgrade,
 an existing active turn is retained; otherwise an in-flight booking or the task
@@ -106,19 +108,21 @@ to the queue with their chosen durations and deadlines preserved. Their tokens
 are invalidated and Telegram keyboards removed, with durable cleanup retries.
 Old callbacks cannot approve or edit a queued task out of turn.
 
-**Postpone** on a proposal or its Edit menu means waiting for external conditions.
+**Defer** on an execution plan or its **Adjust plan** menu means waiting for external conditions.
 It leaves the task open and its deadline unchanged, releases the current approval
 turn, and shows the next ready task. The task list and `/plan` show its waiting
-status. It receives no automatic study proposals until the owner explicitly uses
+status. It receives no automatic plans until YiLi explicitly uses
 `/plan <task-id>` to resume. Deadline reminders still apply. Chosen duration is
 preserved. Manual edit context and old buttons are invalidated transactionally;
-Postpone cannot alter an already approved Calendar event.
+Defer cannot alter an already approved Calendar event.
 
-## Editing a proposal
+## Adjusting an execution plan
 
-Press **Edit** to see four choices. **A bit longer** adds 30 minutes;
-**Much longer** doubles the current duration. Each block is capped at 180 minutes,
-and the menu shows the resulting duration. The original start is retained when
+Press **Adjust plan** to see concrete duration options plus **Earlier**, **Later**,
+**Find another slot**, **Set manually**, and **Defer**. Duration buttons show only
+their resulting minutes: for a 120-minute block, longer is `150 min` and shorter is
+`90 min`. Internally, shorter uses 75% rounded up to a five-minute boundary. Each
+block is capped at 180 minutes. The original start is retained when
 it fits; otherwise another available slot is proposed. **Random other time**
 chooses among valid 15-minute boundaries within the deadline and seven-day
 horizon, excluding the current interval. It preserves the duration. No suitable
@@ -130,11 +134,11 @@ queued for replanning, retaining their chosen durations and deadlines. Their old
 Allow buttons cannot book the replaced time. Confirmed/in-flight bookings, classes
 and actual Calendar conflicts remain fixed. If an approval starts during the
 availability check, the edit aborts and asks the owner to retry.
-**Choose manually** opens a reply prompt for `10/20 15:00 90` (date, start time,
+**Set manually** opens a reply prompt for `10/20 15:00 90` (date, start time,
 duration in minutes). ISO dates also work. Invalid or conflicting times leave the
 proposal in editing mode. The replacement card has a new token; the previous
-Allow button cannot book it. Press **Allow** on the replacement to book.
-Old cards recover the latest proposal or Edit menu instead of leaving the owner
+confirmation button cannot book it. Press **Confirm schedule** on the replacement to book.
+Old cards recover the latest plan or adjustment menu instead of leaving YiLi
 at a dead end. An old Allow or duration/time choice only refreshes the view;
 it never approves or modifies the replacement. Proposal and Edit-menu message
 IDs are bound separately so returning to Edit on the original card still works.
@@ -142,7 +146,7 @@ IDs are bound separately so returning to Edit on the original card still works.
 For an already booked task, this command directly moves the existing event,
 independently of the current proposal turn. Natural-language exact times and
 partial-progress remarks are supported. The original event ID is retained;
-Calendar conflicts, deadlines and daily study limits are checked again. An
+Calendar conflicts, deadlines and daily workload limits are checked again. An
 uncertain write is reconciled on retry before any further edit is accepted.
 Booked edits currently require an exact time within normal study hours.
 
@@ -166,7 +170,7 @@ Existing personal recurring events are preserved. Teacher-specific exam changes
 require a timetable update. The policy expires with the teaching period and does
 not imply next semester has the same courses.
 
-## Follow-up and learning
+## Outcome follow-up
 
 Every day at 21:00 Asia/Taipei, the cloud job `chronos-evening-agenda` calls
 `/internal/agenda/tomorrow` with the scheduler secret. It sends the following
@@ -191,13 +195,14 @@ preparation is deferred outside 09:00–21:00; the default planning cutoff
 remains 21:00. Explicit late edits retain their session-specific confirmation
 and Allow approval flow.
 
-- **Done as planned** records the planned duration and completes the task.
+- **Completed** records the planned duration and completes the task.
 - **Partially completed** asks for focused minutes, completed/total pages and the next page (for example `135 | 20/48 | 21`). It keeps the task open and uses the observed pace to estimate the remaining block, capped at 180 minutes. Breaks and phone time should be excluded.
-  It queues another proposal, which still needs Allow before any calendar write.
-- **Did not start** leaves the task open and records zero study minutes.
-- `/studyfeedback <task-id> <minutes> done|partial|skipped [reason]` records actual
+  It queues another execution plan, which still needs confirmation before any calendar write.
+- **Skipped** leaves the task open and records zero minutes.
+- `/taskupdate <task-id> <minutes> done|partial|skipped [reason]` records actual
   time and optional interruption context. Use `/plan <task-id>` for another block;
-  it still needs approval. Feedback is transactionally deduplicated.
+  it still needs approval. `/studyfeedback` remains a hidden compatibility alias.
+  Feedback is transactionally deduplicated.
 
 Completed sessions and feedback are retained as evidence. After at least three
 completed reports in the same task project, future proposals use a bounded,
@@ -244,10 +249,9 @@ The transaction checks the active queue turn, token and task snapshot, clears th
 manual-edit context and releases the next task. It never creates Calendar events
 or infers actual work minutes from planned duration. `已完成部分` is not completion.
 
-Proposal cards place date, weekday, time range and session minutes on one line
-without When/Duration labels or repeated approval text. A blank line separates
-that timing line from the AI estimate. Allow, Edit and Postpone remain unchanged;
-removing the sentence does not change the approval requirement.
+Execution-plan cards place the date, weekday and time range on one line without
+repeating estimated effort. The primary actions are **Confirm schedule**, **Adjust plan**
+and **Defer**; removing estimate copy does not change the approval requirement.
 
 All Chronos-authored Telegram messages must be in English, including completion
 acknowledgements, edit prompts, errors and AI-generated progress notes. Chinese
@@ -257,8 +261,8 @@ owner input remains supported. Keep wording concise.
 
 The normal cutoff remains 21:00. If a manual time or requested evening window
 would require a later session, ask Yes/No with its exact date and time first.
-Yes creates a revised proposal bound to that exact interval; Allow is still
-required to book it. No preserves the old proposal. Confirmation expires after
+Yes creates a revised execution plan bound to that exact interval; **Confirm schedule**
+is still required to book it. No preserves the old plan. Confirmation expires after
 15 minutes and is invalidated by a task change. Later edits require confirmation
 again. Search never passes local midnight and all deadlines, meal windows, class,
 Calendar and daily workload checks remain enforced. Automatic scheduling keeps
@@ -296,13 +300,13 @@ the matching preview card. Keep failed or uncertain previews available for retry
 Cleanup retries reuse the saved update receipt without repeating the booking or
 success message; a missing preview is treated as already cleaned up.
 
-The **Earlier** proposal button searches before the current proposed start, within the deadline and daily limits. It can requeue conflicting unapproved proposals. If no free earlier slot fits, it previews moves of owner-created personal activities and Chronos study bookings. Every old/new time is listed before Allow. Classes, recurring/all-day events, shared events, secondary calendars and unverified events remain fixed. Personal activities stay on the same day; tracked study retains its own deadline. At most five activities move per proposal. Event versions are checked again on Allow. Interrupted writes are reconciled by a durable event marker; successfully applied moves are not automatically rolled back. A paused reflow requires a fresh /plan request. A revised proposal requires Allow.
+The **Earlier** adjustment searches before the current planned start, within the deadline and daily limits. It can requeue conflicting unapproved plans. If no free earlier slot fits, it previews moves of owner-created personal activities and Chronos work blocks. Every old/new time is listed before **Confirm schedule**. Classes, recurring/all-day events, shared events, secondary calendars and unverified events remain fixed. Personal activities stay on the same day; tracked work retains its own deadline. At most five activities move per plan. Event versions are checked again on confirmation. Interrupted writes are reconciled by a durable event marker; successfully applied moves are not automatically rolled back. A paused reflow requires a fresh `/plan` request. A revised plan requires confirmation.
 
 Agenda status also recognizes a completed task for its current study-session token, even if it was completed through `/done` without study feedback. Earlier sessions retain their own reported outcomes. This is a read-only display rule: it does not invent actual minutes, add duration-profile samples or modify feedback history.
 
 
-Proposal cards offer Earlier / Later and Longer / Shorter directly. Later searches
+The **Adjust plan** menu offers Earlier / Later and concrete longer/shorter durations. Later searches
 strictly after the current start while respecting deadlines, availability and daily
-limits. Longer and Shorter adjust by 30 minutes (5 minutes for course-scope checks),
-within 10–180 minutes, keeping the start when feasible. Each change produces a new
-proposal and requires Allow. Proposal buttons use two columns for mobile readability.
+limits. Longer adds 30 minutes (5 minutes for course-scope checks); shorter uses 75%,
+rounded up to five minutes, within 10–180 minutes. Each change produces a new
+execution plan and requires confirmation. Primary plan buttons use two columns for mobile readability.

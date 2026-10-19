@@ -72,7 +72,7 @@ class GoogleCalendar:
             "items": [{"id": value} for value in ids]})
         calendars = data.get("calendars", {})
         if any(value not in calendars or calendars[value].get("errors") for value in ids):
-            raise CalendarError("Some calendars could not be checked. No study time was booked.")
+            raise CalendarError("Some calendars could not be checked. No work block was scheduled.")
         result = []
         from datetime import datetime
         for value in calendars.values():

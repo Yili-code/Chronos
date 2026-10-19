@@ -23,7 +23,8 @@ def test_plan_groups_pending_work_and_separates_booked_tasks(setup):
     for item, status in ((task, 'proposed'), (other, 'needs_replan'), (booked, 'scheduled')):
         planner.update(item['id'], lambda old, status=status: {'status': status})
     pending = planner.status()
-    assert pending.count('<b>To arrange</b>') == 1
+    assert pending.count('<b>Awaiting approval</b>') == 1
+    assert pending.count('<b>Needs replanning</b>') == 1
     assert 'Remaining chapter' in pending and 'Booked chapter' not in pending
     assert '/planedit ID your request' in pending
     assert 'Report progress' not in pending
@@ -128,11 +129,12 @@ def test_only_one_proposal_is_shown_until_approval_succeeds(setup):
     assert planner.get(other["id"]) is None
     assert first["minutes"] == 90
     calendar.insert.assert_not_awaited()
-    assert " · 90 minutes" in bot.send_message.await_args_list[0].args[1]
+    assert "10/19 (Mon) 13:00–14:30" in bot.send_message.await_args_list[0].args[1]
+    assert "90 minutes" not in bot.send_message.await_args_list[0].args[1]
     assert "Calendar write waits for your approval" not in bot.send_message.await_args_list[0].args[1]
     # Frozen scheduling now is in the future relative to booking's wall clock when needed.
     reply = asyncio.run(planner.callback("approve", task["id"], first["token"], 50))
-    assert "booked" in reply
+    assert "scheduled" in reply
     asyncio.run(planner.callback("approve", task["id"], first["token"], 50))
     assert calendar.insert.await_count == 1
     assert calendar.insert.await_args.args[0]['colorId'] == '10'
@@ -142,6 +144,57 @@ def test_only_one_proposal_is_shown_until_approval_succeeds(setup):
     second = planner.get(other["id"])
     assert second["status"] == "proposed"
     assert first["end"] <= second["start"] or second["end"] <= first["start"]
+
+
+def test_initial_deadline_plan_can_preview_moving_an_owner_activity(setup):
+    planner, task, calendar, _ = setup
+    _, now = reflow_calendar(planner, calendar)
+    deadline = now.replace(hour=18, minute=0)
+    planner.db.edit_task(task["id"], task["title"], deadline, task["project"], task["timing"])
+
+    planner.request_proposal(task["id"])
+    asyncio.run(planner.tick(now))
+
+    state = planner.get(task["id"])
+    assert state["status"] == "proposed"
+    assert state["start"] == now.replace(hour=13, minute=0).isoformat()
+    assert state["calendar_moves"][0]["title"] == "Personal reading"
+    text, _ = planner.proposal_content(planner.db.get_task(task["id"]), state)
+    assert "estimate" not in text.lower()
+    assert "Schedule changes requiring approval" in text
+    calendar.move_event.assert_not_awaited()
+
+
+def test_deadline_plan_button_prepares_and_displays_proposal(system, monkeypatch):
+    import chronos.learning_calendar as learning_module
+    class LateClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.fromisoformat("2026-10-19T22:00:00+08:00").astimezone(tz)
+    monkeypatch.setattr(learning_module, "datetime", LateClock)
+    client, tasks, bot, config = system
+    config.enable_learning_calendar = True
+    config.learning_enabled_since = "2020-01-01T00:00:00+08:00"
+    calendar = AsyncMock()
+    calendar.configured = lambda: True
+    calendar.busy.return_value = []
+    calendar.verify_owner.return_value = {"id": "owner@example.com"}
+    monkeypatch.setattr(main, "google_calendar", calendar)
+    bot.send_message.return_value = {"ok": True, "result": {"message_id": 50}}
+    task = tasks.create("Read chapter", LateClock.now(config.tz) + timedelta(days=1))
+    payload = {"update_id": 99830, "callback_query": {"id": "plan",
+        "data": f"task:plan:{task['id']}", "message": {"message_id": 49, "chat": {"id": 123}}}}
+
+    response = client.post("/telegram/webhook", json=payload,
+        headers={"X-Telegram-Bot-Api-Secret-Token": "test-hook"})
+
+    assert response.status_code == 200
+    assert "is next" in bot.send_message.await_args_list[-2].args[1]
+    assert "<b>Execution plan</b>" in bot.send_message.await_args_list[-1].args[1]
+    buttons = bot.send_message.await_args_list[-1].kwargs["reply_markup"]["inline_keyboard"]
+    assert [button["text"] for row in buttons for button in row] == [
+        "Confirm schedule", "Adjust plan", "Defer"]
+    calendar.insert.assert_not_awaited()
 
 
 def test_wrong_card_and_changed_task_do_not_book(setup):
@@ -225,7 +278,7 @@ def test_no_slot_and_calendar_error_do_not_silently_book(setup):
     calendar.busy.return_value = [(NOW, NOW + timedelta(days=7))]
     asyncio.run(planner.tick(NOW))
     assert planner.get(task["id"])["status"] == "no_slot"
-    assert "No study slot" in bot.send_message.await_args.args[1]
+    assert "No viable execution window" in bot.send_message.await_args.args[1]
     calendar.insert.assert_not_awaited()
 
 
@@ -368,7 +421,7 @@ def test_edit_replaces_card_and_requires_fresh_approval(setup):
     old = planner.get(task["id"])
     text, buttons = planner.proposal_content(task, old)
     assert "10/19 (Mon)" in text
-    assert [b["text"] for b in buttons] == ["Allow", "Edit", "Earlier", "Later", "Longer", "Shorter", "Postpone"]
+    assert [b["text"] for b in buttons] == ["Confirm schedule", "Adjust plan", "Defer"]
     prompt = asyncio.run(planner.callback("edit", task["id"], old["token"], 50))
     assert len(prompt["messages"][0]["reply_markup"]["inline_keyboard"]) == 8
     prompt = asyncio.run(planner.callback("manual", task["id"], old["token"], 50))
@@ -384,7 +437,7 @@ def test_edit_replaces_card_and_requires_fresh_approval(setup):
     recovered = asyncio.run(planner.callback("approve", task["id"], old["token"], 50))
     assert recovered["messages"][0]["learning_proposal"]["token"] == revised["token"]
     calendar.insert.assert_not_awaited()
-    assert "booked" in asyncio.run(planner.callback("approve", task["id"], revised["token"], 50))
+    assert "scheduled" in asyncio.run(planner.callback("approve", task["id"], revised["token"], 50))
     assert calendar.insert.await_count == 1
 
 
@@ -793,7 +846,7 @@ def test_postpone_cannot_cancel_an_approved_booking(setup):
     state = planner.get(task["id"])
     asyncio.run(planner.callback("approve", task["id"], state["token"], 50))
     reply = asyncio.run(planner.callback("postpone", task["id"], state["token"], 50))
-    assert "No booked event was changed" in reply
+    assert "No scheduled event was changed" in reply
     assert planner.get(task["id"])["status"] == "scheduled"
     assert calendar.insert.await_count == 1
 
@@ -839,8 +892,8 @@ def test_course_scope_rule_defaults_to_ten_minutes_even_for_legacy_queue(setup, 
     assert state["minutes"] == 10 and state["duration_source"] == "course_scope_rule"
     assert datetime.fromisoformat(state["end"]) - datetime.fromisoformat(state["start"]) == timedelta(minutes=10)
     menu = planner.edit_menu(task["id"], state)["messages"][0]["reply_markup"]["inline_keyboard"]
-    assert menu[0][0]["text"] == "A bit longer · 15 min"
-    assert menu[1][0]["text"] == "Much longer · 20 min"
+    assert menu[0][0]["text"] == "15 min"
+    assert menu[1][0]["text"] == "20 min"
     calendar.insert.assert_not_awaited()
 
 
@@ -917,7 +970,7 @@ def test_approval_requeues_legacy_long_proposal_in_short_window(setup):
         'start': NOW.replace(day=20, hour=17).isoformat(),
         'end': NOW.replace(day=20, hour=18, minute=30).isoformat()})
     reply = asyncio.run(planner.callback('approve', task['id'], state['token'], 50))
-    assert 'new proposal' in reply
+    assert 'new execution plan' in reply
     assert planner.get(task['id'])['status'] == 'queued'
     calendar.insert.assert_not_awaited()
 
@@ -932,7 +985,7 @@ def test_ai_estimate_is_cached_and_session_capped(setup, minutes):
     state = planner.get(task['id'])
     assert state['minutes'] == min(180, ((minutes + 4) // 5) * 5)
     assert state['duration_source'] == 'ai'
-    assert 'AI estimate' in planner.proposal_content(task, state)[0]
+    assert 'estimate' not in planner.proposal_content(task, state)[0].lower()
     planner.update(task['id'], lambda old: {**old, 'status': 'queued', 'requested_minutes': old['minutes']})
     asyncio.run(planner.tick(NOW))
     assert planner.ai.estimate_duration.await_count == 1
@@ -947,7 +1000,7 @@ def test_ai_estimator_failure_uses_default_and_retries_next_replan(setup):
     asyncio.run(planner.tick(NOW))
     state = planner.get(task['id'])
     assert state['minutes'] == 90 and state['duration_source'] == 'default'
-    assert 'AI estimate unavailable' in planner.proposal_content(task, state)[0]
+    assert 'estimate' not in planner.proposal_content(task, state)[0].lower()
     planner.ai.estimate_duration.side_effect = None
     planner.ai.estimate_duration.return_value = DurationOutput(estimated_minutes=30, confidence='medium', reason='One exercise.')
     planner.update(task['id'], lambda old: {**old, 'status': 'queued'})
@@ -1005,8 +1058,8 @@ def test_feedback_card_combines_time_and_duration_and_explains_input(setup):
     assert '10/19 (Mon) 09:00 · 10 minutes planned' in text
     assert '\nWhen ' not in text and '\nPlanned ' not in text
     assert '[reason]' not in text
-    assert f'<code>/studyfeedback {task["id"]} 15 done</code>' in text
-    assert 'How did it go? Choose below.' in text
+    assert f'<code>/taskupdate {task["id"]} 15 done</code>' in text
+    assert 'What is the outcome? Choose below.' in text
     assert 'For 15 minutes completed' in text
     assert not any('\u4e00' <= char <= '\u9fff' for char in text)
     assert len(text.splitlines()) <= 9
@@ -1137,7 +1190,7 @@ def test_confirmed_late_proposal_still_needs_allow_to_book(setup):
     asyncio.run(planner.tick(NOW));confirmed=planner.get(task['id'])
     calendar.insert.assert_not_awaited()
     reply=asyncio.run(planner.callback('approve',task['id'],confirmed['token'],confirmed['message_id']))
-    assert 'booked' in reply
+    assert 'scheduled' in reply
     assert planner.get(task['id'])['status']=='scheduled'
     calendar.insert.assert_awaited_once()
 
@@ -1229,7 +1282,7 @@ def test_earlier_personal_moves_are_previewed_then_applied(setup):
     assert revised['start'] == now.replace(hour=13, minute=0).isoformat()
     assert revised['calendar_moves'][0]['event_id'] == 'personal'
     text, _ = planner.proposal_content(task, revised)
-    assert 'Calendar changes on Allow' in text and 'Personal reading' in text
+    assert 'Schedule changes requiring approval' in text and 'Personal reading' in text
     calendar.move_event.assert_not_awaited()
     asyncio.run(apply(planner, task, revised, now))
     assert data['personal']['start']['dateTime'] == now.replace(hour=18, minute=0).isoformat()
@@ -1458,7 +1511,7 @@ def test_explicit_plan_preserves_booking_in_progress(setup):
     planner, task, calendar, _ = setup
     planner.update(task["id"], lambda old: {"status": "creating", "token": "locked"})
     planner.db.mutate_task_action_state("learning:proposal-queue", lambda old: {"active_task_id": task["id"]})
-    assert "already booked" in planner.request_proposal(task["id"])
+    assert "already scheduled" in planner.request_proposal(task["id"])
     assert planner.get(task["id"])["token"] == "locked"
     calendar.insert.assert_not_awaited()
 
@@ -1476,7 +1529,8 @@ def test_direct_proposal_adjustments_require_fresh_approval(setup, action):
         assert datetime.fromisoformat(current["start"]) > datetime.fromisoformat(old["start"])
         assert current["minutes"] == old["minutes"]
     else:
-        assert current["minutes"] == old["minutes"] + (30 if action == "longer" else -30)
+        expected = old["minutes"] + 30 if action == "longer" else 70
+        assert current["minutes"] == expected
     calendar.insert.assert_not_awaited()
 
 

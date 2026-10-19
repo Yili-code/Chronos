@@ -51,13 +51,24 @@ def test_two_stages_deduplicate_and_overdue_stops(store):
     assert "&lt;Report&gt;" in telegram.send_message.call_args.args[1]
 
 
+def test_reminder_offers_edit_and_deadline_aware_study_plan(store):
+    task = store.create_task("Read chapter", NOW + timedelta(hours=2), None, NOW, {})
+    telegram = bot()
+    assert send(store, telegram) == {"sent": 1}
+    buttons = telegram.send_message.call_args.kwargs["reply_markup"]["inline_keyboard"][0]
+    assert buttons == [
+        {"text": "Edit task", "callback_data": f"task:edit:{task['id']}"},
+        {"text": "Plan tasks", "callback_data": f"task:plan:{task['id']}"},
+    ]
+
+
 def test_late_start_sends_only_relevant_stage_and_skips_non_deadlines(store):
     for timing in ({}, {"event": "2026-10-16"}, {"scheduled": "2026-10-16"}):
         store.create_task("No deadline", None, None, NOW, timing)
     store.create_task("Soon", NOW + timedelta(minutes=30), None, NOW, {})
     telegram = bot()
     assert send(store, telegram) == {"sent": 1}
-    assert "Due within 1 hour" in telegram.send_message.call_args.args[1]
+    assert "Due 10/16 (Fri) 12:30 · within 1 hour" in telegram.send_message.call_args.args[1]
     assert send(store, telegram) == {"sent": 0}
 
 
@@ -69,6 +80,7 @@ def test_date_only_has_no_invented_cutoff(store):
     assert send(store, telegram, NOW + timedelta(days=1, hours=-3)) == {"sent": 1}
     assert "time unspecified" in telegram.send_message.call_args.args[1]
     assert "Due 10/17 (Sat) · time unspecified" in telegram.send_message.call_args.args[1]
+    assert telegram.send_message.call_args.args[1].count("Due 10/17 (Sat) · time unspecified") == 1
     assert send(store, telegram, NOW + timedelta(days=2)) == {"sent": 0}
 
 

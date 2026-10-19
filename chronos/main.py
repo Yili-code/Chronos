@@ -59,7 +59,7 @@ gmail = GmailClient(settings)
 google_calendar = GoogleCalendar(settings)
 scheduler = AsyncIOScheduler(timezone=settings.tz)
 
-HELP_TEXT = "<b>Chronos</b>\nReady, YiLi. Choose a category."
+HELP_TEXT = "<b>Chronos</b>\nReady, YiLi. What should I handle?"
 HELP_SECTIONS = {
     "tasks": (
         "<b>Tasks</b>\n"
@@ -72,7 +72,7 @@ HELP_SECTIONS = {
         "/clear — delete all tasks after confirmation"
     ),
     "study": (
-        "<b>Study</b>\n"
+        "<b>Planning</b>\n"
         "/classday &lt;instruction&gt; — confirm a course-specific instruction day\n"
         "/classday YYYY-MM-DD &lt;course-code&gt; class|off|auto — save an exact decision\n"
         "/calendar — view or edit TronClass scan dates\n"
@@ -82,10 +82,10 @@ HELP_SECTIONS = {
         "/tomorrow — view tomorrow’s full calendar agenda\n"
         "/remind &lt;description and time&gt; — add a one-time reminder\n"
         "/reminders — list reminders; /cancelreminder &lt;id&gt; cancels one\n"
-        "/plan — inspect study proposals and Calendar connection\n"
-        "/plan &lt;task-id&gt; — request a proposal or resume a postponed task\n"
-        "/planedit &lt;task-id&gt; MM/DD HH:MM minutes — revise a proposal before Allow\n"
-        "/studyfeedback &lt;task-id&gt; &lt;minutes&gt; done|partial|skipped [reason] — record a study session\n"
+        "/plan — review execution plans and Calendar connection\n"
+        "/plan &lt;task-id&gt; — request or reopen an execution plan\n"
+        "/planedit &lt;task-id&gt; MM/DD HH:MM minutes — adjust a plan before confirmation\n"
+        "/taskupdate &lt;task-id&gt; &lt;minutes&gt; done|partial|skipped [reason] — record the outcome\n"
         "/ai_usage — inspect today's core AI requests\n"
         "/announcements [page] — list saved announcements\n"
         "/announcement &lt;version-id&gt; [page] — read a saved announcement"
@@ -100,7 +100,7 @@ HELP_KEYBOARD = {
     "inline_keyboard": [
         [
             {"text": "Tasks", "callback_data": "help:tasks"},
-            {"text": "Study", "callback_data": "help:study"},
+            {"text": "Planning", "callback_data": "help:study"},
         ],
         [{"text": "Assignments", "callback_data": "help:assignments"}],
     ]
@@ -300,7 +300,7 @@ async def deliver_learning_reply(chat_id, update_id, receipt):
     options = {key: message[key] for key in ("parse_mode", "reply_markup") if key in message}
     result = await telegram.send_message(chat_id, message["text"], **options)
     if not result.get("ok"):
-        raise HTTPException(status_code=502, detail="Study reply pending")
+        raise HTTPException(status_code=502, detail="Planning reply pending")
     if message.get("free_booking") and result.get("result", {}).get("message_id") is not None:
         bind_free_message(db, chat_id, result["result"]["message_id"], message)
     if result.get("result", {}).get("message_id") is not None:
@@ -308,14 +308,14 @@ async def deliver_learning_reply(chat_id, update_id, receipt):
     if message.get("learning_edit"):
         message_id = result.get("result", {}).get("message_id")
         if message_id is None:
-            raise HTTPException(status_code=502, detail="Study edit prompt ID missing")
+            raise HTTPException(status_code=502, detail="Planning prompt ID missing")
         db.mutate_task_action_state(f"learning:edit-message:{chat_id}:{message_id}", lambda old: message["learning_edit"])
         db.mutate_task_action_state(f"learning:edit-chat:{chat_id}", lambda old: {**message["learning_edit"],
             "expires_at": (datetime.now(settings.tz) + timedelta(hours=2)).isoformat()})
     if message.get("learning_menu"):
         message_id = result.get("result", {}).get("message_id")
         if message_id is None:
-            raise HTTPException(status_code=502, detail="Study edit menu ID missing")
+            raise HTTPException(status_code=502, detail="Planning menu ID missing")
         menu = message["learning_menu"]
         previous = learning_calendar().get(menu["task_id"]) or {}
         saved = learning_calendar().update(menu["task_id"], lambda old: {**old, "edit_message_id": message_id}
@@ -325,7 +325,7 @@ async def deliver_learning_reply(chat_id, update_id, receipt):
     if message.get("learning_proposal"):
         message_id = result.get("result", {}).get("message_id")
         if message_id is None:
-            raise HTTPException(status_code=502, detail="Study proposal ID missing")
+            raise HTTPException(status_code=502, detail="Execution plan ID missing")
         proposal = message["learning_proposal"]
         previous = learning_calendar().get(proposal["task_id"]) or {}
         saved = learning_calendar().update(proposal["task_id"], lambda old: {**old, "message_id": message_id}
@@ -380,7 +380,7 @@ async def run_study_tick() -> dict:
     if not settings.enable_study_tracking:
         return {"enabled": False}
     if not settings.telegram_chat_id or not telegram.enabled:
-        raise HTTPException(status_code=503, detail="Study delivery is not configured")
+        raise HTTPException(status_code=503, detail="Planning delivery is not configured")
     now = datetime.now(settings.tz)
     from .calendar_sync import sync_calendar
     from .calendar_scheduler import tick_calendar
@@ -645,7 +645,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         if receipt is None:
             try:
                 if not settings.enable_learning_calendar:
-                    reply = "Learning calendar is disabled. Nothing changed."
+                    reply = "Task planning is unavailable. Nothing changed."
                 elif replan_callback:
                     reply = await calendar_replan.callback(learning_calendar(), chat_id, source_message.message_id,
                                                            replan_callback[2], replan_callback[1])
@@ -692,18 +692,18 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             await telegram.answer_callback_query(update.callback_query.id)
         return {"ok": True}
     if update.callback_query and (update.callback_query.data or "").startswith("learn:"):
-        matched = re.fullmatch(r"learn:(approve|edit|earlier|postpone|more|lots|shuffle|manual|reject|retry|done|partial|skipped):(\d+):([a-f0-9]{32})", update.callback_query.data)
+        matched = re.fullmatch(r"learn:(approve|edit|earlier|later|longer|shorter|postpone|more|lots|shuffle|manual|reject|retry|done|partial|skipped):(\d+):([a-f0-9]{32})", update.callback_query.data)
         if not matched or source_message.message_id is None:
-            raise HTTPException(status_code=400, detail="Invalid study callback")
+            raise HTTPException(status_code=400, detail="Invalid planning callback")
         receipt = db.get_update(update_id)
         if receipt is None:
             if not settings.enable_learning_calendar:
-                reply = "Learning calendar is disabled. No event was created."
+                reply = "Task planning is unavailable. No event was created."
             else:
                 try:
                     reply = await learning_calendar().callback(matched[1], int(matched[2]), matched[3], source_message.message_id)
                 except CalendarError as error:
-                    reply = str(error) + " The proposal remains saved; check /plan."
+                    reply = str(error) + " The execution plan remains saved; check /plan."
             receipt = db.process_update(update_id, lambda: reply)
         await deliver_learning_reply(chat_id, update_id, receipt)
         await telegram.answer_callback_query(update.callback_query.id)
@@ -732,12 +732,12 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         receipt = db.get_update(update_id)
         if receipt is None:
             if update.edited_message:
-                reply = "Send a new reply to edit the study proposal. Editing an old message does not replay it."
+                reply = "Send a new reply to adjust the execution plan. Editing an old message does not replay it."
             elif instruction in {"/cancel", "取消"}:
                 planner = learning_calendar()
                 state = planner.get(study_edit["task_id"])
                 reply = (planner.edit_menu(study_edit["task_id"], state) if state and state["status"] == "editing"
-                    and state["token"] == study_edit["token"] else "This manual edit has ended. Open Edit on the current proposal.")
+                    and state["token"] == study_edit["token"] else "This manual adjustment has ended. Open Adjust plan on the current execution plan.")
                 db.mutate_task_action_state(pending_key, lambda old: {} if (old or {}).get("token") == study_edit["token"] else old)
             else:
                 try:
@@ -857,6 +857,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                 raise HTTPException(status_code=502, detail="Mail callback acknowledgement pending")
         return {"ok": True}
     receipt = db.get_update(update_id)
+    plan_callback = False
     if update.callback_query:
         if receipt is None:
             data = update.callback_query.data
@@ -877,6 +878,16 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                                      "\n".join(format_task_block(selected, settings.tz)))
                     card["reply_markup"] = {"force_reply": True, "selective": True}
                     action = lambda: message_bundle(card)
+            elif data and re.fullmatch(r"task:plan:\d+", data):
+                selected = tasks.get_open_by_id(int(data.rsplit(":", 1)[1]))
+                if selected is None:
+                    action = lambda: "That task is no longer open. Use /tasks to select another."
+                elif not settings.enable_learning_calendar:
+                    action = lambda: "Task planning is unavailable. No calendar event was created."
+                else:
+                    plan_callback = True
+                    action = lambda task_id=selected["id"]: learning_calendar().request_proposal(
+                        task_id, immediate=True)
             elif data == "help:index":
                 action = lambda: message_bundle({
                     "text": HELP_TEXT,
@@ -986,8 +997,13 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         result = await telegram.answer_callback_query(update.callback_query.id)
         if not result.get("ok"):
             raise HTTPException(status_code=502, detail="Telegram callback acknowledgement failed")
+        if plan_callback and settings.enable_learning_calendar:
+            try:
+                await learning_calendar().tick(force_proposal=True)
+            except CalendarError:
+                logger.warning("Deadline study proposal deferred; check /plan or the next scheduler tick")
     if settings.enable_learning_calendar and update.message and (
-        receipt.get("reply", "").startswith("<b>Task created</b>") or (source_message.text or "").startswith(("/plan ", "/planedit ", "/studyfeedback "))
+        receipt.get("reply", "").startswith("<b>Task created</b>") or (source_message.text or "").startswith(("/plan ", "/planedit ", "/taskupdate ", "/studyfeedback "))
     ):
         try:
             await learning_calendar().tick()
@@ -1127,7 +1143,7 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
     if not normalized.startswith("/") and (re.fullmatch(
             r"(?:\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2})\s+\d{1,2}:\d{2}(?:\s+\d{1,3}(?:\s*(?:minutes|min|分鐘))?)?", normalized, re.IGNORECASE)
             or study_window(normalized, datetime.now(settings.tz), settings.learning_minutes)):
-        return lambda: "Open Edit → Choose manually on the current study proposal, then send this date/time again. No task was created."
+        return lambda: "Open Adjust plan → Set manually on the current execution plan, then send this date/time again. No task was created."
     if re.fullmatch(r"/free(?:@[A-Za-z0-9_]+)?", normalized, re.IGNORECASE):
         try:
             offer = await free_slot_offer(db, google_calendar, settings)
@@ -1172,7 +1188,7 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
     if plan_edit:
         state = learning_calendar().get(int(plan_edit[1]))
         if not state:
-            return lambda: "No study proposal matches that task. Use /plan."
+            return lambda: "No execution plan matches that task. Use /plan."
         try:
             reply = await learning_calendar().revise(int(plan_edit[1]), state["token"], plan_edit[2])
         except CalendarError as error:
@@ -1189,16 +1205,16 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
         task_id = int(replan[1])
         def request_plan():
             if not settings.enable_learning_calendar:
-                return "Learning calendar is disabled."
+                return "Task planning is unavailable."
             if tasks.get_open_by_id(task_id) is None:
                 return "That task is not open. Use /tasks."
             return learning_calendar().request_proposal(task_id)
         return request_plan
-    feedback = re.fullmatch(r"/studyfeedback\s+(\d+)\s+(\d+)\s+(done|partial|skipped)(?:\s+(.+))?", normalized, re.DOTALL)
+    feedback = re.fullmatch(r"/(?:taskupdate|studyfeedback)\s+(\d+)\s+(\d+)\s+(done|partial|skipped)(?:\s+(.+))?", normalized, re.DOTALL)
     if feedback:
         task = tasks.get_open_by_id(int(feedback[1]))
         if not task:
-            return lambda: "No open study session matches that task."
+            return lambda: "No open work session matches that task."
         return await learning_calendar().prepare_feedback(task, feedback[3], int(feedback[2]), feedback[4] or "")
     command = normalized[1:].strip() if normalized.startswith("/") else None
     if command is not None and (command == 'announcements' or command.startswith('announcements ')):
@@ -1242,9 +1258,11 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
             return message_bundle({"text": "掃描校曆已更新。\n\n" + render_calendar_overrides(updated),
                                    "parse_mode": "HTML"})
         return update_calendar
-    help_section = re.fullmatch(r"help\s+(tasks|study|assignments)", command or "", re.IGNORECASE)
+    help_section = re.fullmatch(r"help\s+(tasks|study|planning|assignments)", command or "", re.IGNORECASE)
     if help_section:
         section = help_section.group(1).lower()
+        if section == "planning":
+            section = "study"
         return lambda: message_bundle({
             "text": HELP_SECTIONS[section],
             "parse_mode": "HTML",

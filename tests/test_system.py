@@ -239,7 +239,7 @@ def test_webhook_auth_and_commands(system):
     assert send('/start').status_code == 200
     help_text = bot.send_message.call_args.args[1]
     assert help_text == main.HELP_TEXT
-    assert help_text == '<b>Chronos</b>\nReady, YiLi. Choose a category.'
+    assert help_text == '<b>Chronos</b>\nReady, YiLi. What should I handle?'
     assert '/tasks' not in help_text
     assert '/reschedule' not in help_text
     assert '/postpone' not in help_text
