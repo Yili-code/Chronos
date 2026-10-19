@@ -87,9 +87,9 @@ def test_course_reply_is_correlated_and_receipt_deduplicated(system):
         assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 200
     assert main.db.get_course_session(session.session_id).reported_progress == 'Chapter 4'
     assert main.db.get_update(900)['delivered']
-    assert bot.send_message.await_count == 2
-    assert '已記錄' in bot.send_message.await_args_list[-2].args[1]
-    assert bot.send_message.await_args_list[-1].args[1] == 'No open tasks. All clear.'
+    assert bot.send_message.await_count == 1
+    assert '已記錄' in bot.send_message.await_args_list[-1].args[1]
+    assert bot.send_message.await_count == 1
     main.ai.parse.assert_not_awaited()
     assert service.list_open() == []
 
@@ -133,8 +133,8 @@ def test_course_reply_preserves_evidence_without_creating_a_task(system):
     assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 200
     assert service.list_open() == []
     assert main.db.get_course_session(session.session_id).reported_progress == '我已新增待辦'
-    assert '其他代辦保持不變' in bot.send_message.await_args_list[-2].args[1]
-    assert bot.send_message.await_args_list[-1].args[1] == 'No open tasks. All clear.'
+    assert '其他代辦保持不變' in bot.send_message.await_args_list[-1].args[1]
+    assert bot.send_message.await_count == 1
     main.ai.parse.assert_not_awaited()
 
 
@@ -154,10 +154,10 @@ def test_no_class_reply_skips_followup_task(system):
     saved = main.db.get_course_session(session.session_id)
     assert saved.report_kind is ProgressReportKind.NO_PROGRESS
     assert service.list_open() == []
-    sent = bot.send_message.await_args_list[-2].args[1]
+    sent = bot.send_message.await_args_list[-1].args[1]
     assert '其他代辦保持不變' in sent
     assert 'No class today' not in sent
-    assert bot.send_message.await_args_list[-1].args[1] == 'No open tasks. All clear.'
+    assert bot.send_message.await_count == 1
 
 
 def test_study_scheduler_endpoint_requires_secret_and_is_disabled_by_default(system):

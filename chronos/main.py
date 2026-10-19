@@ -133,23 +133,8 @@ def message_bundle(*messages: dict) -> dict:
 def record_course_progress_reply(
     prompt_id: int, message_id: int, text: str, *, local_date
 ) -> str | dict:
-    """Record progress and snapshot the resulting task list before any writes."""
-    session = db.get_course_session_by_prompt(prompt_id)
-    if session is None:
-        return db.record_course_reply(prompt_id, message_id, text, local_date=local_date)
-    before = tasks.list_open()
-    aliases = tasks.project_aliases()
-    reply = db.record_course_reply(prompt_id, message_id, text, local_date=local_date)
-    if not reply.startswith("已記錄 "):
-        return reply
-    remaining = [item for item in before if item["id"] != session.survey_task_id]
-    return message_bundle(
-        {"text": reply},
-        {
-            "text": format_tasks(remaining, settings.tz, project_aliases=aliases),
-            "parse_mode": "HTML",
-        },
-    )
+    """Record course progress and return only its acknowledgement."""
+    return db.record_course_reply(prompt_id, message_id, text, local_date=local_date)
 
 
 def task_edit_keyboard(items: list[dict]) -> dict:

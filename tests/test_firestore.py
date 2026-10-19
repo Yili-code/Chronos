@@ -176,7 +176,7 @@ def test_firestore_scheduler_reply_and_stop_reminders(monkeypatch):
     assert bot.send_message.await_count == 2
 
 
-def test_firestore_progress_reply_includes_updated_tasks_without_post_write_reads(monkeypatch):
+def test_firestore_progress_reply_only_acknowledges_without_task_list(monkeypatch):
     from datetime import date
     from chronos.course_tracking import COURSE_SCHEDULE, new_session
 
@@ -192,8 +192,9 @@ def test_firestore_progress_reply_includes_updated_tasks_without_post_write_read
         801, 802, "Chapter 5", local_date=date(2026, 10, 5),
     ))
 
-    assert len(receipt["messages"]) == 2
-    assert receipt["messages"][1]["text"] == "<b>Tasks</b>\n1. <b>Keep this task</b>"
+    assert "messages" not in receipt
+    assert receipt["reply"].startswith("已記錄 ")
+    assert "Tasks" not in receipt["reply"]
     assert [task["title"] for task in service.list_open()] == ["Keep this task"]
 
 
