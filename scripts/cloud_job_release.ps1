@@ -21,6 +21,14 @@ function New-ChronosJobSource {
     return @{ Directory = $directory; Archive = $archive; Sha = $sha }
 }
 
+function ConvertTo-ChronosEnvironmentString {
+    param($Value)
+    if ($Value -is [datetime] -or $Value -is [datetimeoffset]) {
+        return $Value.ToString("o", [Globalization.CultureInfo]::InvariantCulture)
+    }
+    return [string]$Value
+}
+
 function Remove-ChronosJobSource {
     param($Source)
     $temporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar

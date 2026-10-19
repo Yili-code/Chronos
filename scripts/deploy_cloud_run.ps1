@@ -333,7 +333,7 @@ if ($null -ne $existingService) {
             $secretBindings += "$($binding.name)=$($reference.name):$($reference.key)"
         }
         elseif ($null -ne $binding.value) {
-            $environmentValues[$binding.name] = [string]$binding.value
+            $environmentValues[$binding.name] = ConvertTo-ChronosEnvironmentString $binding.value
         }
     }
 }

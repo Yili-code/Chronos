@@ -28,6 +28,13 @@ def test_job_source_uses_committed_files_and_checks_cleanup_boundary(tmp_path):
     script.write_text(f'''
 $ErrorActionPreference = 'Stop'
 . '{helper.as_posix()}'
+$parsedInstant = '"2026-10-17T13:59:15.156859+08:00"' | ConvertFrom-Json
+$preservedInstant = ConvertTo-ChronosEnvironmentString $parsedInstant
+if ($preservedInstant -notmatch '(?:Z|[+-][0-9]{{2}}:[0-9]{{2}})$') {{ throw 'Timezone offset was lost' }}
+if ([datetimeoffset]::Parse($preservedInstant).UtcDateTime -ne
+    [datetimeoffset]::Parse('2026-10-17T13:59:15.156859+08:00').UtcDateTime) {{
+    throw 'Environment instant changed'
+}}
 $source = New-ChronosJobSource -Root '{repository.as_posix()}' -Dockerfile 'Dockerfile.assignment-scan'
 try {{
     if (Test-Path -LiteralPath (Join-Path $source.Directory '.env')) {{ throw 'Untracked secret was shipped' }}
@@ -41,8 +48,12 @@ try {{
 }} catch {{
     if ($_.Exception.Message -ne 'Refusing to remove a path outside the job release directory') {{ throw }}
 }}
-Write-Output '{{"committed_source":true,"cleanup_boundary":true}}'
+Write-Output '{{"committed_source":true,"cleanup_boundary":true,"timezone_preserved":true}}'
 ''', encoding='utf-8')
     result = subprocess.run([shell, '-NoProfile', '-NonInteractive', '-File', str(script)], capture_output=True, text=True, timeout=60)
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout) == {'committed_source': True, 'cleanup_boundary': True}
+    assert json.loads(result.stdout) == {
+        'committed_source': True,
+        'cleanup_boundary': True,
+        'timezone_preserved': True,
+    }
