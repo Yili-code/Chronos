@@ -25,7 +25,7 @@ def card(state):
         lines += [escape(item['description']) for item in blocked]
     for move in state['calendar_moves']:
         if move.get('already_started'):
-            lines += ['', '已開始；未推定完成進度，保留原時長。']
+            lines += ['', 'Already started; progress is unknown. Original duration kept.']
         lines += ['', '<b>' + escape(move['title']) + '</b>',
                   f"{move['old_start'][:16].replace('T', ' ')}–{move['old_end'][11:16]}",
                   f"→ {move['start'][:16].replace('T', ' ')}–{move['end'][11:16]}"]
@@ -102,11 +102,11 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
             raise ValueError
         start, end, destination = [t.astimezone(config.tz) for t in (start, end, destination)]
         if end <= now:
-            return f'指定的截止時間 {end:%H:%M} 已經過了；現在是 {now:%H:%M}。請指定未來時段。未變更任何行程。'
+            return f'The cutoff {end:%H:%M} has passed; it is now {now:%H:%M}. Choose a future window. Nothing changed.'
         if not now - timedelta(minutes=2) <= start < end <= now + timedelta(days=7) or destination < end or destination >= now + timedelta(days=7):
             raise ValueError
     except (AIError, ValueError, TypeError, OverflowError):
-        return '請指定要騰出的未來時段，例如 /replan 清空今天現在到下午兩點的行程。可加上「改排到明天以後」。未變更行程。'
+        return 'Specify a future window to free, e.g. /replan free today from now until 3pm. You can add "move to tomorrow or later". Nothing changed.'
     await planner.calendar.verify_owner()
     horizon = now + timedelta(days=7)
     events = await planner.calendar.agenda(now, horizon)
@@ -134,17 +134,17 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
         if not eligible:
             reasons = []
             if window[1] <= now:
-                reasons.append('活動已結束')
+                reasons.append('activity has ended')
             elif window[0] <= now and linked is None:
-                reasons.append('已開始，且不是可核對的學習預約')
+                reasons.append('already started and is not a verified study booking')
             if event.get('recurringEventId') or event.get('recurrence'):
-                reasons.append('重複活動')
+                reasons.append('recurring activity')
             if event.get('attendees') or event.get('attendeesOmitted'):
-                reasons.append('共用活動')
+                reasons.append('shared activity')
             if not event.get('start', {}).get('dateTime'):
-                reasons.append('全天活動')
-            reason = '、'.join(reasons) or '擁有權、課程限制或學習紀錄未通過核對'
-            description = f"{event.get('summary', 'Untitled activity')} ({window[0]:%H:%M}–{window[1]:%H:%M})：{reason}"
+                reasons.append('all-day activity')
+            reason = ', '.join(reasons) or 'ownership, course constraints, or study records could not be verified'
+            description = f"{event.get('summary', 'Untitled activity')} ({window[0]:%H:%M}–{window[1]:%H:%M}): {reason}"
             blocked.append({'event_id': event['id'], 'calendar_id': event.get('_calendar_id', ''),
                 'etag': event.get('etag'), 'old_start': window[0].isoformat(), 'old_end': window[1].isoformat(),
                 'description': description})
@@ -154,11 +154,11 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
             selected.append((event, window, linked))
     if not selected:
         if blocked:
-            return '無法完整騰出時段，以下活動不能自動移動：\n' + \
-                '\n'.join(item['description'] for item in blocked) + '\n未變更任何行程。'
-        return '這段時間沒有需要移動的活動。未變更任何行程。'
+            return 'The window cannot be fully freed. These activities cannot be moved automatically:\n' + \
+                '\n'.join(item['description'] for item in blocked) + '\nNothing changed.'
+        return 'No activities need moving in this window. Nothing changed.'
     if len(selected) > 5:
-        return '一次最多調整五個活動，請縮小時段。未變更任何行程。'
+        return 'At most five activities can be moved at once. Choose a smaller window. Nothing changed.'
     reservations = [(datetime.fromisoformat(s['start']), datetime.fromisoformat(s['end']))
                     for s in states.values() if s and s.get('start') and s.get('status') == 'creating']
     policy = db.get_task_action_state('learning:course-calendar-policy')
@@ -179,7 +179,7 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
         slot = find_slot(task, now, fixed + [(start, end)], reservations, config, minutes,
                          budgets, policy, window=(destination, horizon))
         if not slot:
-            return f"找不到符合期限、課表與每日上限的空檔：{event.get('summary', 'Activity')}。未變更任何行程。"
+            return f"No slot meets the deadline, timetable, and daily limit: {event.get('summary', 'Activity')}. Nothing changed."
         fixed.append(slot)
         if linked is not None:
             day = slot[0].date().isoformat()
@@ -218,7 +218,7 @@ async def callback(planner, chat_id, message_id, token, action, now=None):
     if not state or state.get('token') != token or state.get('message_id') != message_id:
         return 'This proposal is no longer active. Use /replan.'
     if state['status'] == 'editing':
-        return '請輸入新的條件，例如「改排到明天以後」。也可以輸入 /cancel，或用 /replan 重新指定時段。'
+        return 'Enter revised constraints, e.g. "move to tomorrow or later". Use /cancel to cancel or /replan to choose another window.'
     if state['status'] == 'cancelled':
         return 'Cancelled. Original calendar events kept.'
     if state['status'] == 'expired':

@@ -99,7 +99,7 @@ def test_fixed_activity_blocks_whole_preview(setup, kind):
     if kind == 'ongoing': event['start']['dateTime'] = (NOW-timedelta(minutes=5)).isoformat()
     if kind == 'secondary': event['_calendar_id'] = 'other@example.com'
     result = asyncio.run(module.preview(planner, 123, 'free window', 1, NOW))
-    assert '不能自動移動' in result
+    assert 'cannot be moved automatically' in result
     calendar.move_event.assert_not_awaited()
 
 
@@ -157,7 +157,7 @@ def test_invalid_ai_time_cannot_write(setup):
     planner, calendar, _ = initialize(setup)
     planner.ai.parse_replan.return_value = ReplanOutput(actionable=True, start='bad', end=None, destination_start=None)
     result = asyncio.run(module.preview(planner, 123, 'bad', 1, NOW))
-    assert '未變更' in result
+    assert 'Nothing changed' in result
     calendar.move_event.assert_not_awaited()
 
 def test_linked_study_move_updates_budget_and_preserves_deadline(setup):
@@ -255,7 +255,7 @@ def test_ongoing_verified_study_previews_full_duration_and_waits_for_allow(setup
     from chronos.study_reflow import movable
     assert not movable(events['personal'], planner.settings, now)
     message = result['messages'][0]
-    assert '已開始' in message['text'] and '未推定完成進度' in message['text']
+    assert 'Already started' in message['text'] and 'progress is unknown' in message['text']
     module.bind(planner.db, 123, 50, message)
     state = planner.db.get_task_action_state(module.key(123))
     move = state['calendar_moves'][0]
@@ -286,7 +286,7 @@ def test_ongoing_study_still_requires_verified_live_booking(setup, change):
     else:
         planner.update(task['id'], lambda old: {**old, 'pending_reschedule': {'marker': 'pending'}})
     reply = asyncio.run(module.preview(planner, 123, 'free until 3pm', 72, now))
-    assert '不能自動移動' in reply
+    assert 'cannot be moved automatically' in reply
     calendar.move_event.assert_not_awaited()
 
 
@@ -335,7 +335,7 @@ def test_exact_screenshot_does_not_depend_on_ai(setup):
 def test_past_explicit_cutoff_is_not_shifted_to_another_day(setup):
     planner, calendar, events, task, now = ongoing_study(setup)
     reply = asyncio.run(module.preview(planner, 123, '清空今天現在到下午二點前的所有行程', 81, now))
-    assert '14:00 已經過了' in reply
+    assert 'cutoff 14:00 has passed' in reply
     planner.ai.parse_replan.assert_not_awaited()
     calendar.agenda.assert_not_awaited()
 
