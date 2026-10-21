@@ -427,10 +427,19 @@ class TelegramReplyReference(BaseModel):
     message_id: int = Field(gt=0)
 
 
+class TelegramPhoto(BaseModel):
+    model_config = ConfigDict(strict=True)
+    file_id: str = Field(min_length=1, max_length=1024)
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
+
+
 class TelegramMessage(BaseModel):
     model_config = ConfigDict(strict=True)
     chat: TelegramChat
     text: str | None = None
+    caption: str | None = None
+    photo: list[TelegramPhoto] = Field(default_factory=list, max_length=20)
     message_id: int | None = Field(default=None, gt=0)
     reply_to_message: TelegramReplyReference | None = None
 
@@ -906,7 +915,10 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
     if update.callback_query:
         if receipt is None:
             data = update.callback_query.data
-            if data == "clear:confirm":
+            if data and re.fullmatch(r"image:\d+:\d+", data):
+                from .image_deadlines import confirm_photo
+                action = lambda: confirm_photo(db, tasks, data, chat_id, datetime.now(settings.tz))
+            elif data == "clear:confirm":
                 action = clear_tasks_reply
             elif data == "clear:cancel":
                 action = lambda: "Understood. Nothing was deleted."
@@ -951,7 +963,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             receipt = db.process_update(update_id, action)
     else:
         text = (source_message.text or "").strip()
-        if not text:
+        if not text and not source_message.photo:
             return {"ok": True}
         if receipt is None:
             # Network work happens before acquiring the persistence transaction.
@@ -962,6 +974,12 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                     "Editing a sent message does not replay its command. Nothing changed. "
                     "Send /edit 1 your changes as a new message, or use /tasks → Edit."
                 )
+            elif source_message.photo:
+                from .image_deadlines import prepare_photo
+                photo = max(source_message.photo, key=lambda item: item.width * item.height)
+                proposal = await prepare_photo(ai, telegram, tasks, photo, source_message.caption or "",
+                                               update_id, chat_id, datetime.now(settings.tz))
+                action = lambda: proposal
             elif bound_task is not None:
                 instruction = re.sub(r"^/edit\s*", "", text, flags=re.IGNORECASE).strip()
                 action = await prepare_message(f"/edit #{bound_task} {instruction}", update_id=update_id)

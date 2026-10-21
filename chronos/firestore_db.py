@@ -16,6 +16,7 @@ from .assignments import Assignment, to_record, from_record, set_deadline, owner
 from .task_timing import normalize_timing, task_sort_key
 from .task_actions import TaskActions, task_fields
 from .database_metrics import measured
+from .assignment_bridge import TRACKED_COURSES
 
 
 class FirestoreDatabase(TaskActions):
@@ -193,7 +194,10 @@ class FirestoreDatabase(TaskActions):
         active = self._transaction.get()
         snapshots = query.stream(transaction=active) if active is not None else query.stream()
         result = [self._task_data(int(snapshot.id), snapshot.to_dict()) for snapshot in snapshots]
-        return sorted(result, key=task_sort_key)
+        assignments = self.assignments.stream(transaction=active) if active is not None else self.assignments.stream()
+        excluded = {data['task_id'] for snapshot in assignments
+                    if (data := snapshot.to_dict())['record'].get('course_id') not in TRACKED_COURSES}
+        return sorted((task for task in result if task['id'] not in excluded), key=task_sort_key)
 
     def create_assignment(self, assignment: Assignment) -> dict:
         def create(transaction):

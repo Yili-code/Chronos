@@ -1,4 +1,6 @@
 import asyncio
+from dataclasses import replace
+import pytest
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock
 
@@ -13,7 +15,7 @@ def setup(tmp_path, deadline=True):
     db = Database(tmp_path / "reminders.db")
     db.initialize()
     now = datetime(2026, 10, 5, 12, tzinfo=TAIPEI)
-    item = Assignment("course", "source", "Report", "Instructions", now,
+    item = Assignment("189756", "source", "Report", "Instructions", now,
                       now + timedelta(days=1) if deadline else None, "source" if deadline else None)
     task = db.create_assignment(item)
     bot = AsyncMock()
@@ -37,7 +39,7 @@ def test_missing_deadline_is_still_a_single_first_seen_notice(tmp_path):
         asyncio.run(tick_assignments(db, bot, 123, now + timedelta(hours=hours)))
     assert bot.send_message.await_count == 1
     text = bot.send_message.call_args.args[1]
-    assert '/edit 清單順位' in text
+    assert 'Not provided. Use /tasks, then /edit' in text
     assert '/deadline' not in text
     assert '/assignment' not in text
 
@@ -83,3 +85,15 @@ def test_new_assignment_includes_open_and_edit_buttons(tmp_path):
     markup = bot.send_message.call_args.kwargs["reply_markup"]
     assert markup["inline_keyboard"][0][0]["text"] == "Open in TronClass"
     assert markup["inline_keyboard"][0][1]["text"] == "Edit task"
+
+
+@pytest.mark.parametrize('course_id', ['172796', '170060', '172823'])
+def test_legacy_course_never_notifies_or_claims_delivery(tmp_path, course_id):
+    db, now, task, bot = setup(tmp_path)
+    old = replace(task['assignment'], course_id=course_id, submission_status='submitted')
+    db.create_assignment(old)
+    db.complete_task(task['task_id'], now)
+    for hours in (0, 1, 23):
+        assert asyncio.run(tick_assignments(db, bot, 123, now + timedelta(hours=hours))) == {'assignment_notices_sent': 0}
+    bot.send_message.assert_not_awaited()
+    assert db.get_study_delivery(f'assignment:{old.key}:discovered') is None

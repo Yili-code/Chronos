@@ -109,12 +109,27 @@ Study 預設關閉，包含 NTOU / TronClass 特定課表與課程 ID；不是�
 
 設定 `CHRONOS_TELEGRAM_CHAT_ID` 後，其他 chat 無法操作 bot。
 
-Webhook 會驗證 JSON 結構與整數 `update_id`，合法的非文字更新會略過。每筆 message 或 callback 的代辦變更與處理紀錄會一起儲存在 SQLite 或 Firestore；動態位置會在同一 transaction 內解析成永久 ID，重送同一 update 不會重複新增、完成、修改、改期或清除，重啟後仍有效。多訊息回覆會逐則保存 delivery progress，後續 webhook retry 從第一則未確認訊息繼續。若 Telegram 已收到某則訊息而程式尚未記錄送達就中斷，該則文字仍可能重複，但代辦不會重複變更。去重與 pending-edit 紀錄目前不會自動清除；完成或取消 retry 會刪除對應 pending edit。
+Webhook 會驗證 JSON 結構與整數 `update_id`，照片會進入圖片期限流程，其他未支援的非文字更新會略過。每筆 message 或 callback 的代辦變更與處理紀錄會一起儲存在 SQLite 或 Firestore；動態位置會在同一 transaction 內解析成永久 ID，重送同一 update 不會重複新增、完成、修改、改期或清除，重啟後仍有效。多訊息回覆會逐則保存 delivery progress，後續 webhook retry 從第一則未確認訊息繼續。若 Telegram 已收到某則訊息而程式尚未記錄送達就中斷，該則文字仍可能重複，但代辦不會重複變更。去重與 pending-edit 紀錄目前不會自動清除；完成或取消 retry 會刪除對應 pending edit。
 
 
 `/plan` 依狀態分組，已排程的任務另發一則訊息。使用 `/plan ID` 請求 execution plan 或恢復任務；`/planedit ID 明天晚上七點，讀一小時` 可用自然語言調整 execution plan。
 
 部分完成的學習回報會將原任務結案，並建立剩餘工作的接續任務；原回報與任務歷史仍保留。頁數回報會把下一頁至總頁數寫入新任務，沿用期限與專案，並根據本次閱讀速度估算剩餘時間。重複回報不會重複建立任務，Calendar 寫入仍需確認。
+## 圖片中的作業期限
+
+在 Telegram 以「照片」傳送作業截圖，並在同一則照片的說明填入
+`add their deadline` 或「把圖片中的期限加到既有任務」。需設定支援圖片輸入的 Gemini 模型。
+目前支援 Telegram JPEG 照片（最多 8 MB），不支援以文件附件傳送的圖片。
+
+Chronos 會將照片及說明、未完成任務的 ID 與標題送給 Gemini，最多辨識 20 項期限，
+逐項顯示圖片名稱、配對的固定任務 ID、完整日期與時區。按下該項的
+**Confirm deadline** 才更新；不會直接建立任務。配對不明或查無任務的項目不提供確認按鈕。
+圖片沒有年份時會明確標示暫用今年，請核對後再確認；年份不對時，重新傳送照片並在說明指定年份。
+只有日期的期限不會補上時間。
+
+提案 24 小時後失效。任務在提案後已修改、完成或刪除時，舊提案不會覆寫它，請重新傳送圖片。
+圖片下載／辨識失敗不會改動任務；重送相同 webhook 不會重做辨識。
+照片內容不寫入本機資料庫，但辨識預覽與更新提案會保存在既有 Telegram 回覆紀錄中。
 
 回到 [本機啟動](getting-started.md) 或 [README](../README.md)。
 

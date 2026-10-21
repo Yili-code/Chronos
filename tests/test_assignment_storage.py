@@ -21,7 +21,7 @@ def db(request, tmp_path, monkeypatch):
 
 def sample():
     now = datetime(2026, 10, 5, 12, tzinfo=TAIPEI)
-    return Assignment("course-1", "source-1", "Report", "Keep instructions", now,
+    return Assignment("188571", "source-1", "Report", "Keep instructions", now,
                       now + timedelta(days=1), "source")
 
 
@@ -59,6 +59,18 @@ def test_missing_deadline_stays_pending_after_storage(db):
 
 def test_unknown_identity_returns_none(db):
     assert db.get_assignment("missing") is None
+
+
+@pytest.mark.parametrize('course_id', ['172796', '170060', '172823'])
+def test_old_course_hidden_without_deleting_history_or_unrelated_tasks(db, course_id):
+    old = replace(sample(), course_id=course_id)
+    task = db.create_assignment(old)
+    current = db.create_assignment(sample())
+    manual = db.create_task('Manual task', None, course_id, old.discovered_at)
+    db.edit_task(task['task_id'], 'Owner title', None, '188571')
+    assert {row['id'] for row in db.list_open_tasks()} == {current['task_id'], manual['id']}
+    saved = db.get_assignment(old.key)
+    assert saved['task_exists'] and saved['assignment'].completed_at is None
 
 
 def test_ordinary_reschedule_and_edit_sync_assignment_deadline(db):

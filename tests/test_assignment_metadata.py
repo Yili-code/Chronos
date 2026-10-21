@@ -10,7 +10,7 @@ from test_firestore import database as firestore_fake
 def test_metadata_roundtrip_never_completes_task(backend, tmp_path, monkeypatch):
     db = firestore_fake(monkeypatch) if backend == 'firestore' else Database(tmp_path / 'metadata.db')
     db.initialize()
-    item = Assignment('course', 'source', 'Lab', 'Instructions', datetime.now(TAIPEI),
+    item = Assignment('188571', 'source', 'Lab', 'Instructions', datetime.now(TAIPEI),
                       submission_status='submitted', attachments=(('123', 'lab.pdf'),))
     stored = db.create_assignment(item)
     observed = db.get_assignment(item.key)['assignment']

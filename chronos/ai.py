@@ -387,7 +387,7 @@ class ExternalAI:
         return ParsedTask(parsed.title, parsed.due_at, parsed.project, timing)
 
     async def _generate_output(self, prompt: str, text: str, schema: dict,
-                               output_model: type[BaseModel], subject: str) -> BaseModel:
+                               output_model: type[BaseModel], subject: str, *, image_part: dict | None = None) -> BaseModel:
         config = self.settings
         no_change = {
             "task": "No task was changed",
@@ -417,6 +417,8 @@ class ExternalAI:
             nonlocal attempts
             attempts += 1
 
+        if image_part is not None:
+            request_body["contents"][0]["parts"].append(image_part)
         try:
             async with asyncio.timeout(config.ai_timeout):
                 async with httpx.AsyncClient(timeout=config.ai_timeout) as client:

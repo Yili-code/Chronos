@@ -28,7 +28,7 @@ def store(request, tmp_path, monkeypatch):
 
 
 def test_undo_restores_all_time_roles_and_linked_assignment(store):
-    item = Assignment("course", "source", "Report", "Instructions", NOW, NOW + timedelta(days=2), "source")
+    item = Assignment("189756", "source", "Report", "Instructions", NOW, NOW + timedelta(days=2), "source")
     task_id = store.create_assignment(item)["task_id"]
     before = store.list_open_tasks()[0]
     edit = store.edit_task_with_undo(task_id, "Changed", None, "new", {"event": "2026-10-20"})
@@ -72,7 +72,7 @@ def test_undo_rejects_changed_or_missing_task(store, change):
 
 
 def test_upstream_assignment_change_blocks_undo(store):
-    item = Assignment("course", "source", "Report", "Instructions", NOW)
+    item = Assignment("189756", "source", "Report", "Instructions", NOW)
     task_id = store.create_assignment(item)["task_id"]
     store.edit_task_with_undo(task_id, "Changed", None, None, {})
     store.refresh_assignment(replace(item, description="New instructions", discovered_at=NOW + timedelta(minutes=1)))
@@ -81,7 +81,7 @@ def test_upstream_assignment_change_blocks_undo(store):
 
 
 def test_noop_preserves_previous_undo_and_title_edit_preserves_source_deadline(store):
-    item = Assignment("course", "source", "Report", "Instructions", NOW, NOW + timedelta(days=2), "source")
+    item = Assignment("189756", "source", "Report", "Instructions", NOW, NOW + timedelta(days=2), "source")
     task_id = store.create_assignment(item)["task_id"]
     first = store.edit_task_with_undo(task_id, "Renamed", item.deadline, "course", {})
     assert store.get_assignment(item.key)["assignment"] == item

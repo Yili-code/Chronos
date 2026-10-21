@@ -62,3 +62,15 @@ def test_stale_observations_do_not_create_tasks(tmp_path):
     store.put(payload, NOW)
     assert sync_assignment_observations(db, store, NOW + timedelta(days=2))['stale'] == 1
     assert db.list_open_tasks() == []
+
+
+@pytest.mark.parametrize('backend', ['sqlite', 'firestore'])
+def test_old_course_snapshot_cannot_be_imported(backend, tmp_path, monkeypatch):
+    db = firestore_fake(monkeypatch) if backend == 'firestore' else Database(tmp_path / 'tasks.db')
+    db.initialize()
+    store = AssignmentObservationStore(tmp_path / 'observations.db', tracked_courses={'172796'})
+    payload = deepcopy(PAYLOAD)
+    payload['assignment']['course_id'] = '172796'
+    store.put(payload, NOW)
+    assert sync_assignment_observations(db, store, NOW)['invalid'] == 1
+    assert db.list_assignment_keys() == []

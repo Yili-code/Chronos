@@ -13,6 +13,7 @@ from .assignments import Assignment, to_record, from_record, set_deadline, owner
 from .task_timing import normalize_timing, task_sort_key
 from .task_actions import TaskActions, task_fields
 from .database_metrics import measured
+from .assignment_bridge import TRACKED_COURSES
 
 
 SCHEMA = """
@@ -344,7 +345,12 @@ class Database(TaskActions):
             rows = connection.execute(
                 "SELECT * FROM tasks WHERE status = 'open' ORDER BY due_at IS NULL, due_at, id"
             ).fetchall()
-        return sorted((self._task_data(row) for row in rows), key=task_sort_key)
+            # Use source identity, never the editable task project/title. Keep
+            # historical records intact without presenting them as current work.
+            excluded = {row['task_id'] for row in connection.execute(
+                "SELECT task_id, record_json FROM assignments")
+                if json.loads(row['record_json']).get('course_id') not in TRACKED_COURSES}
+        return sorted((self._task_data(row) for row in rows if row['id'] not in excluded), key=task_sort_key)
 
     def create_assignment(self, assignment: Assignment) -> dict:
         """Persist source identity and its ordinary task together, exactly once."""

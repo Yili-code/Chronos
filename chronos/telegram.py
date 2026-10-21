@@ -12,6 +12,33 @@ class TelegramError(RuntimeError):
 
 
 class TelegramClient:
+    async def download_photo(self, file_id: str) -> bytes:
+        """Fetch a bounded JPEG from Telegram without exposing credential URLs."""
+        import re
+        limit = 8 * 1024 * 1024
+        result = await self.request("getFile", {"file_id": file_id})
+        info = result.get("result") or {}
+        path = info.get("file_path", "")
+        if (not result.get("ok") or not isinstance(path, str)
+                or not re.fullmatch(r"[A-Za-z0-9_/-]+\.jpg", path)
+                or ".." in path or path.startswith("/")
+                or info.get("file_size", 0) > limit):
+            raise TelegramError("Photo unavailable or too large (maximum 8 MB).")
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                async with client.stream("GET", f"https://api.telegram.org/file/bot{self.token}/{path}") as response:
+                    response.raise_for_status()
+                    content = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        content.extend(chunk)
+                        if len(content) > limit:
+                            raise TelegramError("Photo exceeds 8 MB.")
+        except httpx.HTTPError:
+            raise TelegramError("Photo download failed; please resend it.") from None
+        if not content.startswith(b"\xff\xd8\xff"):
+            raise TelegramError("Unsupported photo format; please send a JPEG photo.")
+        return bytes(content)
+
     def __init__(self, token: str):
         self.token = token
 
