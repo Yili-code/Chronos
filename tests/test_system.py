@@ -250,7 +250,8 @@ def test_webhook_auth_and_commands(system):
     assert send('/start').status_code == 200
     help_text = bot.send_message.call_args.args[1]
     assert help_text == main.HELP_TEXT
-    assert '直接說' in help_text
+    assert help_text.splitlines() == ['<b>Chronos</b>', '', '「報告改到星期五交」',
+                                      '「今晚幫我空出來」', '「明天下午有什麼安排？」']
     assert len(help_text) < 300
     assert '/tasks' not in help_text
     assert '/reschedule' not in help_text
@@ -382,8 +383,7 @@ def test_backward_help_is_read_only_and_available_from_help_menu(system, monkeyp
     assert bot.send_message.await_args.args[1] == main.HELP_SECTIONS['backward']
     assert '確認後才建立' in main.HELP_SECTIONS['backward']
     assert bot.send_message.await_args.kwargs['reply_markup'] == main.HELP_BACK_KEYBOARD
-    assert any(button['callback_data'] == 'help:backward'
-               for row in main.HELP_KEYBOARD['inline_keyboard'] for button in row)
+    assert main.HELP_KEYBOARD == {'inline_keyboard': []}
     send_count = bot.send_message.await_count
     payload = {'update_id': 505, 'callback_query': {'id': 'help-backward', 'data': 'help:backward',
         'message': {'message_id': 77, 'chat': {'id': 123}}}}

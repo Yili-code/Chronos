@@ -61,10 +61,10 @@ google_calendar = GoogleCalendar(settings)
 scheduler = AsyncIOScheduler(timezone=settings.tz)
 
 HELP_TEXT = (
-    "<b>Chronos</b>\n直接說你想做什麼，例如：\n"
-    "「報告改到星期五交」「今晚幫我空出來」「我明天有什麼安排？」\n\n"
-    "/task 任務 · /plan 計畫 · /today 今天 · /tomorrow 明天\n"
-    "/free 空檔 · /info 說明"
+    "<b>Chronos</b>\n\n"
+    "「報告改到星期五交」\n"
+    "「今晚幫我空出來」\n"
+    "「明天下午有什麼安排？」"
 )
 HELP_SECTIONS = {
     "tasks": "<b>任務</b>\n直接說「新增買牛奶」「報告做完了」，或回覆任務卡說「延到明天」。",
@@ -72,16 +72,8 @@ HELP_SECTIONS = {
     "backward": "<b>期限規劃</b>\n直接說「幫我拆解下週五要交的報告，每天最多90分鐘」。確認後才建立任務與行程。",
     "assignments": "<b>作業</b>\n已追蹤作業會出現在 /task。不代寫或提交作業。",
 }
-HELP_KEYBOARD = {
-    "inline_keyboard": [
-        [
-            {"text": "Tasks", "callback_data": "help:tasks"},
-            {"text": "Planning", "callback_data": "help:study"},
-        ],
-        [{"text": "Backward Planning", "callback_data": "help:backward"},
-         {"text": "Assignments", "callback_data": "help:assignments"}],
-    ]
-}
+# Empty markup also clears category buttons when returning from an old help card.
+HELP_KEYBOARD = {"inline_keyboard": []}
 HELP_BACK_KEYBOARD = {
     "inline_keyboard": [[{"text": "返回", "callback_data": "help:index"}]]
 }
