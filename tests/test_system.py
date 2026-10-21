@@ -250,13 +250,13 @@ def test_webhook_auth_and_commands(system):
     assert bot.send_message.call_args.kwargs == {
         'parse_mode': 'HTML', 'reply_markup': main.HELP_KEYBOARD,
     }
-    assert send('/help').status_code == 200
+    assert send('/info').status_code == 200
     assert bot.send_message.call_args.args[1] == help_text
     assert bot.send_message.call_args.kwargs == {
         'parse_mode': 'HTML', 'reply_markup': main.HELP_KEYBOARD,
     }
     assert send('代辦').status_code == 200
-    assert bot.send_message.call_args.args[1] == 'Unknown command. Use /help to see available commands.'
+    assert bot.send_message.call_args.args[1] == 'Unknown command. Use /info to see available commands.'
     assert bot.send_message.call_args.kwargs == {'parse_mode': None}
     assert service.list_open() == []
     assert send('新增工作').status_code == 200
@@ -281,11 +281,11 @@ def test_webhook_auth_and_commands(system):
     assert bot.send_message.call_args.args[1] == 'Task 3 not found.\n\nNo open tasks. All clear.'
     parse_count = main.ai.parse.await_count
     assert send('/reschedule 4 tomorrow').status_code == 200
-    assert bot.send_message.call_args.args[1] == 'Unknown command. Use /help to see available commands.'
+    assert bot.send_message.call_args.args[1] == 'Unknown command. Use /info to see available commands.'
     assert main.ai.parse.await_count == parse_count
     for removed in ('/prepare 27', '/draft 27', '/preparation_budget'):
         assert send(removed).status_code == 200
-        assert bot.send_message.call_args.args[1] == 'Unknown command. Use /help to see available commands.'
+        assert bot.send_message.call_args.args[1] == 'Unknown command. Use /info to see available commands.'
     assert main.ai.parse.await_count == parse_count
     service.create('Draft roadmap')
     main.ai.edit = AsyncMock(return_value=ParsedTask(
@@ -304,7 +304,7 @@ def test_help_expands_full_syntax_by_category(system):
     headers = {'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}
 
     response = client.post('/telegram/webhook', headers=headers, json={
-        'update_id': 501, 'message': {'chat': {'id': 123}, 'text': '/help tasks'},
+        'update_id': 501, 'message': {'chat': {'id': 123}, 'text': '/info tasks'},
     })
     assert response.status_code == 200
     assert bot.send_message.call_args.args[1] == main.HELP_SECTIONS['tasks']
@@ -356,7 +356,7 @@ def test_help_expands_full_syntax_by_category(system):
     bot.answer_callback_query.assert_awaited_with('help-back')
 
 
-@pytest.mark.parametrize('text', ['/help backward', '/help@ChronosBot backward'])
+@pytest.mark.parametrize('text', ['/info backward', '/info@ChronosBot backward'])
 def test_backward_help_is_read_only_and_available_from_help_menu(system, monkeypatch, text):
     client, tasks, bot, _ = system
     planning = AsyncMock()

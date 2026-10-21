@@ -8,7 +8,7 @@ COMMANDS = {
     "plan": "Review task plans",
     "today": "View today's calendar agenda",
     "tasks": "View open tasks",
-    "help": "Show available commands",
+    "info": "Show available commands",
     "tomorrow": "View tomorrow's calendar agenda",
     "free": "Find free calendar slots",
     "replan": "Review moves to free a calendar window",
@@ -29,7 +29,8 @@ async def register_menu(client, chat_id):
     merged = {item["command"]: item["description"] for item in commands}
     # Remove the placeholder accidentally registered by the first planning release.
     merged.pop('command', None)
-    # Discover planning through /help backward rather than a bare /backward entry.
+    merged.pop('help', None)
+    # Discover planning through /info backward rather than a bare /backward entry.
     merged.pop('backward', None)
     merged.update(COMMANDS)
     expected = [{"command": key, "description": value} for key, value in merged.items()]

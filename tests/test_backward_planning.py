@@ -396,7 +396,7 @@ def test_webhook_usage_progress_and_retired_placeholder_never_plan(system, monke
     assert tasks.list_open() == []
     reply = bot.send_message.await_args.args[1]
     if text in {'/backward', '/backward@ChronosBot'}:
-        assert reply == 'Use /help backward for planning instructions.'
+        assert reply == 'Use /info backward for planning instructions.'
     elif text.startswith('/command'):
         assert 'Unknown command' in reply
     else:

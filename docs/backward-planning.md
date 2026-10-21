@@ -5,7 +5,7 @@
 ## Telegram 使用
 
 ```text
-/help backward
+/info backward
 /backward 下週五要交資料庫報告
 /backward #42
 /backward #42 已完成資料蒐集，每天最多90分鐘
@@ -72,7 +72,7 @@ webhook 回傳可重試錯誤。已提交任務與關係保留。
 不自動換時段；需先檢查既有安排。
 
 `/backward progress ID` 可由目標或步驟查看關係與比例，省略 ID 查看最近計畫。
-用法統一由 `/help backward` 或 `/help` → **Backward Planning** 查看。
+用法統一由 `/info backward` 或 `/info` → **Backward Planning** 查看。
 單獨 `/backward` 只提示前往 Help，Telegram 指令選單不再列出它。
 用 `/tasks` 查當下位置，再 `/done <position>`
 完成一步；不會自動完成目標。目標也由使用者明確完成。

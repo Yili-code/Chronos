@@ -49,7 +49,7 @@ def test_failure_does_not_change_tasks(task_service, monkeypatch):
     edit_failure = asyncio.run(main.handle_message("/edit 1 改到明天"))
     assert "External AI failed" in edit_failure
     assert "Task 1 is unchanged" in edit_failure
-    assert asyncio.run(main.handle_message("/reschedule 1 明天")) == "Unknown command. Use /help to see available commands."
+    assert asyncio.run(main.handle_message("/reschedule 1 明天")) == "Unknown command. Use /info to see available commands."
     assert task_service.list_open() == before
     assert "Original task" in asyncio.run(main.handle_message("/tasks"))
     assert asyncio.run(main.handle_message("/done 1")) == "Completed Original task\n\nNo open tasks. All clear."

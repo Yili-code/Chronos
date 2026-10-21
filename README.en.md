@@ -1,6 +1,6 @@
 # Chronos — Telegram Task Assistant
 
-Use `/help backward` for instructions. `/backward Submit the database report next Friday` previews steps, effort,
+Use `/info backward` for instructions. `/backward Submit the database report next Friday` previews steps, effort,
 dependencies, real Calendar slots and reserved buffer. `/backward #42` reuses a goal;
 `/backward progress 42` shows linked progress. Confirmation is required before creating tasks/events.
 Date-only deadlines conservatively finish work the previous day. See [planning rules and recovery](docs/backward-planning.md).

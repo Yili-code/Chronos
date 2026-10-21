@@ -84,7 +84,7 @@ HELP_SECTIONS = {
         "/remind &lt;description and time&gt; — add a one-time reminder\n"
         "/reminders — list reminders; /cancelreminder &lt;id&gt; cancels one\n"
         "/plan — review execution plans and Calendar connection\n"
-        "/help backward — deadline planning usage and examples\n"
+        "/info backward — deadline planning usage and examples\n"
         "/plan &lt;task-id&gt; — request or reopen an execution plan\n"
         "/planedit &lt;task-id&gt; MM/DD HH:MM minutes — adjust a plan before confirmation\n"
         "/taskupdate &lt;task-id&gt; &lt;minutes&gt; done|partial|skipped [reason] — record the outcome\n"
@@ -661,7 +661,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                              else 'This plan changed. Review /backward progress; approved work is preserved.')
                 else:
                     instruction = backward_command[1] if backward_command else source_message.text
-                    reply = await backward.preview(chat_id, instruction, update_id) if instruction else 'Use /help backward for planning instructions.'
+                    reply = await backward.preview(chat_id, instruction, update_id) if instruction else 'Use /info backward for planning instructions.'
             except (AIError, CalendarError, ValueError):
                 reply = 'Planning or Calendar availability could not be verified. No feasible plan is claimed. Retry /backward; if already approved, use Confirm schedule to recover the recorded writes.'
             receipt = db.process_update(update_id, lambda: reply)
@@ -1296,7 +1296,7 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
         except (AIError, ValueError) as error:
             return lambda reply=str(error): reply
         return save_classday_action(db, record)
-    if command in {"start", "help"}:
+    if command in {"start", "info"}:
         return lambda: message_bundle({
             "text": HELP_TEXT,
             "parse_mode": "HTML",
@@ -1321,7 +1321,7 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
             return message_bundle({"text": "掃描校曆已更新。\n\n" + render_calendar_overrides(updated),
                                    "parse_mode": "HTML"})
         return update_calendar
-    help_section = re.fullmatch(r"help(?:@[A-Za-z0-9_]+)?\s+(tasks|study|planning|backward|assignments)", command or "", re.IGNORECASE)
+    help_section = re.fullmatch(r"info(?:@[A-Za-z0-9_]+)?\s+(tasks|study|planning|backward|assignments)", command or "", re.IGNORECASE)
     if help_section:
         section = help_section.group(1).lower()
         if section == "planning":
@@ -1451,7 +1451,7 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
         except ValueError as error:
             return lambda reply=str(error): reply
     elif command is not None or re.fullmatch(r"(?:代辦|清單|完成\s*#?\d+|延期\s*#?\d+.*)", normalized):
-        return lambda: "Unknown command. Use /help to see available commands."
+        return lambda: "Unknown command. Use /info to see available commands."
     else:
         try:
             parsed = await ai.parse(normalized)
