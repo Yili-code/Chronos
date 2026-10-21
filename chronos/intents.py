@@ -145,10 +145,8 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
             start, end = start.astimezone(app.settings.tz), end.astimezone(app.settings.tz)
             await app.google_calendar.verify_owner()
             events = await app.google_calendar.agenda(start, end)
-            from .evening_agenda import render_agenda
-            parts = render_agenda(events, start.date(), app.settings.tz, db=app.db)
-            parts = [part.replace("Tomorrow · ", "", 1) for part in parts]
-            parts[0] = f"{start:%m/%d %H:%M}–{end:%m/%d %H:%M}\n\n" + parts[0]
+            from .evening_agenda import render_window_agenda
+            parts = render_window_agenda(events, start, end, app.settings.tz, db=app.db)
             result = app.message_bundle(*({"text": part, "parse_mode": "HTML"} for part in parts))
             action = lambda: result
         elif intent.action in {"replan", "backward", "backward_progress"}:

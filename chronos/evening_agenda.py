@@ -7,8 +7,9 @@ from uuid import uuid4
 from .task_timing import display_date
 
 
-def render_agenda(events, day, tz, label="Tomorrow", db=None, now=None, show_task_ids=False):
-    heading = f"<b>{label} · {display_date(day.isoformat())}</b>"
+def render_agenda(events, day, tz, label="Tomorrow", db=None, now=None, show_task_ids=False, *, heading=None):
+    if heading is None:
+        heading = f"<b>{label} · {display_date(day.isoformat())}</b>"
     now = now or datetime.now(tz)
     rows = []
     for event in events:
@@ -54,9 +55,14 @@ def render_agenda(events, day, tz, label="Tomorrow", db=None, now=None, show_tas
         if len(text) + len(row) > 3000:
             parts.append(text)
             text = heading + " · continued"
-        text += "\n\n" + row
-    parts.append(text if rows else heading + "\n\nNo events scheduled.")
+        text += ("\n\n" if text else "") + row
+    parts.append(text if rows else (heading + "\n\n" if heading else "") + "No events scheduled.")
     return parts
+
+
+def render_window_agenda(events, start, end, tz, db=None):
+    heading = f"{start:%m/%d %H:%M}–{end:%m/%d %H:%M}" if len(events) > 1 else ""
+    return render_agenda(events, start.date(), tz, db=db, heading=heading)
 
 
 async def tomorrow_agenda(calendar, settings, now=None, *, day_offset=1, db=None):
