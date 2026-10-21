@@ -205,12 +205,23 @@ def test_failover_and_duplicate_receipt_create_only_one_task(tmp_path, monkeypat
     monkeypatch.setattr(main, 'tasks', tasks)
     monkeypatch.setattr(main, 'ai', ExternalAI(settings))
     seen = []
+    schemas = []
     def handler(request):
         seen.append(request.headers['x-goog-api-key'])
-        return httpx.Response(429) if len(seen) == 1 else valid_response()
+        schema = json.loads(request.content)['generationConfig']['responseJsonSchema']
+        schemas.append(schema['properties'])
+        if len(seen) == 1:
+            return httpx.Response(429)
+        if 'action' in schema['properties']:
+            return httpx.Response(200, json={'candidates': [{'content': {'parts': [
+                {'text': json.dumps({'action': 'task_create'})}
+            ]}}]})
+        return valid_response()
     mock_provider(monkeypatch, handler)
     action = asyncio.run(main.prepare_message('Synthetic test report', update_id=880))
     first = db.process_update(880, action)
     assert db.process_update(880, action) == first
     assert len(tasks.list_open()) == 1
-    assert seen == ['test-secret', 'secondary-secret']
+    assert tasks.list_open()[0]['title'] == 'Submit report'
+    assert seen == ['test-secret', 'secondary-secret', 'secondary-secret']
+    assert ['action' in schema for schema in schemas] == [True, True, False]

@@ -58,7 +58,9 @@ def test_edited_message_auth_and_closed_task_reply(system):
     main.db.bind_task_message(123, 800, task["id"])
     tasks.complete(task["id"])
     assert send(client, 1102, "移除期限", reply_to=800).status_code == 200
-    assert "not found" in bot.send_message.call_args.args[1]
+    assert "這項任務已結束" in bot.send_message.call_args.args[1]
+    assert tasks.list_open() == []
+    main.ai.classify_intent.assert_not_awaited()
     main.ai.parse.assert_not_awaited()
 
 
