@@ -190,6 +190,12 @@ class ExternalAI:
             "A bare ordinal, pronoun, or yes without a current bound task or clarification is clarify, never a mutation. "
             "reference is a supplied reminder token or announcement version ID, never a guessed identifier. "
             "question is a short Traditional Chinese clarification when needed. "
+            "Product-specific precedence: 提醒我 is NOT sufficient to select reminder_create. "
+            "Submitting/finishing deliverables is completion-tracked work, even when phrased as a reminder. "
+            "Examples: 明天下午提醒我交報告 -> task_create; "
+            "明天下午提醒我交一份新的軟體工程報告 -> task_create; "
+            "明天下午三點提醒我打電話，不用追蹤完成 -> reminder_create. "
+            "Only an explicit notification-only/no-completion-tracking request overrides deliverable task creation. "
             "Do not claim an action succeeded. Do not interpret a bare yes/confirm as approval; approval uses cards.",
             json.dumps({"instruction": instruction, "tasks": tasks, "now": now.isoformat(),
                         "timezone": self.settings.timezone, "context": context,
