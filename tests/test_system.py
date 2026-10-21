@@ -9,6 +9,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi.testclient import TestClient
 
 from chronos import main
+from chronos.intents import Intent
 from chronos.ai import AIError
 from chronos.db import Database
 from chronos.settings import Settings
@@ -34,6 +35,16 @@ def system(tmp_path, monkeypatch):
     monkeypatch.setattr(main, 'telegram', bot)
     monkeypatch.setattr(main, 'scheduler', AsyncIOScheduler(timezone=config.tz))
     monkeypatch.setattr(main.ai, 'parse', AsyncMock(return_value=ParsedTask('Test task')))
+    async def classify(text, tasks, now, **kwargs):
+        bound = (kwargs.get("context") or {}).get("bound_task_id")
+        if bound:
+            return Intent(action="task_edit", task_ids=[bound], instruction=text)
+        if text == "代辦":
+            return Intent(action="task_list")
+        if main.reminders.matches(text):
+            return Intent(action="reminder_create", instruction=text)
+        return Intent(action="task_create", instruction=text)
+    monkeypatch.setattr(main.ai, 'classify_intent', AsyncMock(side_effect=classify))
     monkeypatch.setattr(main.ai, 'parse_schedule_edit', AsyncMock(side_effect=AIError('Test editor unavailable')))
     monkeypatch.setattr(main.ai, 'estimate_duration', AsyncMock(side_effect=AIError('Test estimator unavailable')))
     with TestClient(main.app, raise_server_exceptions=False) as client:
@@ -239,7 +250,8 @@ def test_webhook_auth_and_commands(system):
     assert send('/start').status_code == 200
     help_text = bot.send_message.call_args.args[1]
     assert help_text == main.HELP_TEXT
-    assert help_text == '<b>Chronos</b>\nReady, YiLi. What should I handle?'
+    assert '直接說' in help_text
+    assert len(help_text) < 300
     assert '/tasks' not in help_text
     assert '/reschedule' not in help_text
     assert '/postpone' not in help_text
@@ -256,8 +268,7 @@ def test_webhook_auth_and_commands(system):
         'parse_mode': 'HTML', 'reply_markup': main.HELP_KEYBOARD,
     }
     assert send('代辦').status_code == 200
-    assert bot.send_message.call_args.args[1] == 'Unknown command. Use /info to see available commands.'
-    assert bot.send_message.call_args.kwargs == {'parse_mode': None}
+    assert 'No open tasks' in bot.send_message.call_args.args[1]
     assert service.list_open() == []
     assert send('新增工作').status_code == 200
     assert '<b>Test task</b>' in bot.send_message.await_args_list[-2].args[1]
@@ -299,7 +310,7 @@ def test_webhook_auth_and_commands(system):
         '<b>#Chronos</b>')
 
 
-def test_help_expands_full_syntax_by_category(system):
+def test_help_shows_short_examples_by_category(system):
     client, _, bot, _ = system
     headers = {'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}
 
@@ -308,7 +319,8 @@ def test_help_expands_full_syntax_by_category(system):
     })
     assert response.status_code == 200
     assert bot.send_message.call_args.args[1] == main.HELP_SECTIONS['tasks']
-    assert '/edit &lt;list-position&gt; &lt;changes&gt;' in bot.send_message.call_args.args[1]
+    assert '回覆任務卡' in bot.send_message.call_args.args[1]
+    assert '/edit' not in bot.send_message.call_args.args[1]
     assert bot.send_message.call_args.kwargs == {
         'parse_mode': 'HTML', 'reply_markup': main.HELP_BACK_KEYBOARD,
     }
@@ -331,9 +343,10 @@ def test_help_expands_full_syntax_by_category(system):
         'parse_mode': 'HTML',
         'reply_markup': main.HELP_BACK_KEYBOARD,
     })
-    assert '/classday YYYY-MM-DD &lt;course-code&gt; class|off|auto' in main.HELP_SECTIONS['study']
+    assert len(main.HELP_SECTIONS['study']) < 120
+    assert '/classday' not in main.HELP_SECTIONS['study']
     assert '/prepare' not in main.HELP_SECTIONS['assignments']
-    assert 'does not generate or submit assignment drafts' in main.HELP_SECTIONS['assignments']
+    assert '不代寫或提交作業' in main.HELP_SECTIONS['assignments']
     bot.answer_callback_query.assert_awaited_with('help-study')
 
     response = client.post('/telegram/webhook', headers=headers, json={
@@ -367,7 +380,7 @@ def test_backward_help_is_read_only_and_available_from_help_menu(system, monkeyp
     payload = {'update_id': 504, 'message': {'chat': {'id': 123}, 'text': text}}
     assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 200
     assert bot.send_message.await_args.args[1] == main.HELP_SECTIONS['backward']
-    assert 'Nothing is created before confirmation' in main.HELP_SECTIONS['backward']
+    assert '確認後才建立' in main.HELP_SECTIONS['backward']
     assert bot.send_message.await_args.kwargs['reply_markup'] == main.HELP_BACK_KEYBOARD
     assert any(button['callback_data'] == 'help:backward'
                for row in main.HELP_KEYBOARD['inline_keyboard'] for button in row)

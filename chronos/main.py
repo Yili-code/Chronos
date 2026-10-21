@@ -60,56 +60,17 @@ gmail = GmailClient(settings)
 google_calendar = GoogleCalendar(settings)
 scheduler = AsyncIOScheduler(timezone=settings.tz)
 
-HELP_TEXT = "<b>Chronos</b>\nReady, YiLi. What should I handle?"
+HELP_TEXT = (
+    "<b>Chronos</b>\n直接說你想做什麼，例如：\n"
+    "「報告改到星期五交」「今晚幫我空出來」「我明天有什麼安排？」\n\n"
+    "/task 任務 · /plan 計畫 · /today 今天 · /tomorrow 明天\n"
+    "/free 空檔 · /done 完成 · /info 說明"
+)
 HELP_SECTIONS = {
-    "tasks": (
-        "<b>Tasks</b>\n"
-        "/tasks — list open tasks\n"
-        "/add &lt;title&gt; [#tag] — add exact text without AI; due in 3 days\n"
-        "/done &lt;list-position&gt; — complete a task\n"
-        "/edit &lt;list-position&gt; &lt;changes&gt; — edit by current list position\n"
-        "/edit #&lt;task-id&gt; &lt;changes&gt; — edit by fixed task ID\n"
-        "/undo — undo the latest successful edit\n"
-        "/clear — delete all tasks after confirmation"
-    ),
-    "study": (
-        "<b>Planning</b>\n"
-        "/classday &lt;instruction&gt; — confirm a course-specific instruction day\n"
-        "/classday YYYY-MM-DD &lt;course-code&gt; class|off|auto — save an exact decision\n"
-        "/calendar — view or edit TronClass scan dates\n"
-        "/replan &lt;instruction&gt; — preview moves to free a calendar window\n"
-        "/free — find the next free two hours, excluding meals\n"
-        "/today — view today’s full calendar agenda\n"
-        "/tomorrow — view tomorrow’s full calendar agenda\n"
-        "/remind &lt;description and time&gt; — add a one-time reminder\n"
-        "/reminders — list reminders; /cancelreminder &lt;id&gt; cancels one\n"
-        "/plan — review execution plans and Calendar connection\n"
-        "/info backward — deadline planning usage and examples\n"
-        "/plan &lt;task-id&gt; — request or reopen an execution plan\n"
-        "/planedit &lt;task-id&gt; MM/DD HH:MM minutes — adjust a plan before confirmation\n"
-        "/taskupdate &lt;task-id&gt; &lt;minutes&gt; done|partial|skipped [reason] — record the outcome\n"
-        "/ai_usage — inspect today's core AI requests\n"
-        "/announcements [page] — list saved announcements\n"
-        "/announcement &lt;version-id&gt; [page] — read a saved announcement"
-    ),
-    "backward": (
-        "<b>Backward Planning</b>\n"
-        "See the required outputs, estimated effort and available time before a deadline.\n\n"
-        "/backward &lt;goal and deadline&gt; — preview steps and work slots\n"
-        "/backward #&lt;task-id&gt; — plan an existing goal without duplicating it\n"
-        "/backward progress [task-id] — review the latest plan or a specific goal\n\n"
-        "Example: <code>/backward 下週五要交資料庫報告</code>\n"
-        "Include completed work and limits, such as 每天最多90分鐘.\n\n"
-        "Review the preview, then Confirm schedule, Adjust plan, or Cancel. "
-        "Nothing is created before confirmation.\n"
-        "Date-only deadlines conservatively finish work the previous day, Asia/Taipei. "
-        "Insufficient capacity is reported instead of forcing a schedule."
-    ),
-    "assignments": (
-        "<b>Assignments</b>\n"
-        "Observed assignments are added to /tasks.\n"
-        "Chronos does not generate or submit assignment drafts."
-    ),
+    "tasks": "<b>任務</b>\n直接說「新增買牛奶」「報告做完了」，或回覆任務卡說「延到明天」。",
+    "study": "<b>計畫</b>\n直接說「幫我安排報告的時間」「今晚幫我空出來」。行程調整會先供你確認。",
+    "backward": "<b>期限規劃</b>\n直接說「幫我拆解下週五要交的報告，每天最多90分鐘」。確認後才建立任務與行程。",
+    "assignments": "<b>作業</b>\n已追蹤作業會出現在 /task。不代寫或提交作業。",
 }
 HELP_KEYBOARD = {
     "inline_keyboard": [
@@ -122,7 +83,7 @@ HELP_KEYBOARD = {
     ]
 }
 HELP_BACK_KEYBOARD = {
-    "inline_keyboard": [[{"text": "Back to categories", "callback_data": "help:index"}]]
+    "inline_keyboard": [[{"text": "返回", "callback_data": "help:index"}]]
 }
 
 CLEAR_CONFIRM_TEXT = "Delete every task? This cannot be undone."
@@ -644,6 +605,8 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
     backward_reply = (update.message and not update.callback_query and backward_state
         and backward_state['status'] in {'clarifying', 'editing'}
         and backward_state['expires_at'] > datetime.now(settings.tz).isoformat()
+        and (not source_message.reply_to_message
+             or source_message.reply_to_message.message_id == backward_state.get('message_id'))
         and (not (source_message.text or '').startswith('/') or source_message.text == '/cancel'))
     if backward_match or backward_command or backward_progress or backward_reply:
         receipt = db.get_update(update_id)
@@ -654,7 +617,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                 elif backward_progress:
                     linked = db.get_task_action_state('backward:goal:'+backward_progress[1]) if backward_progress[1] else backward_session
                     reply = backward.progress(linked['token'], chat_id) if linked else 'No matching plan. Use /backward #<task-id>.'
-                elif backward_reply and source_message.text == '/cancel':
+                elif backward_reply and source_message.text in {'/cancel', '取消'}:
                     cancelled = db.mutate_task_action_state('backward:plan:'+backward_state['token'],
                         lambda old: {**old, 'status': 'cancelled'} if old['status'] in {'editing', 'clarifying'} else old)
                     reply = ('Cancelled. No tasks/events created.' if cancelled['status'] == 'cancelled'
@@ -671,7 +634,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         return {'ok': True}
     reminder_callback = re.fullmatch(r"reminder:(allow|cancel):([a-f0-9]{16})", update.callback_query.data or "") if update.callback_query else None
     reminder_text = (source_message.text or "").strip()
-    if reminder_callback or (update.message and not source_message.reply_to_message and reminders.matches(reminder_text)):
+    if reminder_callback or (update.message and not source_message.reply_to_message and reminder_text.startswith("/") and reminders.matches(reminder_text)):
         receipt = db.get_update(update_id)
         if receipt is None:
             try:
@@ -689,7 +652,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         return {"ok": True}
     replan_callback = re.fullmatch(r"replan:(allow|edit|cancel):([a-f0-9]{32})", update.callback_query.data or "") if update.callback_query else None
     replan_session = db.get_task_action_state(calendar_replan.key(chat_id))
-    replan_command = re.fullmatch(r"/replan(?:@[A-Za-z0-9_]+)?(?:\s+(.+))?", source_message.text or "", re.DOTALL)
+    replan_command = re.fullmatch(r"/replan(?:@[A-Za-z0-9_]+)?(?:\s+(.+))?", source_message.text or "", re.DOTALL) if update.message else None
     replan_edit = (not update.callback_query and update.message and replan_session
         and replan_session.get("status") == "editing" and not source_message.reply_to_message
         and replan_session.get("expires_at", "") > datetime.now(settings.tz).isoformat()
@@ -703,7 +666,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                 elif replan_callback:
                     reply = await calendar_replan.callback(learning_calendar(), chat_id, source_message.message_id,
                                                            replan_callback[2], replan_callback[1])
-                elif replan_edit and source_message.text == "/cancel":
+                elif replan_edit and source_message.text in {"/cancel", "取消"}:
                     reply = await calendar_replan.callback(learning_calendar(), chat_id, replan_session.get("message_id"),
                                                            replan_session["token"], "cancel")
                 else:
@@ -982,7 +945,10 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                 action = lambda: proposal
             elif bound_task is not None:
                 instruction = re.sub(r"^/edit\s*", "", text, flags=re.IGNORECASE).strip()
-                action = await prepare_message(f"/edit #{bound_task} {instruction}", update_id=update_id)
+                if re.match(r"^/edit(?:\s|$)", text, re.IGNORECASE):
+                    action = await prepare_message(f"/edit #{bound_task} {instruction}", update_id=update_id)
+                else:
+                    action = await prepare_message(text, update_id=update_id, chat_id=chat_id, bound_task_id=bound_task)
             elif source_message.reply_to_message is not None:
                 if source_message.message_id is None:
                     raise HTTPException(status_code=422, detail="Reply message id is required")
@@ -993,7 +959,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                     local_date=received_date,
                 )
             else:
-                action = await prepare_message(text, update_id=update_id)
+                action = await prepare_message(text, update_id=update_id, chat_id=chat_id)
             receipt = db.process_update(update_id, action)
     help_callback = (
         update.callback_query is not None
@@ -1026,6 +992,11 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             db.mark_update_message_delivered(update_id, 1)
         else:
             db.mark_update_delivered(update_id)
+    elif not receipt["delivered"] and any(
+        any(message.get(key) for key in ("backward_plan", "learning_edit", "learning_menu", "learning_proposal"))
+        for message in receipt.get("messages", [])
+    ):
+        await deliver_learning_reply(chat_id, update_id, receipt)
     elif not receipt["delivered"]:
         messages = receipt.get("messages") or [{
             "text": receipt["reply"],
@@ -1044,6 +1015,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             if sent_id is not None:
                 bind_free_message(db, chat_id, sent_id, message)
                 calendar_replan.bind(db, chat_id, sent_id, message)
+                BackwardPlanner(db, google_calendar, ai, settings).bind(chat_id, sent_id, message)
             if message.get("task_id") is not None and sent_id is not None:
                 db.bind_task_message(chat_id, sent_id, message["task_id"])
             if receipt.get("messages"):
@@ -1200,9 +1172,22 @@ async def handle_message(text: str) -> str:
     return "\n\n".join(message["text"] for message in output["messages"])
 
 
-async def prepare_message(text: str, *, update_id: int | None = None) -> Callable[[], str | dict]:
+async def prepare_message(text: str, *, update_id: int | None = None, chat_id: int | None = None,
+                          bound_task_id: int | None = None, create_only: bool = False) -> Callable[[], str | dict]:
     """Resolve external input first; the returned action performs no async work."""
     normalized = text.strip()
+    if create_only:
+        try:
+            parsed = await ai.parse(normalized)
+        except (AIError, ValueError) as error:
+            return lambda reply=str(error): reply
+        return prepare_created_task(parsed)
+    normalized = re.sub(r"^(/[A-Za-z_]+)@[A-Za-z0-9_]+(?=\s|$)", r"\1", normalized)
+    if bound_task_id is not None and not normalized.startswith("/"):
+        import sys
+        from .intents import prepare
+        return await prepare(sys.modules[__name__], normalized, update_id=update_id,
+                             chat_id=chat_id, bound_task_id=bound_task_id)
     if not normalized.startswith("/") and (re.fullmatch(
             r"(?:\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2})\s+\d{1,2}:\d{2}(?:\s+\d{1,3}(?:\s*(?:minutes|min|分鐘))?)?", normalized, re.IGNORECASE)
             or study_window(normalized, datetime.now(settings.tz), settings.learning_minutes)):
@@ -1247,6 +1232,11 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
         parts = [part.replace(f"Tomorrow · ", "", 1) for part in parts]
         parts[0] = escape(heading) + "\n\n" + parts[0]
         return lambda: message_bundle(*({"text": part, "parse_mode": "HTML"} for part in parts))
+    if not normalized.startswith("/"):
+        import sys
+        from .intents import prepare
+        return await prepare(sys.modules[__name__], normalized, update_id=update_id,
+                             chat_id=chat_id, bound_task_id=bound_task_id)
     plan_edit = re.fullmatch(r"/planedit\s+(\d+)\s+(.+)", normalized, re.DOTALL)
     if plan_edit:
         state = learning_calendar().get(int(plan_edit[1]))
@@ -1336,7 +1326,7 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
             now = datetime.now(settings.tz)
             return format_ai_usage(ai_usage.report(now), now.date().isoformat())
         return usage_report
-    if command == "tasks":
+    if command in {"task", "tasks"}:
         def list_tasks() -> dict:
             items = tasks.list_open()
             return message_bundle({"text": task_list_text(items), "parse_mode": "HTML"})
@@ -1345,6 +1335,8 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
         return prepare_undo()
     if command == "clear":
         return lambda: CLEAR_CONFIRM_TEXT
+    if command == "done":
+        return lambda: "要完成哪一項？直接說任務名稱，或回覆任務卡說「完成了」。\n\n" + task_list_text()
     completed = re.fullmatch(r"done\s+(\d+)", command or "", re.IGNORECASE)
     if completed:
         def complete() -> str:
@@ -1450,13 +1442,12 @@ async def prepare_message(text: str, *, update_id: int | None = None) -> Callabl
             parsed = parse_literal_task(literal.group(1) or "")
         except ValueError as error:
             return lambda reply=str(error): reply
-    elif command is not None or re.fullmatch(r"(?:代辦|清單|完成\s*#?\d+|延期\s*#?\d+.*)", normalized):
-        return lambda: "Unknown command. Use /info to see available commands."
     else:
-        try:
-            parsed = await ai.parse(normalized)
-        except (AIError, ValueError) as error:
-            return lambda reply=str(error): reply
+        return lambda: "Unknown command. Use /info to see available commands."
+    return prepare_created_task(parsed)
+
+
+def prepare_created_task(parsed):
     aliases = tasks.project_aliases()
     def create() -> dict:
         before = tasks.list_open()

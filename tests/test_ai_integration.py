@@ -6,6 +6,7 @@ import pytest
 from fastapi import HTTPException
 
 from chronos import main
+from chronos.intents import Intent
 from chronos.ai import AIError
 from chronos.db import Database
 from chronos.tasks import ParsedTask, TaskService
@@ -17,6 +18,7 @@ def task_service(tmp_path, monkeypatch):
     db.initialize()
     service = TaskService(db, main.settings.tz)
     monkeypatch.setattr(main, "tasks", service)
+    monkeypatch.setattr(main.ai, "classify_intent", AsyncMock(return_value=Intent(action="task_create")))
     return service
 
 

@@ -46,6 +46,11 @@ def bind(db, chat_id, message_id, message):
 def explicit_window(instruction, now):
     """Resolve a complete, explicit same-day request without model ambiguity."""
     normalized = re.sub(r"\s+", "", instruction)
+    if re.fullmatch(r"(?:幫我)?(?:清空|騰出|空出)(?:今天晚上|今晚)(?:的)?(?:所有)?(?:行程|事情|安排|活動)?[。！!]?", normalized):
+        start = max(now, now.replace(hour=18, minute=0, second=0, microsecond=0))
+        end = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        return ReplanOutput(actionable=True, start=start.isoformat(), end=end.isoformat(),
+                            destination_start=end.isoformat())
     if re.fullmatch(
             r"(?:清空|騰出|空出)今天下午(?:的)?(?:所有)?(?:行程|事情|安排|活動)[。！!]?",
             normalized):
@@ -105,8 +110,10 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
             return f'The cutoff {end:%H:%M} has passed; it is now {now:%H:%M}. Choose a future window. Nothing changed.'
         if not now - timedelta(minutes=2) <= start < end <= now + timedelta(days=7) or destination < end or destination >= now + timedelta(days=7):
             raise ValueError
-    except (AIError, ValueError, TypeError, OverflowError):
-        return 'Specify a future window to free, e.g. /replan free today from now until 3pm. You can add "move to tomorrow or later". Nothing changed.'
+    except AIError:
+        return '目前無法解析改排要求，沒有調整行程。請稍後重試。'
+    except (ValueError, TypeError, OverflowError):
+        return '想空出哪個時段？例如「今天現在到下午三點」。沒有調整行程。'
     await planner.calendar.verify_owner()
     horizon = now + timedelta(days=7)
     events = await planner.calendar.agenda(now, horizon)

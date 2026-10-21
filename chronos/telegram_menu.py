@@ -5,42 +5,27 @@ from .settings import Settings
 from .telegram import TelegramClient
 
 COMMANDS = {
+    "task": "查看任務",
     "plan": "Review task plans",
     "today": "View today's calendar agenda",
-    "tasks": "View open tasks",
-    "info": "Show available commands",
     "tomorrow": "View tomorrow's calendar agenda",
     "free": "Find free calendar slots",
-    "replan": "Review moves to free a calendar window",
+    "info": "簡短說明",
+    "done": "完成任務",
 }
 
 
 async def register_menu(client, chat_id):
     scope = {"type": "chat", "chat_id": chat_id}
-    current = await client.request("getMyCommands", {"scope": scope})
-    if not current.get("ok"):
-        raise RuntimeError("Unable to read Telegram command menu")
-    commands = current.get("result") or []
-    if not commands:
-        default = await client.request("getMyCommands", {})
-        if not default.get("ok"):
-            raise RuntimeError("Unable to read default Telegram command menu")
-        commands = default.get("result") or []
-    merged = {item["command"]: item["description"] for item in commands}
-    # Remove the placeholder accidentally registered by the first planning release.
-    merged.pop('command', None)
-    merged.pop('help', None)
-    # Discover planning through /info backward rather than a bare /backward entry.
-    merged.pop('backward', None)
-    merged.update(COMMANDS)
-    expected = [{"command": key, "description": value} for key, value in merged.items()]
+    # Replace the owner menu exactly; hidden legacy handlers remain compatible.
+    expected = [{"command": key, "description": value} for key, value in COMMANDS.items()]
     result = await client.request("setMyCommands", {"scope": scope, "commands": expected})
     if not result.get("ok"):
         raise RuntimeError("Telegram rejected command menu update")
     actual = await client.request("getMyCommands", {"scope": scope})
     if not actual.get("ok") or actual.get("result") != expected:
         raise RuntimeError("Telegram command menu verification failed")
-    return list(merged)
+    return list(COMMANDS)
 
 
 async def main():

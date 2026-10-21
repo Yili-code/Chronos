@@ -21,7 +21,7 @@ A self-hosted, single-user Telegram task assistant with Gemini-powered natural-l
 | 功能 | 條件與範圍 |
 | --- | --- |
 | 自然語言新增、語意編輯代辦 | 需要可用的 Gemini API key；外部 AI 失敗時不新增或更動代辦。 |
-| `/tasks`、`/done`、明確移除期限或分類 | 查詢與完成不需要 AI；Telegram 需要自己的 bot、chat ID 與 HTTPS webhook。 |
+| `/task`、`/done`、明確移除期限或分類 | 查詢與完成不需要 AI；Telegram 需要自己的 bot、chat ID 與 HTTPS webhook。 |
 | 編輯撤回 | 修改成功後按 Undo，或 `/undo` 還原最近一次 edit；不撤回完成。 |
 | 期限提醒 | 有時間：前 24 小時及 1 小時；只有日期：前一天及當天 09:00。 |
 | 每日未完成清單 | 預設 `Asia/Taipei` 08:00；需要持續運行的服務或外部 scheduler，不是逐筆到期提醒。 |
@@ -53,23 +53,19 @@ Job 使用獨立的 `chronos-collector` service account，只取得 CAS、Telegr
 
 ## 期限倒推與拆解
 
-`/info backward` 查看用法；`/backward 下週五要交資料庫報告` 先提出步驟、估時與工作時段，確認後才建立子任務與 Calendar 活動。
-`/backward #42` 沿用既有目標，`/backward progress 42` 查看進度。容量不足會顯示缺口，不硬塞行程。
-沿用既有 Calendar 授權及作息；日期精度、緩衝與恢復方式見 [Backward Planning](docs/backward-planning.md)。
+直接說「幫我拆解下週五要交的資料庫報告」，先查看步驟、估時與工作時段，確認後才建立子任務與 Calendar 活動。容量不足會顯示缺口。詳見 [Backward Planning](docs/backward-planning.md)。
 
 ## 從一筆代辦開始
 
-配置完成後，在**自己的 bot** 依序輸入：
+配置完成後，在**自己的 bot** 說：
 
 ```text
-明天 17:00 完成報告 #Chronos
-/tasks
-/edit 1 移除期限
-/tasks
-/done 1
+明天 17:00 前交報告 #Chronos
+報告改成星期五交
+報告做完了
 ```
 
-這是輸入示例，AI 產生的英文標題與相對日期依當時環境而定。先用 `/tasks` 確認任務的位置，編輯後再查一次；清單按期限排序，`1` 是當下位置。課程範圍確認任務會集中顯示於下方的 `Course scope` 區；各區保留原清單編號，因此可能跳號，`/edit`、`/done` 請使用顯示的編號。完整的 Retry、清除確認與 Study 指令見 [使用說明](docs/usage.md)。
+可直接回覆任務卡修改或完成；目標不明時會追問。常用快捷入口為 `/task`、`/plan`、`/today`、`/tomorrow`、`/free`、`/info`、`/done`，舊指令仍相容。簡短例句與確認規則見 [使用說明](docs/usage.md)。
 
 ## 快速啟動：Windows PowerShell
 

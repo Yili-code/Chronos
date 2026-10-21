@@ -157,7 +157,7 @@ def test_invalid_ai_time_cannot_write(setup):
     planner, calendar, _ = initialize(setup)
     planner.ai.parse_replan.return_value = ReplanOutput(actionable=True, start='bad', end=None, destination_start=None)
     result = asyncio.run(module.preview(planner, 123, 'bad', 1, NOW))
-    assert 'Nothing changed' in result
+    assert '沒有調整行程' in result
     calendar.move_event.assert_not_awaited()
 
 def test_linked_study_move_updates_budget_and_preserves_deadline(setup):
