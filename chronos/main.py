@@ -64,7 +64,7 @@ HELP_TEXT = (
     "<b>Chronos</b>\n直接說你想做什麼，例如：\n"
     "「報告改到星期五交」「今晚幫我空出來」「我明天有什麼安排？」\n\n"
     "/task 任務 · /plan 計畫 · /today 今天 · /tomorrow 明天\n"
-    "/free 空檔 · /done 完成 · /info 說明"
+    "/free 空檔 · /info 說明"
 )
 HELP_SECTIONS = {
     "tasks": "<b>任務</b>\n直接說「新增買牛奶」「報告做完了」，或回覆任務卡說「延到明天」。",

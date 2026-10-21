@@ -65,7 +65,7 @@ Job 使用獨立的 `chronos-collector` service account，只取得 CAS、Telegr
 報告做完了
 ```
 
-可直接回覆任務卡修改或完成；目標不明時會追問。常用快捷入口為 `/task`、`/plan`、`/today`、`/tomorrow`、`/free`、`/info`、`/done`，舊指令仍相容。簡短例句與確認規則見 [使用說明](docs/usage.md)。
+可直接回覆任務卡修改或完成；目標不明時會追問。常用快捷入口為 `/task`、`/plan`、`/today`、`/tomorrow`、`/free`、`/info`；選單只列不需參數的入口，舊指令仍相容。簡短例句與確認規則見 [使用說明](docs/usage.md)。
 
 ## 快速啟動：Windows PowerShell
 

@@ -4,9 +4,9 @@ from unittest.mock import AsyncMock
 from chronos.telegram_menu import COMMANDS, register_menu
 
 
-def test_registration_replaces_stale_menu_with_exact_seven_shortcuts():
+def test_registration_only_lists_commands_usable_without_parameters():
     expected = [{"command": k, "description": v} for k, v in COMMANDS.items()]
-    assert set(COMMANDS) == {"task", "plan", "today", "tomorrow", "free", "info", "done"}
+    assert set(COMMANDS) == {"task", "plan", "today", "tomorrow", "free", "info"}
     client = AsyncMock()
     client.request.side_effect = [{"ok": True}, {"ok": True, "result": expected}]
     assert asyncio.run(register_menu(client, 123)) == list(COMMANDS)

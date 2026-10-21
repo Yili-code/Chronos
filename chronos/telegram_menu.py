@@ -11,7 +11,6 @@ COMMANDS = {
     "tomorrow": "View tomorrow's calendar agenda",
     "free": "Find free calendar slots",
     "info": "簡短說明",
-    "done": "完成任務",
 }
 
 

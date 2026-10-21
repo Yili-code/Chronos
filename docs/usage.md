@@ -21,7 +21,7 @@
 
 ## 快捷入口
 
-`/task` 任務、`/plan` 計畫、`/today` 今天、`/tomorrow` 明天、`/free` 空檔、`/info` 簡短說明、`/done 1` 完成目前清單第 1 項。
+`/task` 任務、`/plan` 計畫、`/today` 今天、`/tomorrow` 明天、`/free` 空檔、`/info` 簡短說明。選單只列不需參數的入口。完成任務可直接說名稱，或手動輸入 `/done 1` 完成目前清單第 1 項。
 
 原有 `/tasks`、`/edit`、`/undo` 等指令仍可使用，但不再列入選單。AI 無法理解或暫時不可用時，不會把訊息當成新任務；快捷查詢與明確指令仍可使用。
 
@@ -33,4 +33,4 @@
 
 設定見 [本機啟動](getting-started.md)，排程細節見 [Google Calendar](learning-calendar.md) 與 [期限拆解](backward-planning.md)。
 
-維護者可執行 `python -m chronos.telegram_menu`，將 owner 選單替換為上述七項並讀回驗證。程式修改、Git 推送與正式部署是不同步驟。
+維護者可執行 `python -m chronos.telegram_menu`，將 owner 選單替換為上述六項並讀回驗證。程式修改、Git 推送與正式部署是不同步驟。
