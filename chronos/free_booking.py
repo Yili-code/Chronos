@@ -8,16 +8,16 @@ from .google_calendar import CalendarError
 from .learning_calendar import class_windows, short_task_windows, overlaps
 from .task_timing import display_date
 
-EVENT_COLORS = {'contest': '3', 'meeting': '5', 'social': '6', 'other': '8'}
+EVENT_COLORS = {'exam': '3', 'contest': '3', 'meeting': '5', 'social': '6', 'other': '8'}
 
 
-def preview_explicit_event(db, settings, chat_id, update_id, title, start, end, category, content, now):
+def preview_explicit_event(db, settings, chat_id, update_id, title, start, end, category, content, now, *, preview_content=None):
     """Use the same durable approval card as /free, without creating a task."""
     token = sha256(f'event:{chat_id}:{update_id}'.encode()).hexdigest()[:32]
     source_key = 'event:source:' + token
     state = {'title': title, 'start': start.astimezone(settings.tz).isoformat(),
         'end': end.astimezone(settings.tz).isoformat(), 'category': category,
-        'content': content, 'explicit_event': True, 'chat_id': chat_id,
+        'content': content, 'preview_content': preview_content, 'explicit_event': True, 'chat_id': chat_id,
         'expires_at': (now + timedelta(minutes=10)).isoformat(),
         'source_key': source_key, 'status': 'pending', 'token': token}
     def save():
@@ -27,10 +27,11 @@ def preview_explicit_event(db, settings, chat_id, update_id, title, start, end, 
         db._save_task_action_state('free:booking:' + token, existing or state)
         return existing or state
     saved = db._run_task_action(save)
-    minutes = int((end - start).total_seconds() / 60)
+    minutes = int((datetime.fromisoformat(saved['end']) - datetime.fromisoformat(saved['start'])).total_seconds() / 60)
+    details = saved.get('preview_content')
+    detail_line = f"\n{escape(details[:500])}" if details else ""
     return {'messages': [{'text': f"<b>Add to Calendar?</b>\n{escape(saved['title'])}\n"
-        f"{slot_line(saved, settings)} · {minutes} min\n<b>Category</b> {escape(category)}\n"
-        f"{escape(content[:500])}", 'parse_mode': 'HTML', 'free_booking': token,
+        f"{slot_line(saved, settings)} · {minutes} min\n<b>Category</b> {escape(saved['category'])}{detail_line}", 'parse_mode': 'HTML', 'free_booking': token,
         'reply_markup': {'inline_keyboard': [[{'text': 'Allow', 'callback_data': 'free:allow:' + token},
                                              {'text': 'Cancel', 'callback_data': 'free:cancel:' + token}]]}}]}
 
@@ -40,6 +41,18 @@ def slot_line(slot, settings):
     if start.date() != end.date():
         return f"{display_date(start.date().isoformat())} {start:%H:%M}–{display_date(end.date().isoformat())} {end:%H:%M}"
     return f"{display_date(start.date().isoformat())} · {start:%H:%M}–{end:%H:%M}"
+
+
+def bind_booking_request(db, chat_id, message_id, receipt):
+    """Bind the trusted incoming request, never a model-supplied message ID."""
+    if message_id is None:
+        return
+    for message in receipt.get('messages', []):
+        token = message.get('free_booking')
+        if token:
+            db.mutate_task_action_state('free:booking:' + token,
+                lambda old: {**old, 'request_message_id': message_id}
+                if old and old.get('chat_id') == chat_id and old.get('request_message_id') is None else old)
 
 
 def bind_free_message(db, chat_id, message_id, message):

@@ -121,6 +121,23 @@ def test_model_text_is_not_an_executable_command(store, monkeypatch):
     main.ai.parse_many.assert_awaited_once_with("記錄文字")
 
 
+def test_natural_tag_removal_preserves_other_fields_and_can_undo(store, monkeypatch):
+    task = main.tasks.create("Complete database report", project="database")
+    classify(monkeypatch, action="task_edit", task_ids=[task["id"]], instruction="資料庫報告不要標籤了")
+    parser = AsyncMock(return_value=ParsedTask(task["title"], project=None))
+    monkeypatch.setattr(main.ai, "edit", parser)
+    run("資料庫報告不要標籤了")
+    after = main.tasks.list_open()[0]
+    assert after["title"] == task["title"] and after["due_at"] == task["due_at"]
+    assert after["project"] is None
+    parser.assert_awaited_once()
+    assert parser.await_args.args[0]["id"] == task["id"]
+    assert parser.await_args.args[1] == "資料庫報告不要標籤了"
+    classify(monkeypatch, action="undo")
+    run("撤銷剛剛修改", 2)
+    assert main.tasks.list_open()[0]["project"] == "database"
+
+
 def test_clear_requires_existing_confirmation(store, monkeypatch):
     main.tasks.create("Keep until confirmed")
     classify(monkeypatch, action="clear_tasks")
@@ -237,6 +254,24 @@ def test_valid_agenda_is_read_only(store, monkeypatch):
     main.ai.parse.assert_not_awaited()
 
 
+@pytest.mark.parametrize("text,hour,normalize", [
+    ("明天有什麼行程", 0, True),
+    ("今晚有什麼安排", 18, True),
+    ("查詢明天 00:00:00 到 23:59:59 的行程", 0, False),
+    ("查詢明天零點到二十三點五十九分五十九秒的行程", 0, False),
+])
+def test_agenda_includes_midnight_boundary_without_overriding_explicit_seconds(store, monkeypatch, text, hour, normalize):
+    start = datetime.now(main.settings.tz).replace(hour=hour, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    end = start.replace(hour=23, minute=59, second=59)
+    classify(monkeypatch, action="agenda", start=start, end=end)
+    calendar = AsyncMock()
+    calendar.agenda.return_value = []
+    monkeypatch.setattr(main, "google_calendar", calendar)
+    run(text)
+    calendar.agenda.assert_awaited_once_with(start, end + timedelta(seconds=1) if normalize else end)
+    assert main.tasks.list_open() == []
+
+
 def test_natural_scan_policy_update_is_validated(store, monkeypatch):
     from datetime import date
     classify(monkeypatch, action="calendar_edit", operation="disable", day=date(2026, 10, 22))
@@ -295,8 +330,11 @@ def test_legacy_card_edit_keeps_deterministic_path(system, monkeypatch):
     main.ai.classify_intent.assert_not_awaited()
 
 
-def test_batch_creation_is_atomic_and_replay_safe(store, monkeypatch):
-    text = "一次新增多筆 tasks 複習 database 第一章到第五章 需附上 hashtag"
+@pytest.mark.parametrize("text", [
+    "一次新增多筆 tasks 複習 database 第一章到第五章 需附上 hashtag",
+    "把資料庫第一章到第五章分成五個任務",
+])
+def test_batch_creation_is_atomic_and_replay_safe(store, monkeypatch, text):
     classify(monkeypatch, action="task_create", instruction="Review database chapters 1 to 5")
     parser = AsyncMock(return_value=[ParsedTask(f"Review database chapter {n}", project="database")
                                     for n in range(1, 6)])

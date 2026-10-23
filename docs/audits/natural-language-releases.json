@@ -1,0 +1,205 @@
+[
+  {
+    "batch": 1,
+    "pr": "https://github.com/Yili-code/Chronos/pull/11",
+    "sha": "a1128efc0b401647502cc69be8fc950b443e32f1",
+    "revision": "chronos-audit-a1128ef",
+    "traffic_percent": 100,
+    "rollback": "chronos-ack-14a9baa",
+    "ci_run": 39918377160,
+    "readiness": {
+      "status": "ready",
+      "mode": "public",
+      "database": "firestore",
+      "release": "a1128efc0b401647502cc69be8fc950b443e32f1"
+    },
+    "status": {
+      "readiness": "ready",
+      "release": "a1128efc0b401647502cc69be8fc950b443e32f1",
+      "telegram_webhook": "configured",
+      "learning_calendar": "configured",
+      "study": "configured"
+    }
+  },
+  {
+    "batch": 2,
+    "pr": "https://github.com/Yili-code/Chronos/pull/12",
+    "sha": "f96a26f2016dc9299ad3a3ca8903e1da31eb995a",
+    "revision": "chronos-audit-f96a26f",
+    "traffic_percent": 100,
+    "rollback": "chronos-audit-a1128ef",
+    "ci_run": 39919268986,
+    "readiness": {
+      "status": "ready",
+      "mode": "public",
+      "database": "firestore",
+      "release": "f96a26f2016dc9299ad3a3ca8903e1da31eb995a"
+    },
+    "status": {
+      "readiness": "ready",
+      "release": "f96a26f2016dc9299ad3a3ca8903e1da31eb995a",
+      "telegram_webhook": "configured",
+      "learning_calendar": "configured",
+      "study": "configured"
+    }
+  },
+  {
+    "batch": 3,
+    "pr": "https://github.com/Yili-code/Chronos/pull/13",
+    "sha": "7d77ce994677d72f16f8ae922e7fce817e5585c2",
+    "revision": "chronos-audit-7d77ce9",
+    "traffic_percent": 100,
+    "rollback": "chronos-assignment-f96a26f",
+    "ci_run": 39919893464,
+    "readiness": {
+      "status": "ready",
+      "mode": "public",
+      "database": "firestore",
+      "release": "7d77ce994677d72f16f8ae922e7fce817e5585c2"
+    },
+    "status": {
+      "readiness": "ready",
+      "release": "7d77ce994677d72f16f8ae922e7fce817e5585c2",
+      "telegram_webhook": "configured",
+      "learning_calendar": "configured",
+      "study": "configured"
+    }
+  },
+  {
+    "batch": 4,
+    "pr": "https://github.com/Yili-code/Chronos/pull/15",
+    "sha": "4cdc18d83390dc96db99db7f45e5e2c5b25e60bc",
+    "revision": "chronos-audit-4cdc18d",
+    "traffic_percent": 100,
+    "rollback": "chronos-audit-7d77ce9",
+    "ci_run": 39920588533,
+    "readiness": {
+      "status": "ready",
+      "mode": "public",
+      "database": "firestore",
+      "release": "4cdc18d83390dc96db99db7f45e5e2c5b25e60bc"
+    },
+    "status": {
+      "readiness": "ready",
+      "release": "4cdc18d83390dc96db99db7f45e5e2c5b25e60bc",
+      "telegram_webhook": "configured",
+      "learning_calendar": "configured",
+      "study": "configured"
+    }
+  },
+  {
+    "batch": 5,
+    "pr": "https://github.com/Yili-code/Chronos/pull/16",
+    "sha": "4e6bf4eeddc63ba9a5570a7436713684039418c7",
+    "revision": "chronos-audit-4e6bf4e",
+    "traffic_percent": 100,
+    "rollback": "chronos-audit-4cdc18d",
+    "ci_run": 39921247395,
+    "readiness": {
+      "status": "ready",
+      "mode": "public",
+      "database": "firestore",
+      "release": "4e6bf4eeddc63ba9a5570a7436713684039418c7"
+    },
+    "status": {
+      "readiness": "ready",
+      "release": "4e6bf4eeddc63ba9a5570a7436713684039418c7",
+      "telegram_webhook": "configured",
+      "learning_calendar": "configured",
+      "study": "configured",
+      "gmail": "disabled"
+    }
+  },
+  {
+    "batch": 6,
+    "pr": "https://github.com/Yili-code/Chronos/pull/17",
+    "sha": "07fc2289e4eae44f339278527ea10988ab12ee8e",
+    "revision": "chronos-audit-07fc228",
+    "traffic_percent": 100,
+    "rollback": "chronos-audit-4e6bf4e",
+    "ci_run": 39921920671,
+    "readiness": {
+      "status": "ready",
+      "mode": "public",
+      "database": "firestore",
+      "release": "07fc2289e4eae44f339278527ea10988ab12ee8e"
+    },
+    "status": {
+      "readiness": "ready",
+      "release": "07fc2289e4eae44f339278527ea10988ab12ee8e",
+      "telegram_webhook": "configured",
+      "learning_calendar": "configured",
+      "study": "configured",
+      "gmail": "disabled"
+    }
+  },
+  {
+    "batch": 7,
+    "pr": "https://github.com/Yili-code/Chronos/pull/19",
+    "sha": "9a3c8eadd2865d2a2f6a8cb325049807f1f7429d",
+    "revision": "chronos-audit-9a3c8ea",
+    "traffic_percent": 100,
+    "rollback": "chronos-audit-07fc228",
+    "ci_run": 39923260573,
+    "readiness": {
+      "status": "ready",
+      "mode": "public",
+      "database": "firestore",
+      "release": "9a3c8eadd2865d2a2f6a8cb325049807f1f7429d"
+    },
+    "status": {
+      "readiness": "ready",
+      "release": "9a3c8eadd2865d2a2f6a8cb325049807f1f7429d",
+      "telegram_webhook": "configured",
+      "learning_calendar": "configured",
+      "study": "configured",
+      "gmail": "disabled"
+    }
+  },
+  {
+    "batch": 8,
+    "pr": "https://github.com/Yili-code/Chronos/pull/20",
+    "sha": "8cd7555fa004c608ac6b5642849ee55137233355",
+    "revision": "chronos-habit-8cd7555",
+    "traffic_percent": 100,
+    "ci_run": 39923765527,
+    "readiness": {
+      "status": "ready",
+      "mode": "public",
+      "database": "firestore",
+      "release": "8cd7555fa004c608ac6b5642849ee55137233355"
+    },
+    "status": {
+      "readiness": "ready",
+      "release": "8cd7555fa004c608ac6b5642849ee55137233355",
+      "telegram_webhook": "configured",
+      "learning_calendar": "configured",
+      "study": "configured",
+      "gmail": "disabled"
+    },
+    "note": "Concurrent deployment promoted the same intended SHA; independently verified live instead of repeating the deployment."
+  },
+  {
+    "batch": 9,
+    "pr": "https://github.com/Yili-code/Chronos/pull/22",
+    "sha": "60727757344d656dc25e7f1639e706b079595318",
+    "revision": "chronos-audit-6072775",
+    "traffic_percent": 100,
+    "rollback": "chronos-habit-8cd7555",
+    "ci_run": 39924561508,
+    "readiness": {
+      "status": "ready",
+      "mode": "public",
+      "database": "firestore",
+      "release": "60727757344d656dc25e7f1639e706b079595318"
+    },
+    "status": {
+      "readiness": "ready",
+      "release": "60727757344d656dc25e7f1639e706b079595318",
+      "telegram_webhook": "configured",
+      "learning_calendar": "configured",
+      "study": "configured",
+      "gmail": "disabled"
+    }
+  }
+]

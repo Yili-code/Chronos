@@ -1,0 +1,46 @@
+[
+  {
+    "request": "後天上午九點通知我出門，不建待辦",
+    "passed": true,
+    "output": {
+      "actionable": true,
+      "title": "Leave home",
+      "start": "2026-10-25T09:00:00+08:00",
+      "kind": "other",
+      "minutes": null
+    }
+  },
+  {
+    "request": "後天上午九點通知我出門",
+    "passed": true,
+    "output": {
+      "actionable": true,
+      "title": "Leave home",
+      "start": "2026-10-25T09:00:00+08:00",
+      "kind": "other",
+      "minutes": null
+    }
+  },
+  {
+    "request": "後天上午九點不用通知我，也不要建立待辦",
+    "passed": true,
+    "output": {
+      "actionable": false,
+      "title": "Do not notify",
+      "start": null,
+      "kind": "other",
+      "minutes": null
+    }
+  },
+  {
+    "request": "提醒我出門",
+    "passed": true,
+    "output": {
+      "actionable": false,
+      "title": "Leave",
+      "start": null,
+      "kind": "other",
+      "minutes": null
+    }
+  }
+]

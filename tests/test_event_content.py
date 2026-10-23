@@ -80,15 +80,15 @@ def test_content_clarification_keeps_original_target_and_instruction(store, monk
 
 def test_ai_content_edit_rejects_title_mutation(monkeypatch):
     ai = ExternalAI(Settings(_env_file=None))
-    fields = {k: FieldEdit(op='keep', value=None) for k in TaskEditOutput.model_fields}
+    fields = {k: {'op': 'keep', 'value': None} for k in TaskEditOutput.model_fields}
     fields['title'] = FieldEdit(op='set', value='Wrong title')
     monkeypatch.setattr(ai, '_generate_output', AsyncMock(return_value=TaskEditOutput(**fields)))
     with pytest.raises(AIError, match='preserve'):
         asyncio.run(ai.edit({'title': 'Stable title'}, '修改內容為剩下一題'))
 
 
-def test_categories_have_distinct_colors():
-    assert len(set(EVENT_COLORS.values())) == len(EVENT_COLORS)
+def test_event_colors_preserve_existing_exam_palette():
+    assert EVENT_COLORS == {'exam': '3', 'contest': '3', 'meeting': '5', 'social': '6', 'other': '8'}
 
 
 @pytest.mark.parametrize(('text', 'minutes'), [('預計 3h', 180), ('1.5 hours', 90),
@@ -106,7 +106,7 @@ def test_explicit_duration_cannot_be_silently_shortened(store, monkeypatch):
 
 def test_ai_content_operation_preserves_unrelated_fields(monkeypatch):
     ai = ExternalAI(Settings(_env_file=None))
-    fields = {k: FieldEdit(op='keep', value=None) for k in TaskEditOutput.model_fields}
+    fields = {k: {'op': 'keep', 'value': None} for k in TaskEditOutput.model_fields}
     fields['content'] = FieldEdit(op='set', value='One problem remaining')
     monkeypatch.setattr(ai, '_generate_output', AsyncMock(return_value=TaskEditOutput(**fields)))
     parsed = asyncio.run(ai.edit({'title': 'Stable title', 'project': 'course',
@@ -126,3 +126,92 @@ def test_new_explicit_content_request_does_not_reuse_old_target(store, monkeypat
     run('修改 New 的內容為 new detail', update=2)
     assert edit.await_args.args[0]['id'] == new['id']
     assert main.tasks.get_open_by_id(old['id'])['title'] == 'Old'
+
+
+@pytest.mark.parametrize('details', [None, 'Room 301; bring a calculator', 'SOURCE'])
+def test_exam_preview_omits_source_and_preserves_calendar_description(store, monkeypatch, details):
+    now = datetime.now(main.settings.tz)
+    start = (now + timedelta(days=(5 - now.weekday()) % 7 + 7)).replace(hour=13, minute=10, second=0, microsecond=0)
+    source = '10/28 (三) 下午 1:10~4:05 圖論演算法期中考'
+    details = source if details == 'SOURCE' else details
+    classify(monkeypatch, action='event_create', title='Graph Algorithms Midterm', start=start,
+             end=start + timedelta(minutes=175), event_category='exam', content=details)
+    message = run(source)['messages'][0]
+    assert 'Graph Algorithms Midterm' in message['text']
+    assert '13:10–16:05 · 175 min' in message['text']
+    assert '<b>Category</b> exam' in message['text']
+    assert source not in message['text']
+    if details and details != source:
+        assert details in message['text']
+    assert store.list_open_tasks() == []
+    bind_free_message(store, 123, 20, message)
+    calendar = AsyncMock()
+    calendar.event.return_value = None
+    calendar.busy.return_value = []
+    calendar.insert.side_effect = lambda body: body
+    asyncio.run(free_booking_callback(store, calendar, main.settings, 123, 20,
+        message['free_booking'], 'allow'))
+    body = calendar.insert.await_args.args[0]
+    assert body['colorId'] == EVENT_COLORS['exam']
+    assert body['extendedProperties']['private']['chronosEventCategory'] == 'exam'
+    assert source in body['description']
+    if details:
+        assert details in body['description']
+
+
+def test_exam_classifier_contract(monkeypatch):
+    from chronos.intents import Intent
+    ai = ExternalAI(Settings(_env_file=None))
+    output = Intent(action='event_create', title='Graph Algorithms Midterm', event_category='exam',
+                    start=datetime.now(main.settings.tz) + timedelta(days=1), minutes=175)
+    generate = AsyncMock(return_value=output)
+    monkeypatch.setattr(ai, '_generate_output', generate)
+    result = asyncio.run(ai.classify_intent('圖論演算法期中考', [], datetime.now(main.settings.tz)))
+    assert result.event_category == 'exam'
+    prompt = generate.await_args.args[0]
+    assert 'category exam, never contest' in prompt
+    assert 'Preparing or studying for an exam remains task_create' in prompt
+    assert 'Context clarification.question is the exact previous question' in prompt
+    assert 'same date 09:20-11:00' in prompt
+    assert 'replaces the pending event instead' in prompt
+    assert 'competitions such as AtCoder remain contest' in prompt
+    assert 'do not repeat the title, date, time, duration or original input' in prompt
+
+
+@pytest.mark.parametrize('new_request', [False, True])
+def test_exam_end_answer_receives_complete_clarification_context(store, monkeypatch, new_request):
+    from chronos.intents import Intent
+    start = (datetime.now(main.settings.tz) + timedelta(days=7)).replace(hour=9, minute=20, second=0, microsecond=0)
+    original = 'OS midterm ' + start.strftime('%Y-%m-%d') + ' 09:20'
+    question = '請提供考試的結束時間或持續時間。'
+    mock = classify(monkeypatch, action='event_create', title='OS Midterm', start=start,
+                    event_category='exam', instruction=original, question=question)
+    run(original)
+    state = store.get_task_action_state('intent:clarify:123')
+    assert state['question'] == question
+    assert state['parsed_intent']['start'] == start.isoformat()
+    assert state['parsed_intent']['event_category'] == 'exam'
+    assert store.list_open_tasks() == []
+
+    async def contextual_answer(text, *args, context, **kwargs):
+        pending = context['clarification']
+        assert pending['question'] == question
+        assert pending['instruction'] == original
+        assert pending['parsed_intent']['title'] == 'OS Midterm'
+        if new_request:
+            return Intent(action='task_list')
+        return Intent(**{**pending['parsed_intent'], 'question': None,
+                         'end': start.replace(hour=11, minute=0),
+                         'instruction': original + ' 到十一點'})
+    mock.side_effect = contextual_answer
+    result = run('列出任務' if new_request else '到十一點', update=2)
+    if new_request:
+        assert 'free_booking' not in str(result)
+    else:
+        preview = result['messages'][0]
+        assert '09:20' in preview['text'] and '11:00' in preview['text']
+        assert '100 min' in preview['text']
+        assert preview['free_booking']
+    assert store.get_task_action_state('intent:clarify:123') == {}
+    assert store.list_open_tasks() == []
+    main.ai.parse.assert_not_awaited()

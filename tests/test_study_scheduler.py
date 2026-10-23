@@ -37,9 +37,14 @@ def test_every_course_prompts_five_minutes_after_class(tmp_path, slot):
     assert db.get_course_session(f"{slot.key}:{day}") is None
     asyncio.run(tick_study(db, bot, 123, due))
     assert db.get_course_session(f"{slot.key}:{day}").prompt_message_id == 801
-    assert call(
-        123, f"<b>{slot.name}</b>\n請簡述今天的進度。", parse_mode="HTML"
-    ) in bot.send_message.await_args_list
+    if slot.key == 'competitive-programming':
+        assert '課後任務建議' in bot.send_message.call_args.args[1]
+        assert bot.send_message.call_args.kwargs['reply_markup']['inline_keyboard']
+        assert not any('程式競賽' in task['title'] for task in db.list_open_tasks())
+    else:
+        assert call(
+            123, f"<b>{slot.name}</b>\n請簡述今天的進度。", parse_mode="HTML"
+        ) in bot.send_message.await_args_list
 
 
 def test_prompt_boundary_and_restart_reconciliation(tmp_path):

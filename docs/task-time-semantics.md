@@ -9,6 +9,7 @@ the daily list,  display these roles separately.
 | Deadline with only a date | `timing.due_date`, YYYY-MM-DD | Due: 2026-10-10 |
 | Planned work time | `timing.scheduled`, date or timezone-aware datetime | Scheduled: … |
 | Date identifying a lecture/event | `timing.event`, date or timezone-aware datetime | Course / event: … |
+| Owner-supplied work effort | `timing.estimated_minutes`, whole minutes | Hidden from task lists and cards; available to planning |
 | Ambiguous expression | `timing.uncertain`, original wording | Time needs clarification: … |
 
 No default 09:00 is assigned. Date-only deadlines do not create a timed reminder.
@@ -78,3 +79,5 @@ not a guarantee that every personal commitment is recorded.
 
 New tasks without an explicit deadline retain no deadline, including `/add`.
 There is no automatic three-day deadline. Existing stored deadlines are unchanged.
+
+Owner effort (for example, about two hours = 120 minutes) is separate from visible content and deadlines. Capture does not invent an estimate. Ordinary task titles and content use English, preserving names and technical terms. Existing records are not rewritten. Planning reads this metadata; the existing session cap and owner approval still apply.
