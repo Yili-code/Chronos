@@ -43,6 +43,18 @@ def slot_line(slot, settings):
     return f"{display_date(start.date().isoformat())} · {start:%H:%M}–{end:%H:%M}"
 
 
+def bind_booking_request(db, chat_id, message_id, receipt):
+    """Bind the trusted incoming request, never a model-supplied message ID."""
+    if message_id is None:
+        return
+    for message in receipt.get('messages', []):
+        token = message.get('free_booking')
+        if token:
+            db.mutate_task_action_state('free:booking:' + token,
+                lambda old: {**old, 'request_message_id': message_id}
+                if old and old.get('chat_id') == chat_id and old.get('request_message_id') is None else old)
+
+
 def bind_free_message(db, chat_id, message_id, message):
     if message.get('free_slot'):
         db.mutate_task_action_state(f'free:message:{chat_id}:{message_id}', lambda old: old or message['free_slot'])
