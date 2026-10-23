@@ -49,6 +49,22 @@ def test_duration_and_no_task(store,kind,minutes,expected):
     assert 'added' in reply['messages'][0]['text']
 
 
+def test_notification_only_wording_preserves_reminder_without_creating_todo(store):
+    text = '後天上午九點通知我出門，不建待辦'
+    start = (NOW + timedelta(days=2)).replace(hour=9, minute=0, second=0, microsecond=0)
+    ai = AsyncMock()
+    ai.parse_reminder.return_value = ReminderOutput(actionable=True, title='Leave home',
+        start=start.isoformat(), kind='other', minutes=None)
+    calendar = AsyncMock()
+    calendar.busy.return_value = []
+    asyncio.run(reminders.command(store, ai, calendar, CFG, text, 123, 701, NOW))
+    ai.parse_reminder.assert_awaited_once_with(text, NOW)
+    items = list(store.get_task_action_state(reminders.KEY).values())
+    assert len(items) == 1 and items[0]['start'] == start.isoformat()
+    assert items[0]['status'] == 'active'
+    assert store.list_open_tasks() == []
+
+
 def test_overlap_requires_confirmation_and_duplicate_is_safe(store):
     reply,item=create(store,True)
     assert item['status']=='pending'
