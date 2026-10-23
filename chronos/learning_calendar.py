@@ -405,6 +405,37 @@ class LearningCalendar:
             "reply_markup": {"inline_keyboard": [[button] for button in options]},
             "learning_menu": {"task_id": task_id, "token": state["token"]}}]}
 
+    async def dated_edit_menu(self, task_id, state, now=None):
+        now = now or datetime.now(self.settings.tz)
+        menu = self.edit_menu(task_id, state)
+        task = next((t for t in self.db.list_open_tasks() if t['id'] == task_id), None)
+        if task is None:
+            return menu
+        begin = datetime.combine(now.date() + timedelta(days=1), time(), self.settings.tz)
+        stop = begin + timedelta(days=3)
+        await self.calendar.verify_owner()
+        busy = await self.calendar.busy(begin, stop)
+        from .backward_planning import reserved_windows
+        busy = [*busy, *reserved_windows(self.db)]
+        hard = [(datetime.fromisoformat(other['start']), datetime.fromisoformat(other['end']))
+                for item in self.db.list_open_tasks() if item['id'] != task_id
+                for other in [self.get(item['id'])]
+                if other and other.get('start') and other['status'] == 'creating']
+        policy = self.db.get_task_action_state('learning:course-calendar-policy')
+        dates = []
+        for offset in range(3):
+            day = begin + timedelta(days=offset)
+            booked = {day.date().isoformat(): sum((self.db.get_task_action_state(
+                'learning:day:' + day.date().isoformat()) or {}).values())}
+            slot = find_slot(task, now, busy, hard, self.settings, state['minutes'], booked, policy,
+                             window=(day, day + timedelta(days=1)))
+            if slot:
+                dates.extend(self.buttons(task_id, state, [('day' + day.strftime('%Y%m%d'),
+                    day.strftime('%m/%d (%a)'))]))
+        rows = menu['messages'][0]['reply_markup']['inline_keyboard']
+        rows[0:0] = [[button] for button in dates]
+        return menu
+
     async def book(self, task, state, now):
         """Reconcile a deterministic event ID before retrying a calendar insertion."""
         event_id = sha256(f"chronos:{task['id']}:{state['token']}".encode()).hexdigest()
@@ -489,7 +520,7 @@ class LearningCalendar:
             return f"This task is waiting for external conditions. Use /plan {task_id} when ready."
         if state["status"] in {"queued", "planning", "proposed", "editing", "no_slot", "rejected"} and task_id != active:
             return self.waiting_turn(active)
-        menu_action = action in {"more", "lots", "shuffle", "manual"}
+        menu_action = action in {"more", "lots", "shuffle", "manual"} or bool(re.fullmatch(r"day\d{8}", action))
         expected_message = state.get("edit_message_id", state.get("message_id")) if menu_action else state.get("message_id")
         valid_message = (message_id in {state.get("message_id"), state.get("edit_message_id")}
                          if action in {"postpone", "earlier", "later", "longer", "shorter"} else expected_message == message_id)
@@ -501,7 +532,7 @@ class LearningCalendar:
                     changed = self.update(task_id, lambda old: {**old, "status": "editing"}
                         if old.get("token") == state["token"] and old["status"] in {"proposed", "editing"} else old)
                     if changed.get("token") == state["token"] and changed["status"] == "editing":
-                        return self.edit_menu(task_id, changed)
+                        return await self.dated_edit_menu(task_id, changed)
                     return "The execution plan changed. Open Adjust plan on the latest card."
                 text, buttons = self.proposal_content(task, state)
                 return {"messages": [{"text": "This execution plan was updated. Review the latest version below.\n\n" + text,
@@ -542,7 +573,17 @@ class LearningCalendar:
                 if old.get("token") == token and old["status"] == "proposed" else old)
             if changed["status"] != "editing":
                 return "This execution plan has already been handled. Use /plan."
-            return self.edit_menu(task_id, state)
+            return await self.dated_edit_menu(task_id, state)
+        if re.fullmatch(r'day\d{8}', action):
+            if state['status'] != 'editing':
+                return 'This adjustment menu is no longer active. Use Adjust plan on the latest execution plan.'
+            try:
+                day = datetime.strptime(action[3:], '%Y%m%d').replace(tzinfo=self.settings.tz)
+            except ValueError:
+                return 'Invalid planning date. Open Adjust plan again.'
+            if not 1 <= (day.date() - now.date()).days <= 3:
+                return 'This date option expired. Open Adjust plan again.'
+            return await self.revise(task_id, token, day.strftime('%Y-%m-%d'), now)
         if action in {"more", "lots", "shuffle", "manual"}:
             if state["status"] != "editing":
                 return "This adjustment menu is no longer active. Use Adjust plan on the latest execution plan."
