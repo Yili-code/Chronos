@@ -1138,9 +1138,16 @@ class LearningCalendar:
                    {"queued", "planning", "proposed", "editing", "no_slot"}]
         quiet = not self.settings.learning_start_hour <= now.hour < self.settings.learning_end_hour
         if quiet and not force_proposal:
-            if not nightly or (active is not None and active not in {task["id"] for task in nightly}):
+            queue = self.db.get_task_action_state("learning:proposal-queue") or {}
+            if active is not None and active in queue.get("requested_task_ids", []):
+                # Owner intent belongs to the durable batch, not just its first
+                # request. Continue this turn after callbacks or worker retries;
+                # unrelated automatic backlog still respects quiet hours.
+                tasks = [task for task in tasks if task["id"] == active]
+            elif not nightly or (active is not None and active not in {task["id"] for task in nightly}):
                 return {"enabled": True, "quiet_hours": True, "proposals_checked": 0}
-            tasks = nightly
+            else:
+                tasks = nightly
         # Retain the active turn, then consume selected oldest tasks before other work.
         nightly_ids = {task["id"] for task in nightly}
         tasks = sorted(tasks, key=lambda task: (task["id"] not in nightly_ids,
