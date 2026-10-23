@@ -35,6 +35,9 @@ def system(tmp_path, monkeypatch):
     monkeypatch.setattr(main, 'telegram', bot)
     monkeypatch.setattr(main, 'scheduler', AsyncIOScheduler(timezone=config.tz))
     monkeypatch.setattr(main.ai, 'parse', AsyncMock(return_value=ParsedTask('Test task')))
+    async def parse_many(text, *args, **kwargs):
+        return [await main.ai.parse(text, *args, **kwargs)]
+    monkeypatch.setattr(main.ai, "parse_many", AsyncMock(side_effect=parse_many))
     async def classify(text, tasks, now, **kwargs):
         bound = (kwargs.get("context") or {}).get("bound_task_id")
         if bound:

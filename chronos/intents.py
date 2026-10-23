@@ -142,7 +142,7 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
         if intent.action in simple:
             action = await app.prepare_message(simple[intent.action], update_id=update_id)
         elif intent.action == "task_create":
-            action = await app.prepare_message(instruction, update_id=update_id, create_only=True)
+            action = await app.prepare_message(text if not pending else instruction, update_id=update_id, create_only=True)
         elif intent.action == "task_edit":
             action = await app.prepare_message(f"/edit #{task_id} {instruction}", update_id=update_id)
         elif intent.action == "event_create":

@@ -1,3 +1,4 @@
+from copy import deepcopy
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -129,7 +130,16 @@ class FakeClient:
 
 def database(monkeypatch):
     monkeypatch.setattr(firestore_db.firestore, "Client", FakeClient)
-    monkeypatch.setattr(firestore_db.firestore, "transactional", lambda operation: operation)
+    def transactional(operation):
+        def run(transaction):
+            before = deepcopy(transaction.client.data)
+            try:
+                return operation(transaction)
+            except Exception:
+                transaction.client.data = before
+                raise
+        return run
+    monkeypatch.setattr(firestore_db.firestore, "transactional", transactional)
     return FirestoreDatabase("test-project", "(default)", "test")
 
 
