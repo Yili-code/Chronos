@@ -190,8 +190,8 @@ from the card to keep the check-in short.
 At the end of a booked event, the next scheduler tick sends one check-in. It reads
 the Calendar event again to honor a changed end time; deleted/cancelled events
 are not recreated. Check-ins and pending delivery retries run at any hour, including 21:00 and
-after midnight for owner-approved late sessions. Only automatic proposal
-preparation is deferred outside 09:00–21:00; the default planning cutoff
+after midnight for owner-approved late sessions. Automatic proposal
+preparation outside the nightly batch is deferred outside 09:00–21:00; the default planning cutoff
 remains 21:00. Explicit late edits retain their session-specific confirmation
 and Allow approval flow.
 
@@ -310,3 +310,22 @@ strictly after the current start while respecting deadlines, availability and da
 limits. Longer adds 30 minutes (5 minutes for course-scope checks); shorter uses 75%,
 rounded up to five minutes, within 10–180 minutes. Each change produces a new
 execution plan and requires confirmation. Primary plan buttons use two columns for mobile readability.
+
+## Nightly backlog planning
+
+At 21:00 Asia/Taipei, `chronos-nightly-planning` calls the authenticated
+`/internal/learning/nightly` endpoint. The local scheduler supports the same job.
+It selects up to four open tasks by creation time (oldest first, ID breaks ties),
+including tasks created before Calendar activation. Existing planning, booked,
+feedback, rejected, postponed and backward-plan states are left alone.
+
+A durable per-date receipt fixes the selected IDs before any external call.
+Retries resume that batch without selecting more tasks or resending delivered cards.
+The existing active approval stays first; selected tasks then receive proposals
+one at a time. Accept **Allow** to book each proposed block, or adjust/reject it.
+Proposal preparation may continue at night, including after midnight; actual work
+blocks retain the existing 09:00–21:00 and Calendar conflict/load limits.
+No task deadline changes and no Calendar writes occur merely from the nightly job.
+Fewer than four eligible tasks produces a smaller batch; an empty batch sends no card.
+This cloud job requires deployment and Calendar activation before it can run while
+the computer is off. Local tests do not prove cloud scheduling or Telegram delivery.
