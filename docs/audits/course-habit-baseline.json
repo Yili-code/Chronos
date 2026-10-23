@@ -1,0 +1,88 @@
+{
+  "cases": [
+    {
+      "case": 1,
+      "label": "numbered",
+      "reply": "通常都是 1. 學習本週上課內容 2. 完成至少六題程式設計題目",
+      "expected": "set",
+      "before": "set",
+      "before_correct": true
+    },
+    {
+      "case": 2,
+      "label": "prose",
+      "reply": "每次下課後都先複習本週內容，再完成至少六題程式題。",
+      "expected": "set",
+      "before": "progress",
+      "before_correct": false
+    },
+    {
+      "case": 3,
+      "label": "Chinese numerals",
+      "reply": "以後固定：一、複習本週內容；二、完成至少六題程式題。",
+      "expected": "set",
+      "before": "progress",
+      "before_correct": false
+    },
+    {
+      "case": 4,
+      "label": "bullets",
+      "reply": "記住這堂課的固定安排：\n- 複習本週內容\n- 完成至少六題程式題",
+      "expected": "set",
+      "before": "progress",
+      "before_correct": false
+    },
+    {
+      "case": 5,
+      "label": "English",
+      "reply": "After every class, review this week's material and solve at least six programming problems.",
+      "expected": "set",
+      "before": "progress",
+      "before_correct": false
+    },
+    {
+      "case": 6,
+      "label": "partial update",
+      "reply": "以後第二項改成完成至少十題程式題，第一項不變。",
+      "expected": "set",
+      "before": "progress",
+      "before_correct": false
+    },
+    {
+      "case": 7,
+      "label": "shown reference",
+      "reply": "以後這堂課都照這樣做。",
+      "expected": "set",
+      "before": "progress",
+      "before_correct": false
+    },
+    {
+      "case": 8,
+      "label": "disable",
+      "reply": "這門課以後不要再固定提出課後任務。",
+      "expected": "disable",
+      "before": "progress",
+      "before_correct": false
+    },
+    {
+      "case": 9,
+      "label": "one-time report",
+      "reply": "今天複習了投影片，也做了六題，不用記住。",
+      "expected": "progress",
+      "before": "progress",
+      "before_correct": true
+    },
+    {
+      "case": 10,
+      "label": "missing reference",
+      "reply": "以後都照今天這樣做。",
+      "expected": "clarify",
+      "before": "progress",
+      "before_correct": false
+    }
+  ],
+  "before_correct": 2,
+  "after_correct": null,
+  "live_provider_sample": false,
+  "production_writes": false
+}
