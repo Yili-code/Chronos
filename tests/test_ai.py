@@ -249,6 +249,8 @@ def test_parse_many_chapters_and_metadata_contract(monkeypatch):
         payload = json.loads(request.content)
         schema = payload["generationConfig"]["responseJsonSchema"]
         assert "tasks" in schema["properties"]
+        assert "maxItems" not in schema["properties"]["tasks"]
+        assert "minItems" not in schema["properties"]["tasks"]
         prompt = payload["systemInstruction"]["parts"][0]["text"]
         assert "one task per chapter" in prompt
         assert "neither title nor content" in prompt
@@ -271,3 +273,11 @@ def test_parse_many_rejects_invalid_whole_batch(monkeypatch, items):
         {"content": {"parts": [{"text": json.dumps({"tasks": items})}]}}]}))
     with pytest.raises(AIError):
         asyncio.run(ExternalAI(config()).parse_many("Create tasks"))
+
+
+def test_parse_many_still_rejects_provider_batch_over_limit(monkeypatch):
+    items = [{"title": f"Task {n}", "project": None, "due_at": None, "timing": {}} for n in range(21)]
+    mock_provider(monkeypatch, lambda request: httpx.Response(200, json={"candidates": [
+        {"content": {"parts": [{"text": json.dumps({"tasks": items})}]}}]}))
+    with pytest.raises(AIError):
+        asyncio.run(ExternalAI(config()).parse_many("Create 21 tasks"))
