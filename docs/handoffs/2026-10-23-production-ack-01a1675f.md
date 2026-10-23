@@ -1,14 +1,13 @@
-# Deploy acknowledged task changes
+# Latest-main production deployment
 
-- Updated: 2026-10-23T14:57:57+08:00.
-- Authorized: deploy to production, per user request in this chat.
-- Target: ee606d92bdc1b5dfd0f007f7c6f1a86e24bdf82c (PR #3 merge; includes PR #1/#2). Later main features excluded. Base branch codex/acknowledge-no-change; existing local notes preserved.
-- Preflight: exact merge SHA push CI 39911148973 succeeded; Python 3.11, Python 3.12, extension jobs verified. Production yili-chronos-prod / asia-east1 / chronos has 100% to chronos-00254-geg (e10a74f).
-- Decision: deploy clean Git archive at target SHA without traffic, updating only release environment/commit label. Preserve live runtime configuration, secrets, scheduler and historical tags. Candidate readiness/release identity gate before promotion. Rollback chronos-00254-geg.
-- Status: candidate deployment pending. No domain data repair or synthetic Telegram message authorized/needed. Verification will use health/readiness and authenticated status.
-- Next: candidate, verify, promote and read back traffic/version.
-
-- Candidate chronos-00256-pac is ready at 0% traffic. Live synthetic Gemini rejected batch schema with HTTP 400; existing single-task schema succeeded. Expanding references alone did not resolve it. Removing only provider minItems/maxItems succeeded, retaining original references and all local Pydantic constraints; five chapters each tagged database and acknowledge intent verified. No data/Telegram mutation.
-- Release fix: codex/batch-schema-release starts from ee606d9, excluding later unrelated main work. Only omit provider array bounds; local TaskBatchOutput still rejects empty/>20 batches. Full tests and PR/CI required before deploying corrected commit. Old production remains at 100%.
-
-- Fix verification: complete Python suite 1,230 passed in 43.82s; documentation/diff checks passed. Provider-facing schema regression added and >20-item response rejection retained. Deployment scope question pending because newer main features exist; work on compatible fix/PR can proceed independently.
+- Updated: 2026-10-23T15:11:02+08:00.
+- Authorization: user requested production deployment, then explicitly chose latest main including task wording/course-tag review and tomorrow-aware flexible planning.
+- Deployed source: 14a9baad32dd18fcd79f88225fbc40c9bfdd9d62 (PR #8 merge). Clean Git archive, no local notes, credentials or test artifacts in the build context.
+- Production: yili-chronos-prod / asia-east1 / chronos. Revision chronos-ack-14a9baa receives 100% traffic. Public /live=live and /ready=ready, Firestore and exact release SHA verified. Authenticated /internal/status confirms ready, matching release, Telegram webhook configured, Calendar configured and Study configured.
+- Configuration: compared against prior production chronos-nightly-9f40980; only CHRONOS_RELEASE_SHA changed among runtime environment entries. Secrets and other settings preserved. Existing nightly scheduler is ENABLED at 0 21 * * * Asia/Taipei, pointing at /internal/learning/nightly. No duplicate job or immediate scheduler run.
+- Live release blocker fixed: original batch JSON schema was rejected by Gemini with HTTP 400, while single-task parsing succeeded. Expanding references alone did not fix it. Omitting only provider minItems/maxItems succeeded; local Pydantic still rejects empty or >20-item batches. PR #8 is the bounded compatibility fix.
+- Validation: full local fix suite 1,230 passed in 43.82s on ee606d9 plus fix, with existing Starlette warning. PR CI 39915457974 and exact latest-main merge CI 39915650577 passed Python 3.11, Python 3.12 and extension jobs. This distinguishes the local fix baseline from the later integrated main CI.
+- Live synthetic checks on the exact merged source using production Gemini credentials: five separate chapter tasks, all project=database; no hashtag wording in title/content; acknowledge intent for a natural no-change reply; explicit no-record recognition; one task metadata-review item and one valid 90-minute tomorrow session inside a supplied 90-minute opening. No task/Calendar writes or synthetic Telegram messages. These samples establish provider compatibility and sampled behavior, not general semantic accuracy or end-to-end message delivery.
+- Candidate process: initial ee606d9 candidate chronos-00256-pac stayed at 0% and was never promoted. After user approved latest main, clean corrected candidate was verified at 0%, then promoted. Another chat had already promoted chronos-nightly-9f40980 during validation; preserved its configuration and used it as rollback reference.
+- Rollback: chronos-nightly-9f40980. Historical traffic tags preserved; no revision cleanup, credential rotation or historical-data repair.
+- Status: production deployment complete and verified. Publishing this evidence in a documentation-only PR. Existing unrelated local handoff edits remain excluded. No remaining runtime work for this request.
