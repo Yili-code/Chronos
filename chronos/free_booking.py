@@ -8,7 +8,7 @@ from .google_calendar import CalendarError
 from .learning_calendar import class_windows, short_task_windows, overlaps
 from .task_timing import display_date
 
-EVENT_COLORS = {'exam': '11', 'contest': '3', 'meeting': '5', 'social': '6', 'other': '8'}
+EVENT_COLORS = {'exam': '3', 'contest': '3', 'meeting': '5', 'social': '6', 'other': '8'}
 
 
 def preview_explicit_event(db, settings, chat_id, update_id, title, start, end, category, content, now, *, preview_content=None):
@@ -41,6 +41,18 @@ def slot_line(slot, settings):
     if start.date() != end.date():
         return f"{display_date(start.date().isoformat())} {start:%H:%M}–{display_date(end.date().isoformat())} {end:%H:%M}"
     return f"{display_date(start.date().isoformat())} · {start:%H:%M}–{end:%H:%M}"
+
+
+def bind_booking_request(db, chat_id, message_id, receipt):
+    """Bind the trusted incoming request, never a model-supplied message ID."""
+    if message_id is None:
+        return
+    for message in receipt.get('messages', []):
+        token = message.get('free_booking')
+        if token:
+            db.mutate_task_action_state('free:booking:' + token,
+                lambda old: {**old, 'request_message_id': message_id}
+                if old and old.get('chat_id') == chat_id and old.get('request_message_id') is None else old)
 
 
 def bind_free_message(db, chat_id, message_id, message):

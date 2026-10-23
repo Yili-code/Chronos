@@ -40,7 +40,7 @@ from .reply_policy import is_no_change_reply
 from . import reminders
 from . import calendar_replan
 from .backward_planning import BackwardPlanner
-from .free_booking import bind_free_message, preview_free_event, free_booking_callback
+from .free_booking import bind_booking_request, bind_free_message, preview_free_event, free_booking_callback
 from . import task_review
 from . import course_habits
 from . import assignment_access
@@ -751,13 +751,16 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             except CalendarError:
                 reply = "Calendar could not confirm the result. Tap Allow again to check; no duplicate event will be created."
             receipt = db.process_update(update_id, lambda: reply)
+        if not free_callback and update.message:
+            bind_booking_request(db, chat_id, source_message.message_id, receipt)
         await deliver_learning_reply(chat_id, update_id, receipt)
         if free_callback:
             current = db.get_task_action_state("free:booking:" + free_callback[2])
             if (current and current.get("chat_id") == chat_id
                     and current.get("message_id") == source_message.message_id):
                 if current.get("status") == "booked":
-                    await delete_telegram_messages(chat_id, source_message.message_id)
+                    await delete_telegram_messages(chat_id, source_message.message_id,
+                        current.get("request_message_id"))
                 elif current.get("status") in {"cancelled", "expired", "conflict"}:
                     await telegram.request("editMessageReplyMarkup", {"chat_id": chat_id,
                         "message_id": source_message.message_id, "reply_markup": {"inline_keyboard": []}})
@@ -1020,6 +1023,8 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             else:
                 action = await prepare_message(text, update_id=update_id, chat_id=chat_id)
             receipt = db.process_update(update_id, action)
+    if update.message:
+        bind_booking_request(db, chat_id, source_message.message_id, receipt)
     help_callback = (
         update.callback_query is not None
         and re.fullmatch(
