@@ -47,3 +47,6 @@
 設定見 [本機啟動](getting-started.md)，排程細節見 [Google Calendar](learning-calendar.md) 與 [期限拆解](backward-planning.md)。
 
 維護者可執行 `python -m chronos.telegram_menu`，將 owner 選單替換為上述六項並讀回驗證。程式修改、Git 推送與正式部署是不同步驟。
+
+
+TronClass 匯入的作業使用可讀的課程英文簡稱：`#DB`（Database Systems）、`#CA`（Computer Architecture）、`#ISPM`（Information Security Practice and Management）、`#OS`（Operating Systems）、`#GA`（Graph Algorithms）、`#SE`（Software Engineering）、`#CP`（Introduction to Competitive Programming）。課程 ID 僅作來源識別；既有數字課程標籤在任務卡與清單顯示時轉成同一簡稱，不改寫既有資料或使用者設定的別名。未登錄的課程不產生數字標籤。新增追蹤課程時必須一併登錄簡稱，測試會檢查課表與映射是否完整對應。
