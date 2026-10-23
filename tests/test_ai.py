@@ -57,6 +57,23 @@ def test_complete_event_does_not_make_another_provider_call(monkeypatch):
     assert intent.minutes == 60 and len(calls) == 1
 
 
+def test_preferences_are_fresh_data_without_replacing_the_request(monkeypatch):
+    saved = {"study_time": "Prefer evenings"}
+    payloads = []
+    def handler(request):
+        payloads.append(json.loads(request.content))
+        return valid_response()
+    mock_provider(monkeypatch, handler)
+    ai = ExternalAI(config(), preference_source=lambda: dict(saved))
+    asyncio.run(ai.parse("Read database chapter 1"))
+    first = payloads[0]["contents"][0]["parts"]
+    assert first[0]["text"] == "Read database chapter 1"
+    assert json.loads(first[1]["text"])["owner_preferences"] == saved
+    saved.clear()
+    asyncio.run(ai.parse("Read database chapter 2"))
+    assert len(payloads[1]["contents"][0]["parts"]) == 1
+
+
 def mock_provider(monkeypatch, handler):
     real_client = httpx.AsyncClient
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real_client(

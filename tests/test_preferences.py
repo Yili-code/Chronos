@@ -65,3 +65,13 @@ def test_preference_question_never_writes(store, monkeypatch):
              preference_value="English", question="要使用英文嗎？")
     assert "英文" in run("改用英文？")["reply"]
     assert preferences.read(store, 123) == {}
+
+
+def test_shared_ai_loads_only_configured_owner_preferences(store, monkeypatch):
+    from chronos.settings import Settings
+    monkeypatch.setattr(main, "settings", Settings(_env_file=None, telegram_chat_id=123))
+    preferences.apply(store, 123, "set", "study_time", "Prefer evenings")
+    preferences.apply(store, 456, "set", "study_time", "Prefer mornings")
+    assert main.ai.preference_source() == {"study_time": "Prefer evenings"}
+    preferences.apply(store, 123, "forget", "study_time")
+    assert main.ai.preference_source() == {}
