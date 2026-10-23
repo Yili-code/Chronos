@@ -388,3 +388,30 @@ def test_effort_edit_operations_are_typed():
     for op, value in [("set", None), ("keep", 120), ("clear", 120), ("set", "120")]:
         with pytest.raises(ValueError):
             EffortEdit(op=op, value=value)
+
+
+@pytest.mark.parametrize("combined", ["OS midterm 10/30 09:20 到十一點", ""])
+def test_event_timing_extraction_retains_clarification_context(monkeypatch, combined):
+    payloads = []
+    context = {"clarification": {"instruction": "OS midterm 10/30 09:20",
+               "question": "請提供結束時間", "parsed_intent": {"action": "clarify"}}}
+    def handler(request):
+        payload = json.loads(request.content)
+        payloads.append(payload)
+        if len(payloads) == 1:
+            result = {"action": "event_create", "title": "OS Midterm", "event_category": "exam",
+                      "instruction": combined}
+        else:
+            supplied = json.loads(payload["contents"][0]["parts"][0]["text"])
+            assert supplied["context"] == context
+            assert supplied["current_message"] == "到十一點"
+            assert supplied["instruction"] == (combined or "到十一點")
+            result = {"start": "2026-10-30T09:20:00+08:00", "end": "2026-10-30T11:00:00+08:00",
+                      "minutes": None, "question": None}
+        return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": json.dumps(result)}]}}]})
+    mock_provider(monkeypatch, handler)
+    intent = asyncio.run(ExternalAI(config()).classify_intent("到十一點", [],
+        datetime.fromisoformat("2026-10-23T16:00:00+08:00"), context=context))
+    assert len(payloads) == 2
+    assert intent.question is None and intent.event_category == "exam"
+    assert (intent.end-intent.start).total_seconds() == 100*60
