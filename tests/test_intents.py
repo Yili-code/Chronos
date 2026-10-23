@@ -121,6 +121,23 @@ def test_model_text_is_not_an_executable_command(store, monkeypatch):
     main.ai.parse_many.assert_awaited_once_with("記錄文字")
 
 
+def test_natural_tag_removal_preserves_other_fields_and_can_undo(store, monkeypatch):
+    task = main.tasks.create("Complete database report", project="database")
+    classify(monkeypatch, action="task_edit", task_ids=[task["id"]], instruction="資料庫報告不要標籤了")
+    parser = AsyncMock(return_value=ParsedTask(task["title"], project=None))
+    monkeypatch.setattr(main.ai, "edit", parser)
+    run("資料庫報告不要標籤了")
+    after = main.tasks.list_open()[0]
+    assert after["title"] == task["title"] and after["due_at"] == task["due_at"]
+    assert after["project"] is None
+    parser.assert_awaited_once()
+    assert parser.await_args.args[0]["id"] == task["id"]
+    assert parser.await_args.args[1] == "資料庫報告不要標籤了"
+    classify(monkeypatch, action="undo")
+    run("撤銷剛剛修改", 2)
+    assert main.tasks.list_open()[0]["project"] == "database"
+
+
 def test_clear_requires_existing_confirmation(store, monkeypatch):
     main.tasks.create("Keep until confirmed")
     classify(monkeypatch, action="clear_tasks")
