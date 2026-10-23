@@ -30,7 +30,7 @@ def preview_explicit_event(db, settings, chat_id, update_id, title, start, end, 
     minutes = int((datetime.fromisoformat(saved['end']) - datetime.fromisoformat(saved['start'])).total_seconds() / 60)
     details = saved.get('preview_content')
     detail_line = f"\n{escape(details[:500])}" if details else ""
-    return {'messages': [{'text': f"<b>Add to Calendar?</b>\n{escape(saved['title'])}\n"
+    return {'messages': [{'text': f"<b>Shall I add this to your calendar, Sir?</b>\n{escape(saved['title'])}\n"
         f"{slot_line(saved, settings)} · {minutes} min\n<b>Category</b> {escape(saved['category'])}{detail_line}", 'parse_mode': 'HTML', 'free_booking': token,
         'reply_markup': {'inline_keyboard': [[{'text': 'Allow', 'callback_data': 'free:allow:' + token},
                                              {'text': 'Cancel', 'callback_data': 'free:cancel:' + token}]]}}]}
@@ -90,7 +90,7 @@ async def preview_free_event(db, ai, settings, chat_id, message_id, instruction,
     saved = db._run_task_action(save)
     if not saved:
         return 'This slot expired or has already been booked. Use /free.'
-    return {'messages':[{'text':f"<b>Add to Calendar?</b>\n{escape(saved['title'])}\n{slot_line(saved,settings)}",
+    return {'messages':[{'text':f"<b>Shall I add this to your calendar, Sir?</b>\n{escape(saved['title'])}\n{slot_line(saved,settings)}",
         'parse_mode':'HTML','free_booking':token,'reply_markup':{'inline_keyboard':[[
             {'text':'Allow','callback_data':'free:allow:'+token},
             {'text':'Cancel','callback_data':'free:cancel:'+token}]]}}]}

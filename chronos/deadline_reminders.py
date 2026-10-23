@@ -77,7 +77,7 @@ async def send_deadline_reminders(db, telegram, settings, *, now=None):
         deadline_line = f"Due {due_text}"
         if stage[0] == "hour":
             deadline_line += " · within 1 hour"
-        text = (f"<b>Deadline reminder</b>\n{escape(deadline_line)}\n\n"
+        text = (f"<b>A deadline for your attention, Sir.</b>\n{escape(deadline_line)}\n\n"
                 f"<b>{escape(current['title'][:1500])}</b>")
         try:
             result = await telegram.send_message(settings.telegram_chat_id, text, parse_mode="HTML",

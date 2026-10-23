@@ -63,7 +63,7 @@ def proposal(task, title, course, project, reason, chat_id, now):
 def card(state, aliases):
     before = state['before']
     old_title = before['title'][:180] + ('…' if len(before['title']) > 180 else '')
-    lines = ['<b>Suggested task update</b>']
+    lines = ['<b>A suggestion for your approval, Sir.</b>']
     if state['title'] != before['title']:
         lines += ['', '<b>Title</b>', '<b>Before</b> ' + escape(old_title), '<b>After</b> ' + escape(state['title'])]
     else:

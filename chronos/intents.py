@@ -122,7 +122,7 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
         return lambda reply=str(error): "目前無法理解這個要求，沒有變更任何內容。\n" + escape(reply)
 
     if intent.action == "acknowledge":
-        return lambda: "收到"
+        return lambda: "Understood, Sir."
 
     instruction = intent.instruction or text
     # Keep the owner's field choice across a clarification, outside model discretion.

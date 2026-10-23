@@ -243,7 +243,7 @@ def test_deadline_plan_button_prepares_and_displays_proposal(system, monkeypatch
 
     assert response.status_code == 200
     assert "is next" in bot.send_message.await_args_list[-2].args[1]
-    assert "<b>Execution plan</b>" in bot.send_message.await_args_list[-1].args[1]
+    assert "<b>Your proposed work session, Sir.</b>" in bot.send_message.await_args_list[-1].args[1]
     buttons = bot.send_message.await_args_list[-1].kwargs["reply_markup"]["inline_keyboard"]
     assert [button["text"] for row in buttons for button in row] == [
         "Confirm schedule", "Adjust plan", "Defer"]
@@ -331,7 +331,7 @@ def test_no_slot_and_calendar_error_do_not_silently_book(setup):
     calendar.busy.return_value = [(NOW, NOW + timedelta(days=7))]
     asyncio.run(planner.tick(NOW))
     assert planner.get(task["id"])["status"] == "no_slot"
-    assert "No viable execution window" in bot.send_message.await_args.args[1]
+    assert "I could not find a suitable work session, Sir." in bot.send_message.await_args.args[1]
     calendar.insert.assert_not_awaited()
 
 

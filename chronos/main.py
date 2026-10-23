@@ -27,6 +27,7 @@ from .tasks import (
     project_display_name,
 )
 from .telegram import TelegramClient
+from .reply_voice import creation_messages
 from .runtime_health import (
     RuntimeConfigurationError,
     configured_components,
@@ -193,7 +194,7 @@ def clear_tasks_reply() -> str:
     # The clear operation runs inside the same Firestore transaction as the
     # update receipt. Firestore forbids reads after the first write, and the
     # post-clear state is already known without another query.
-    return f"Deleted {deleted} {noun}.\n\nNo open tasks. All clear."
+    return f"Deleted {deleted} {noun}.\n\nNo open tasks, Sir. A welcome state of affairs."
 
 
 @tracked_job(lambda: db)
@@ -1106,7 +1107,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         if message.get('assignment_refresh'):
             await assignment_access.dispatch(db, settings, telegram, message['assignment_refresh'])
     if settings.enable_learning_calendar and update.message and (
-        any(m.get("planning_requested") for m in receipt.get("messages", [])) or
+        any(m.get("planning_requested") or m.get("task_created") for m in receipt.get("messages", [])) or
         receipt.get("reply", "").startswith("<b>Task created</b>") or (source_message.text or "").startswith(("/plan ", "/planedit ", "/taskupdate ", "/studyfeedback "))
     ):
         try:
@@ -1248,7 +1249,7 @@ async def prepare_message(text: str, *, update_id: int | None = None, chat_id: i
     if re.match(r'^/coursehabit(?:@[A-Za-z0-9_]+)?(?:\s|$)', normalized):
         return lambda: course_habits.command(db, normalized)
     if not create_only and is_no_change_reply(normalized):
-        return lambda: "收到"
+        return lambda: "Understood, Sir."
     if create_only:
         try:
             parsed = await ai.parse_many(normalized)
@@ -1525,7 +1526,7 @@ async def prepare_message(text: str, *, update_id: int | None = None, chat_id: i
         except ValueError as error:
             return lambda reply=str(error): reply
     else:
-        return lambda: "Unknown command. Use /info to see available commands."
+        return lambda: "I could not recognise that request, Sir. Please use /info for the available options."
     return prepare_created_task(parsed, chat_id=chat_id)
 
 
@@ -1538,16 +1539,16 @@ def prepare_created_tasks(parsed_tasks, *, chat_id=None):
     def create() -> dict:
         before = tasks.list_open()
         created = tasks.create_many(parsed_tasks)
-        messages = []
-        for task in created:
-            details = "\n".join(format_task_block(task, settings.tz, project_aliases=aliases))
-            messages.append(task_card(task, f"<b>Task created</b>\n{details}"))
+        messages = creation_messages(created, settings.tz, aliases, task_card, task_edit_keyboard)
         # Read once before writes, preserving the Firestore transaction contract.
         after = sorted([*before, *created], key=task_sort_key)
         suggestions = [suggestion for task in created if (suggestion := task_review.new_task_suggestion(
             db, task, [*before, *created], aliases, chat_id, datetime.now(settings.tz)))]
-        return message_bundle(*messages,
-            {"text": format_tasks(after, settings.tz, project_aliases=aliases), "parse_mode": "HTML"}, *suggestions)
+        # A batch acknowledgement already contains every newly created task.
+        # Keep the existing single-task list and its receipt/retry contract.
+        listing = ([{"text": format_tasks(after, settings.tz, project_aliases=aliases), "parse_mode": "HTML"}]
+                   if len(created) == 1 else [])
+        return message_bundle(*messages, *listing, *suggestions)
     return create
 
 

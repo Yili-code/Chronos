@@ -29,7 +29,7 @@ def test_telegram_uses_external_ai(task_service, monkeypatch):
     parse = AsyncMock(return_value=ParsedTask("Review external analysis"))
     monkeypatch.setattr(main.ai, "parse", parse)
     reply = asyncio.run(main.handle_message("新增 工作"))
-    assert reply.startswith("<b>Task created</b>")
+    assert reply.startswith("<b>I have added it, Sir.</b>")
     assert "<b>Review external analysis</b>" in reply
     assert "<b>Due</b>" not in reply
     assert task_service.list_open()[0]["due_at"] is None
@@ -54,10 +54,10 @@ def test_failure_does_not_change_tasks(task_service, monkeypatch):
     edit_failure = asyncio.run(main.handle_message("/edit 1 改到明天"))
     assert "External AI failed" in edit_failure
     assert "Task 1 is unchanged" in edit_failure
-    assert asyncio.run(main.handle_message("/reschedule 1 明天")) == "Unknown command. Use /info to see available commands."
+    assert asyncio.run(main.handle_message("/reschedule 1 明天")) == "I could not recognise that request, Sir. Please use /info for the available options."
     assert task_service.list_open() == before
     assert "Original task" in asyncio.run(main.handle_message("/tasks"))
-    assert asyncio.run(main.handle_message("/done 1")) == "Completed Original task\n\nNo open tasks. All clear."
+    assert asyncio.run(main.handle_message("/done 1")) == "Completed Original task\n\nNo open tasks, Sir. A welcome state of affairs."
 
 
 def test_edit_uses_natural_language_and_returns_latest_list(task_service, monkeypatch):
@@ -81,5 +81,5 @@ def test_edit_uses_natural_language_and_returns_latest_list(task_service, monkey
 def test_edit_missing_position_skips_ai(task_service, monkeypatch):
     edit = AsyncMock()
     monkeypatch.setattr(main.ai, "edit", edit)
-    assert asyncio.run(main.handle_message("/edit 1 rename it")) == "Task 1 not found.\n\nNo open tasks. All clear."
+    assert asyncio.run(main.handle_message("/edit 1 rename it")) == "Task 1 not found.\n\nNo open tasks, Sir. A welcome state of affairs."
     edit.assert_not_awaited()
