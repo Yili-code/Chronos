@@ -7,6 +7,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Callable, Iterator
 
+from .reply_policy import is_no_change_reply
 from .course_tracking import ProgressReportKind, ProgressSession, accept_reply, mark_missed_at_day_end
 from .course_tracking_store import session_from_firestore, session_to_firestore
 from .assignments import Assignment, to_record, from_record, set_deadline, owner_deadline_edit
@@ -642,6 +643,8 @@ class Database(TaskActions):
             if row is None:
                 return "這則回覆未對應到課後進度問題。請直接回覆原始訊息。"
             session = session_from_firestore(dict(row))
+            if is_no_change_reply(text):
+                return "收到"
             if local_date is not None:
                 expired = mark_missed_at_day_end(session, local_date=local_date)
                 if expired != session:
