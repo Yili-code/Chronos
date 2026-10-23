@@ -148,24 +148,25 @@ class FirestoreDatabase(TaskActions):
         return snapshot.get("task_id") if snapshot.exists else None
 
     def create_task(self, title: str, due_at: datetime | None, project: str | None, created_at: datetime, timing: dict | None = None) -> dict:
-        timing = normalize_timing(timing, due_at)
+        return self.create_tasks([{"title": title, "due_at": due_at, "project": project, "timing": timing}], created_at)[0]
+
+    def create_tasks(self, items: list[dict], created_at: datetime) -> list[dict]:
+        normalized = [{**item, "timing": normalize_timing(item.get("timing"), item.get("due_at"))} for item in items]
         def create(transaction):
             counter_ref = self.meta.document("task_counter")
             counter = counter_ref.get(transaction=transaction)
-            task_id = int(counter.get("next_id")) if counter.exists else 1
-            data = {
-                "title": title,
-                "project": project,
-                "due_at": due_at.isoformat() if due_at else None,
-                "timing": timing,
-                "status": "open",
-                "created_at": created_at.isoformat(),
-                "completed_at": None,
-            }
-            transaction.set(counter_ref, {"next_id": task_id + 1})
-            transaction.create(self.tasks.document(str(task_id)), data)
-            return self._task_data(task_id, data)
-
+            next_id = int(counter.get("next_id")) if counter.exists else 1
+            result = []
+            for offset, item in enumerate(normalized):
+                task_id = next_id + offset
+                data = {"title": item["title"], "project": item.get("project"),
+                        "due_at": item["due_at"].isoformat() if item.get("due_at") else None,
+                        "timing": item["timing"], "status": "open",
+                        "created_at": created_at.isoformat(), "completed_at": None}
+                transaction.create(self.tasks.document(str(task_id)), data)
+                result.append(self._task_data(task_id, data))
+            transaction.set(counter_ref, {"next_id": next_id + len(normalized)})
+            return result
         active = self._transaction.get()
         return create(active) if active is not None else self._run_transaction(create)
 

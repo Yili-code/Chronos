@@ -19,6 +19,9 @@ def task_service(tmp_path, monkeypatch):
     service = TaskService(db, main.settings.tz)
     monkeypatch.setattr(main, "tasks", service)
     monkeypatch.setattr(main.ai, "classify_intent", AsyncMock(return_value=Intent(action="task_create")))
+    async def parse_many(text, *args, **kwargs):
+        return [await main.ai.parse(text, *args, **kwargs)]
+    monkeypatch.setattr(main.ai, "parse_many", AsyncMock(side_effect=parse_many))
     return service
 
 

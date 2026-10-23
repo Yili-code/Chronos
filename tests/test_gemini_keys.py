@@ -216,7 +216,9 @@ def test_failover_and_duplicate_receipt_create_only_one_task(tmp_path, monkeypat
             return httpx.Response(200, json={'candidates': [{'content': {'parts': [
                 {'text': json.dumps({'action': 'task_create'})}
             ]}}]})
-        return valid_response()
+        task = json.loads(valid_response().json()['candidates'][0]['content']['parts'][0]['text'])
+        return httpx.Response(200, json={'candidates': [{'content': {'parts': [
+            {'text': json.dumps({'tasks': [task]})}]}}]})
     mock_provider(monkeypatch, handler)
     action = asyncio.run(main.prepare_message('Synthetic test report', update_id=880))
     first = db.process_update(880, action)

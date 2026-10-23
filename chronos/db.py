@@ -326,6 +326,12 @@ class Database(TaskActions):
             row = connection.execute("SELECT * FROM tasks WHERE id = ?", (cursor.lastrowid,)).fetchone()
         return self._task_data(row)
 
+    def create_tasks(self, items: list[dict], created_at: datetime) -> list[dict]:
+        scope = self.connect() if self._transaction.get() is not None else self.transaction()
+        with scope:
+            return [self.create_task(item["title"], item.get("due_at"), item.get("project"),
+                                     created_at, item.get("timing")) for item in items]
+
     def continue_task(self, task, title, now):
         """Close a session task and create its successor in the caller's transaction."""
         successor = self.create_task(title, datetime.fromisoformat(task['due_at']) if task.get('due_at') else None,

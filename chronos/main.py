@@ -1170,10 +1170,10 @@ async def prepare_message(text: str, *, update_id: int | None = None, chat_id: i
     normalized = text.strip()
     if create_only:
         try:
-            parsed = await ai.parse(normalized)
+            parsed = await ai.parse_many(normalized)
         except (AIError, ValueError) as error:
             return lambda reply=str(error): reply
-        return prepare_created_task(parsed)
+        return prepare_created_tasks(parsed)
     normalized = re.sub(r"^(/[A-Za-z_]+)@[A-Za-z0-9_]+(?=\s|$)", r"\1", normalized)
     if bound_task_id is not None and not normalized.startswith("/"):
         import sys
@@ -1437,20 +1437,22 @@ async def prepare_message(text: str, *, update_id: int | None = None, chat_id: i
 
 
 def prepare_created_task(parsed):
+    return prepare_created_tasks([parsed])
+
+
+def prepare_created_tasks(parsed_tasks):
     aliases = tasks.project_aliases()
     def create() -> dict:
         before = tasks.list_open()
-        due_at = parsed.due_at
-        task = tasks.create(parsed.title, due_at, parsed.project, parsed.timing)
-        details = "\n".join(format_task_block(
-            task, settings.tz, project_aliases=aliases
-        ))
-        # Render the transaction outcome without reading Firestore after a write.
-        after = sorted([*before, task], key=task_sort_key)
-        return message_bundle(
-            task_card(task, f"<b>Task created</b>\n{details}"),
-            {"text": format_tasks(after, settings.tz, project_aliases=aliases), "parse_mode": "HTML"},
-        )
+        created = tasks.create_many(parsed_tasks)
+        messages = []
+        for task in created:
+            details = "\n".join(format_task_block(task, settings.tz, project_aliases=aliases))
+            messages.append(task_card(task, f"<b>Task created</b>\n{details}"))
+        # Read once before writes, preserving the Firestore transaction contract.
+        after = sorted([*before, *created], key=task_sort_key)
+        return message_bundle(*messages,
+            {"text": format_tasks(after, settings.tz, project_aliases=aliases), "parse_mode": "HTML"})
     return create
 
 
