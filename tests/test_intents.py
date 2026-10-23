@@ -308,8 +308,9 @@ def test_batch_creation_is_atomic_and_replay_safe(store, monkeypatch):
     second = store.process_update(9001, action)
     assert len(main.tasks.list_open()) == 5
     assert first["reply"] == second["reply"]
-    assert len(first["messages"]) == 6
-    assert all(item["project"] == "database" for item in main.tasks.list_open())
+    assert len(first["messages"]) == 11
+    assert sum(bool(m.get('task_review')) for m in first['messages']) == 5
+    assert all(item["project"] is None for item in main.tasks.list_open())
 
 
 def test_batch_write_failure_rolls_back(store, monkeypatch):

@@ -282,7 +282,7 @@ def test_webhook_auth_and_commands(system):
     assert send('/tasks').status_code == 200
     assert '<b>Test task</b>' in bot.send_message.call_args.args[1]
     assert bot.send_message.call_args.kwargs['parse_mode'] == 'HTML'
-    assert 'reply_markup' not in bot.send_message.call_args.kwargs
+    assert bot.send_message.call_args.kwargs['reply_markup'] == main.task_review.OPEN_KEYBOARD
     main.ai.edit = AsyncMock(return_value=ParsedTask(
         'Test task', datetime(2026, 9, 20, 10, tzinfo=config.tz)))
     assert send('/edit 1 改到週日').status_code == 200
