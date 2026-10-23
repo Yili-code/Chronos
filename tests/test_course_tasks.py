@@ -151,3 +151,22 @@ def test_sqlite_reply_failure_rolls_back_tasks_session_and_receipt(tmp_path, mon
     assert survey["id"] == stored.survey_task_id
     assert db.get_course_session(session.session_id).status.value == "pending"
     assert db.get_update(9) is None
+
+
+@pytest.mark.parametrize("text", ["不需要記錄", "不用更新 task list。", "No need to record", "收到"])
+def test_no_change_reply_only_acknowledges_and_preserves_session(db, text):
+    session = db.create_course_session(new_session(COURSE_SCHEDULE[0], date(2026, 10, 5), 501), create_tasks=True)
+    before = db.list_open_tasks()
+    # Even a late acknowledgement must not expire or complete the survey as a side effect.
+    action = lambda: db.record_course_reply(501, 502, text, local_date=date(2026, 10, 6))
+    receipt = db.process_update(1001, action)
+    assert receipt["reply"] == "收到"
+    assert db.process_update(1001, action) == receipt
+    assert db.list_open_tasks() == before
+    assert db.get_course_session(session.session_id) == session
+
+
+@pytest.mark.parametrize("text", ["今天沒上課", "我也不知道", "不需要記錄第三章，改記錄第四章", "今天上到第三章，謝謝"])
+def test_real_progress_or_mixed_requests_are_not_bare_acknowledgements(text):
+    from chronos.reply_policy import is_no_change_reply
+    assert not is_no_change_reply(text)

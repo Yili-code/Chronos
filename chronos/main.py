@@ -36,6 +36,7 @@ from .runtime_health import (
 from .task_actions import UndoConflict
 from .deadline_reminders import send_deadline_reminders
 from .free_time import free_slot_offer
+from .reply_policy import is_no_change_reply
 from . import reminders
 from . import calendar_replan
 from .backward_planning import BackwardPlanner
@@ -1168,6 +1169,8 @@ async def prepare_message(text: str, *, update_id: int | None = None, chat_id: i
                           bound_task_id: int | None = None, create_only: bool = False) -> Callable[[], str | dict]:
     """Resolve external input first; the returned action performs no async work."""
     normalized = text.strip()
+    if not create_only and is_no_change_reply(normalized):
+        return lambda: "收到"
     if create_only:
         try:
             parsed = await ai.parse_many(normalized)

@@ -772,3 +772,20 @@ def test_webhook_checks_secret_before_parsing_and_preserves_retry_id(system):
     payload['message']['text'] = '新增工作'
     assert client.post('/telegram/webhook', json=payload, headers=headers).status_code == 200
     assert len(service.list_open()) == 1
+
+
+def test_course_no_record_webhook_only_sends_acknowledgement(system):
+    from chronos.course_tracking import COURSE_SCHEDULE, new_session
+    client, service, bot, config = system
+    session = main.db.create_course_session(new_session(COURSE_SCHEDULE[4], datetime.now(config.tz).date(), 801), create_tasks=True)
+    before = service.list_open()
+    payload = {"update_id": 9801, "message": {"message_id": 802, "chat": {"id": 123},
+               "text": "不需要記錄", "reply_to_message": {"message_id": 801}}}
+    headers = {"X-Telegram-Bot-Api-Secret-Token": "test-hook"}
+    for _ in range(2):
+        assert client.post("/telegram/webhook", headers=headers, json=payload).status_code == 200
+    assert service.list_open() == before
+    assert main.db.get_course_session(session.session_id) == session
+    bot.send_message.assert_awaited_once()
+    assert bot.send_message.await_args.args[1] == "收到"
+    main.ai.classify_intent.assert_not_awaited()
