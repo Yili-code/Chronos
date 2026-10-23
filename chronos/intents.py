@@ -36,7 +36,7 @@ class Intent(BaseModel):
     end_day: date | None = None
     title: str | None = Field(default=None, min_length=1, max_length=150)
     content: str | None = Field(default=None, max_length=2000)
-    event_category: Literal["contest", "meeting", "social", "other"] | None = None
+    event_category: Literal["exam", "contest", "meeting", "social", "other"] | None = None
     edit_field: Literal["title", "content"] | None = None
     preference_operation: Literal["set", "list", "forget"] | None = None
     preference_key: str | None = Field(default=None, min_length=1, max_length=80)
@@ -197,7 +197,8 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
             from .free_booking import preview_explicit_event
             result = preview_explicit_event(app.db, app.settings, chat_id, update_id,
                 intent.title, intent.start, end, intent.event_category,
-                '\n'.join(dict.fromkeys(filter(None, [intent.content, instruction, text]))), now)
+                '\n'.join(dict.fromkeys(filter(None, [intent.content, instruction, text]))), now,
+                preview_content=intent.content if intent.content not in {text, instruction, intent.title} else None)
             action = lambda: result
         elif intent.action == "task_complete":
             def action():
