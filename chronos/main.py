@@ -978,6 +978,10 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                     plan_callback = True
                     action = lambda task_id=selected["id"]: learning_calendar().request_proposal(
                         task_id, immediate=True)
+            elif data and re.fullmatch(r"planview:(summary|all|scheduled):[0-9]{1,6}", data):
+                from .plan_overview import view
+                _, section, page = data.split(":")
+                action = lambda: message_bundle(view(learning_calendar(), section, int(page)))
             elif data == "help:index":
                 action = lambda: message_bundle({
                     "text": HELP_TEXT,
@@ -1338,9 +1342,8 @@ async def prepare_message(text: str, *, update_id: int | None = None, chat_id: i
         return lambda: reply
     if normalized == "/plan":
         def plan_status():
-            planner = learning_calendar()
-            parts = [planner.status(), planner.status(booked_only=True)]
-            return message_bundle(*({"text": part, "parse_mode": "HTML"} for part in parts if part))
+            from .plan_overview import view
+            return message_bundle(view(learning_calendar()))
         return plan_status
     replan = re.fullmatch(r"/plan\s+#?(\d+)", normalized)
     if replan:
