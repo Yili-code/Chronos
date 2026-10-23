@@ -23,6 +23,7 @@ class Intent(BaseModel):
         "mail_next", "cancel", "clarify", "unsupported", "acknowledge", "preference", "assignment_query", "assignment_scan",
     ]
     task_ids: list[Annotated[int, Field(strict=True, ge=1)]] = Field(default_factory=list, max_length=100)
+    target_selection: Literal["single", "all", "ambiguous"] = "single"
     instruction: str = Field(default="", max_length=4000)
     question: str | None = Field(default=None, max_length=250)
     start: datetime | None = None
@@ -131,7 +132,8 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
 
     if any(i not in by_id for i in ids):
         return clarify("找不到指定的未完成任務，請重新指定名稱。")
-    if intent.action in TARGET_ACTIONS and len(ids) != 1:
+    batch_plan = intent.action == "plan_request" and intent.target_selection == "all" and 1 <= len(ids) <= 20
+    if intent.action in TARGET_ACTIONS and (intent.target_selection == "ambiguous" or (len(ids) != 1 and not batch_plan)):
         return clarify("要操作哪一項任務？", ids or list(by_id))
     if intent.action == "clarify" or intent.question:
         return clarify(intent.question or "請補充要處理的事項。", ids)
@@ -215,7 +217,21 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
             if not app.settings.enable_learning_calendar:
                 return lambda: "目前未啟用排程。"
             if intent.action == "plan_request":
-                action = await app.prepare_message(f"/plan {task_id}", update_id=update_id)
+                if not persistent:
+                    return lambda: "請在 Telegram 對話安排任務。"
+                if intent.minutes is not None and not 15 <= intent.minutes <= 180:
+                    return clarify("每項工作時段需為 15 至 180 分鐘，請調整時長。", ids)
+                targets = [by_id[i] for i in ids]
+                def action():
+                    current = app.tasks.list_open()
+                    current_by_id = {task['id']: task for task in current}
+                    if any(target['id'] not in current_by_id or
+                        task_fields(current_by_id[target['id']]) != task_fields(target) for target in targets):
+                        return "任務已變更，請重新確認要做的操作。"
+                    reply = app.learning_calendar().request_proposals(ids, minutes=intent.minutes, immediate=True)
+                    if not reply[1]:
+                        return reply[0]
+                    return app.message_bundle({"text": reply[0], "planning_requested": True})
             elif intent.action == "plan_edit":
                 action = await app.prepare_message(f"/planedit {task_id} {instruction}", update_id=update_id)
             elif intent.minutes is None or intent.outcome is None:

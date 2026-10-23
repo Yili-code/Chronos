@@ -16,6 +16,59 @@ from chronos import main
 NOW = datetime.fromisoformat("2026-10-19T09:00:00+08:00")
 
 
+def test_batch_owner_duration_survives_sequential_approval_and_restart(setup):
+    planner, task, calendar, bot = setup
+    others = [planner.db.create_task(f'Lecture {i}', NOW + timedelta(days=3), None, NOW) for i in range(2)]
+    ids = [others[1]['id'], task['id'], others[0]['id']]
+    reply, queued = planner.request_proposals(ids, minutes=90)
+    assert queued and '90 minutes each' in reply
+    occupied = []
+    async def busy(*args):
+        return list(occupied)
+    calendar.busy.side_effect = busy
+    planner = LearningCalendar(planner.db, calendar, bot, planner.settings)
+    for index, task_id in enumerate(ids):
+        asyncio.run(planner.tick(NOW))
+        state = planner.get(task_id)
+        assert state['status'] == 'proposed'
+        assert state['minutes'] == 90 and state['duration_source'] == 'owner'
+        assert calendar.insert.await_count == index
+        start, end = (datetime.fromisoformat(state[k]) for k in ('start', 'end'))
+        assert end - start == timedelta(minutes=90)
+        assert all(end <= a or start >= b for a, b in occupied)
+        asyncio.run(planner.callback('approve', task_id, state['token'], 50))
+        assert planner.get(task_id)['status'] == 'scheduled'
+        assert calendar.insert.await_count == index + 1
+        occupied.append((start, end))
+    assert [int(call.args[0]['extendedProperties']['private']['chronosTask'])
+        for call in calendar.insert.await_args_list] == ids
+
+
+@pytest.mark.parametrize('status', ['scheduled', 'awaiting_feedback', 'creating', 'backward_managed'])
+def test_batch_rejects_ineligible_member_without_changing_other_plans(setup, status):
+    planner, task, calendar, _ = setup
+    other = planner.db.create_task('Other', None, None, NOW)
+    planner.update(task['id'], lambda _: {'status': 'proposed', 'token': 'original', 'minutes': 30})
+    planner.update(other['id'], lambda _: {'status': status, 'token': 'blocked'})
+    before = [planner.get(i) for i in (task['id'], other['id'])]
+    _, queued = planner.request_proposals([task['id'], other['id']], minutes=90)
+    assert not queued
+    assert [planner.get(i) for i in (task['id'], other['id'])] == before
+    assert planner.db.get_task_action_state('learning:proposal-queue') is None
+    calendar.insert.assert_not_awaited()
+
+
+def test_batch_retires_old_proposal_and_cannot_approve_stale_token(setup):
+    planner, task, calendar, _ = setup
+    asyncio.run(planner.tick(NOW))
+    old = planner.get(task['id'])
+    other = planner.db.create_task('Other', None, None, NOW)
+    planner.request_proposals([other['id'], task['id']], minutes=90)
+    asyncio.run(planner.callback('approve', task['id'], old['token'], 50))
+    calendar.insert.assert_not_awaited()
+    assert planner.get(task['id'])['requested_minutes'] == 90
+
+
 def test_plan_groups_pending_work_and_separates_booked_tasks(setup):
     planner, task, _, _ = setup
     other = planner.db.create_task('Remaining chapter', None, None, NOW)

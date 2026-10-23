@@ -1106,10 +1106,11 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         if message.get('assignment_refresh'):
             await assignment_access.dispatch(db, settings, telegram, message['assignment_refresh'])
     if settings.enable_learning_calendar and update.message and (
+        any(m.get("planning_requested") for m in receipt.get("messages", [])) or
         receipt.get("reply", "").startswith("<b>Task created</b>") or (source_message.text or "").startswith(("/plan ", "/planedit ", "/taskupdate ", "/studyfeedback "))
     ):
         try:
-            await learning_calendar().tick()
+            await learning_calendar().tick(force_proposal=any(m.get("planning_requested") for m in receipt.get("messages", [])))
         except CalendarError:
             logger.warning("Learning calendar proposal deferred; check /plan or the next scheduler tick")
     return {"ok": True}
