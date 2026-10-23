@@ -388,3 +388,21 @@ preview even during quiet hours. The durable batch selection also survives worke
 restarts and delivery retries. Only the active requested member can continue this way;
 unrelated automatic proposals remain paused. Every Calendar booking still requires
 its own confirmation, with the same work-hour, deadline, conflict and workload checks.
+
+
+### Recovering an invalid nightly allocation
+
+A nightly allocation is a preview of current capacity. If it expires or conflicts
+with a new Calendar booking, class preparation, another pending plan, the deadline
+or the daily workload limit, Chronos searches again over the next seven days (or
+until an earlier deadline). The replacement preserves the allocated session duration
+and estimated remaining effort, respects other pending allocations, and requires
+fresh confirmation. The obsolete batch overview is removed from the revised card.
+If availability changes again when confirming, no event is inserted and a fresh
+preview is queued. An obsolete confirmation cannot approve the replacement.
+
+A no-capacity card states the searched duration and horizon; it mentions a deadline
+only when one actually bounds that search. Original-allocation failure reasons are
+shown separately. Existing allocation-only no-slot cards are recovered once; a
+completed unsuccessful search is not repeatedly regenerated on every worker tick.
+Calendar read failures remain service errors, never evidence of exhausted capacity.
