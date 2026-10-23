@@ -1011,10 +1011,12 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                     raise HTTPException(status_code=422, detail="Reply message id is required")
                 received_at = datetime.now(settings.tz)
                 received_date = received_at.date()
-                action = lambda: record_course_progress_reply(
+                habit_action = await course_habits.prepare_reply(
+                    db, ai, source_message.reply_to_message.message_id, text)
+                action = habit_action or (lambda: db.record_course_reply(
                     source_message.reply_to_message.message_id, source_message.message_id, text,
                     local_date=received_date,
-                )
+                ))
             else:
                 action = await prepare_message(text, update_id=update_id, chat_id=chat_id)
             receipt = db.process_update(update_id, action)
