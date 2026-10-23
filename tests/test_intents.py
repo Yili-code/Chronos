@@ -9,7 +9,7 @@ import pytest
 from chronos import main, calendar_replan
 from chronos.ai import AIError, ExternalAI
 from chronos.db import Database
-from chronos.intents import Intent
+from chronos.intents import Intent, explicit_plan_batch
 from chronos.settings import Settings
 from chronos.tasks import TaskService, ParsedTask
 from test_firestore import database as firestore_fake
@@ -38,6 +38,16 @@ def classify(monkeypatch, **kwargs):
     mock = AsyncMock(return_value=Intent(**kwargs))
     monkeypatch.setattr(main.ai, "classify_intent", mock)
     return mock
+
+
+@pytest.mark.parametrize('text,ids', [
+    ('將 task 3, 4, 5 先排到 calendar 中，每個預估一個半小時', [103, 104, 105]),
+    ('Schedule tasks #105, #103 and #104, 90 minutes each', [105, 103, 104]),
+])
+def test_explicit_batch_guard_separates_references_from_duration(text, ids):
+    items = [{'id': 101 + i, 'title': f'Operating System lecture {i + 1}'} for i in range(5)]
+    assert explicit_plan_batch(text, items, ids)
+    assert not explicit_plan_batch(text, items, ids[::-1])
 
 
 def test_failure_never_falls_through_to_creation(store, monkeypatch):
@@ -313,6 +323,15 @@ def test_multiple_candidate_plans_are_not_implicitly_a_batch(store, monkeypatch,
     monkeypatch.setattr(main.settings, "enable_learning_calendar", True)
     classify(monkeypatch, action="plan_request", task_ids=ids, target_selection=selection)
     assert '要操作哪一項' in run('幫我安排 lecture')['reply']
+    assert all(main.learning_calendar().get(i) is None for i in ids)
+
+
+@pytest.mark.parametrize('text', ['幫我安排 Operating System lecture', '安排 task 1 或 task 2', '安排 task 1, 2, 3'])
+def test_model_all_selection_requires_explicit_matching_owner_evidence(store, monkeypatch, text):
+    ids = [main.tasks.create(f'Operating System lecture {i}')['id'] for i in range(2)]
+    monkeypatch.setattr(main.settings, 'enable_learning_calendar', True)
+    classify(monkeypatch, action='plan_request', task_ids=ids, target_selection='all', minutes=90)
+    assert '要操作哪一項' in run(text)['reply']
     assert all(main.learning_calendar().get(i) is None for i in ids)
 
 

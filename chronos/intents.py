@@ -49,6 +49,35 @@ class Intent(BaseModel):
 TARGET_ACTIONS = {"task_edit", "task_complete", "plan_request", "plan_edit", "plan_feedback"}
 
 
+def explicit_plan_batch(text, items, ids):
+    """Require owner evidence before expanding a model match to multiple targets."""
+    if re.search(r"或者|還是|还是|或|\bor\b", text, re.I):
+        return False
+    reference = r"#?\d+(?!\d)(?!\s*(?:minutes?\b|mins?\b|hours?\b|hrs?\b|小時|小时|分鐘|分钟))"
+    enumeration = re.search(rf"(?<![a-z])tasks?\s*{reference}(?:\s*(?:[,，、/&+]|\band\b|和|與|及)\s*(?:tasks?\s*)?{reference})+", text, re.I)
+    if enumeration:
+        resolved = []
+        for fixed, number in re.findall(r"(#?)(\d+)", enumeration[0]):
+            position = int(number)
+            if fixed:
+                resolved.append(position)
+            elif 1 <= position <= len(items):
+                resolved.append(items[position - 1]['id'])
+            else:
+                return False
+        return list(dict.fromkeys(resolved)) == ids
+    if re.search(r"全部|所有|都要|都排|這幾[項個筆]|这几[项个笔]|\ball\b|\bthese\s+tasks\b", text, re.I):
+        return True
+    count = re.search(r"[這这](\d+|兩|两|二|三|四|五|六|七|八|九|十)[項项個个筆笔]", text)
+    if count:
+        numbers = {'兩': 2, '两': 2, '二': 2, '三': 3, '四': 4, '五': 5,
+                   '六': 6, '七': 7, '八': 8, '九': 9, '十': 10}
+        return (int(count[1]) if count[1].isdigit() else numbers[count[1]]) == len(ids)
+    by_id = {item['id']: item for item in items}
+    return bool(re.search(r"和|與|及|、|\band\b", text, re.I)) and all(
+        by_id[i]['title'].casefold() in text.casefold() for i in ids)
+
+
 def explicit_event_minutes(text):
     """Preserve explicit numeric duration even if the classifier omits it."""
     matches = re.findall(r"(?<![\d:])(\d+(?:\.\d+)?)\s*(hours?|hrs?|h\b|小時|小时|minutes?|mins?|min\b|分鐘|分钟)", text, re.I)
@@ -132,7 +161,8 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
 
     if any(i not in by_id for i in ids):
         return clarify("找不到指定的未完成任務，請重新指定名稱。")
-    batch_plan = intent.action == "plan_request" and intent.target_selection == "all" and 1 <= len(ids) <= 20
+    batch_plan = (intent.action == "plan_request" and intent.target_selection == "all"
+                  and 1 <= len(ids) <= 20 and explicit_plan_batch(text, items, ids))
     if intent.action in TARGET_ACTIONS and (intent.target_selection == "ambiguous" or (len(ids) != 1 and not batch_plan)):
         return clarify("要操作哪一項任務？", ids or list(by_id))
     if intent.action == "clarify" or intent.question:
