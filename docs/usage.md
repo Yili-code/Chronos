@@ -47,3 +47,10 @@
 設定見 [本機啟動](getting-started.md)，排程細節見 [Google Calendar](learning-calendar.md) 與 [期限拆解](backward-planning.md)。
 
 維護者可執行 `python -m chronos.telegram_menu`，將 owner 選單替換為上述六項並讀回驗證。程式修改、Git 推送與正式部署是不同步驟。
+# 課後任務偏好
+
+程式競賽技巧導論預設在課後五分鐘提出「學習本週上課內容」與「完成至少六題程式設計題目」兩項建議。每項可獨立接受或略過；只有接受後才新增待辦，不推定截止時間、不直接建立 Calendar 活動。建議保留七天；重複點擊不會重複新增。停課與考試期間沿用原有課程日政策。
+
+其他課程維持詢問進度。回覆該課原始訊息「通常都是 1. 第一項 2. 第二項」，可明確記住該課兩項偏好，供之後課後建議使用。一般進度回報不會自動變成偏好。
+
+使用 `/coursehabit competitive-programming` 查看偏好；`/coursehabit competitive-programming | 複習本週內容 | 完成十題` 修改；`/coursehabit competitive-programming | off` 停用。修改只影響之後建議，已送出的卡片保留原內容。只輸入 `/coursehabit` 可查看所有課程代碼。偏好保存在目前資料庫；不跨獨立部署共用。
