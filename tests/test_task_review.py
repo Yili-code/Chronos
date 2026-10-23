@@ -226,3 +226,40 @@ def test_review_rechecks_snapshots_after_generation(store, monkeypatch):
     result = store.process_update(80, action)
     assert '清單剛有變更' in result['reply']
     assert main.tasks.list_open()[0]['title'] == 'New wording'
+
+
+@pytest.mark.parametrize('operation', ['apply', 'cancel'])
+def test_review_result_expires_after_seven_seconds(system, monkeypatch, operation):
+    client, tasks, bot, cfg = system
+    task = tasks.create('Learn network firewall')
+    monkeypatch.setattr(main.ai, 'review_tasks', AsyncMock(return_value=output(task)))
+    pause = AsyncMock()
+    monkeypatch.setattr(main.asyncio, 'sleep', pause)
+    bot.send_message.side_effect = [
+        {'ok': True, 'result': {'message_id': 49}},
+        {'ok': True, 'result': {'message_id': 50}},
+        {'ok': False},
+        {'ok': True, 'result': {'message_id': 51}},
+    ]
+    headers = {'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}
+    assert client.post('/telegram/webhook', headers=headers, json={'update_id': 740,
+        'message': {'message_id': 48, 'chat': {'id': 123}, 'text': '/reviewtasks'}}).status_code == 200
+    pause.assert_not_awaited()
+    token = main.db.get_update(740)['messages'][1]['task_review']
+    payload = {'update_id': 741, 'callback_query': {'id': 'expiry',
+        'data': 'taskreview:' + operation + ':' + token,
+        'message': {'message_id': 50, 'chat': {'id': 123}, 'text': 'preview'}}}
+    assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 502
+    pause.assert_not_awaited()
+    bot.request.assert_not_awaited()
+    async def wait_then_check(seconds):
+        assert seconds == 7
+        bot.request.assert_not_awaited()
+    pause.side_effect = wait_then_check
+    assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 200
+    pause.assert_awaited_once_with(7)
+    bot.request.assert_any_await('deleteMessage', {'chat_id': 123, 'message_id': 51})
+    assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 200
+    pause.assert_awaited_once()
+    assert bot.send_message.await_count == 4
+    assert tasks.list_open()[0]['project'] == ('ispm' if operation == 'apply' else None)
