@@ -1663,3 +1663,81 @@ def test_owner_task_effort_drives_proposal_without_ai_estimate(setup):
     assert state['minutes'] == 120 and state['duration_source'] == 'owner'
     planner.ai.estimate_duration.assert_not_awaited()
     calendar.insert.assert_not_awaited()
+
+
+@pytest.mark.parametrize('finish', ['approve', 'postpone', 'reject'])
+def test_explicit_batch_continues_after_quiet_hours_without_forcing_tick(setup, finish):
+    planner, task, calendar, bot = setup
+    late = NOW.replace(hour=21, minute=25)
+    other = planner.db.create_task('Next requested chapter', NOW + timedelta(days=3), None, NOW)
+    unrelated = planner.db.create_task('Automatic backlog', None, None, NOW)
+    planner.update(unrelated['id'], lambda old: {'status': 'queued', 'requested_minutes': 30})
+    ids = [task['id'], other['id']]
+    planner.request_proposals(ids, minutes=90, immediate=True)
+    asyncio.run(planner.tick(late, force_proposal=True))
+    first = planner.get(task['id'])
+    assert first['status'] == 'proposed'
+    asyncio.run(planner.callback(finish, task['id'], first['token'], 50))
+    # New service instance models process restart / the next scheduler invocation.
+    planner = LearningCalendar(planner.db, calendar, bot, planner.settings)
+    asyncio.run(planner.tick(late))
+    state = planner.get(other['id'])
+    assert state['status'] == 'proposed' and state['delivery'] == 'proposal_sent'
+    assert state['minutes'] == 90 and state['duration_source'] == 'owner'
+    assert datetime.fromisoformat(state['start']).date() > late.date()
+    assert calendar.insert.await_count == int(finish == 'approve')
+    # Repeated ticks do not replay an already-delivered preview or book it.
+    count = bot.send_message.await_count
+    asyncio.run(planner.tick(late))
+    assert bot.send_message.await_count == count
+    asyncio.run(planner.callback('reject', other['id'], state['token'], 50))
+    result = asyncio.run(planner.tick(late))
+    assert result['quiet_hours'] is True
+    assert planner.get(unrelated['id'])['status'] == 'queued'
+    assert calendar.insert.await_count == int(finish == 'approve')
+
+
+def test_quiet_hours_preserve_automatic_backlog_without_owner_request(setup):
+    planner, task, calendar, bot = setup
+    planner.update(task['id'], lambda old: {'status': 'queued', 'requested_minutes': 90})
+    result = asyncio.run(planner.tick(NOW.replace(hour=21, minute=25)))
+    assert result['quiet_hours'] is True
+    assert planner.get(task['id'])['status'] == 'queued'
+    bot.send_message.assert_not_awaited()
+    calendar.insert.assert_not_awaited()
+
+
+
+def test_quiet_batch_recovers_rejected_delivery_without_regenerating_plan(setup):
+    planner, task, calendar, bot = setup
+    late = NOW.replace(hour=22)
+    planner.request_proposals([task['id']], minutes=90, immediate=True)
+    bot.send_message.return_value = {'ok': False}
+    with pytest.raises(CalendarError, match='will be retried'):
+        asyncio.run(planner.tick(late))
+    pending = planner.get(task['id'])
+    assert pending['status'] == 'proposed' and pending['delivery'] == 'proposal_pending'
+    bot.send_message.return_value = {'ok': True, 'result': {'message_id': 50}}
+    planner = LearningCalendar(planner.db, calendar, bot, planner.settings)
+    asyncio.run(planner.tick(late))
+    sent = planner.get(task['id'])
+    assert sent['token'] == pending['token'] and sent['start'] == pending['start']
+    assert sent['delivery'] == 'proposal_sent'
+    calendar.insert.assert_not_awaited()
+
+
+def test_replacing_explicit_batch_does_not_resume_old_members_at_night(setup):
+    planner, task, calendar, bot = setup
+    late = NOW.replace(hour=22)
+    other = planner.db.create_task('Replacement request', None, None, NOW)
+    planner.request_proposals([task['id']], minutes=90, immediate=True)
+    planner.request_proposals([other['id']], minutes=30, immediate=True)
+    asyncio.run(planner.tick(late))
+    state = planner.get(other['id'])
+    assert state['status'] == 'proposed' and state['minutes'] == 30
+    assert planner.get(task['id'])['status'] == 'queued'
+    asyncio.run(planner.callback('reject', other['id'], state['token'], 50))
+    result = asyncio.run(planner.tick(late))
+    assert result['quiet_hours'] is True
+    assert planner.get(task['id'])['status'] == 'queued'
+    calendar.insert.assert_not_awaited()

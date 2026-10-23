@@ -378,3 +378,13 @@ Accept **Confirm schedule** to book each block, or adjust/defer it. No task
 deadline changes and no Calendar writes occur merely from the nightly job.
 This cloud job requires deployment and Calendar activation before it can run while
 the computer is off. Local tests do not prove cloud scheduling or Telegram delivery.
+
+
+### Owner-requested batches during quiet hours
+
+An explicit scheduling request covers the entire selected batch. After confirming,
+deferring or rejecting one member, the next requested task receives its own approval
+preview even during quiet hours. The durable batch selection also survives worker
+restarts and delivery retries. Only the active requested member can continue this way;
+unrelated automatic proposals remain paused. Every Calendar booking still requires
+its own confirmation, with the same work-hour, deadline, conflict and workload checks.
