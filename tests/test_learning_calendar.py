@@ -1553,3 +1553,16 @@ def test_checkins_run_after_cutoff_without_new_proposals(setup, finish):
     assert bot.send_message.await_count == 2
     assert planner.get(queued['id']) is None
     calendar.insert.assert_awaited_once()
+
+
+def test_owner_task_effort_drives_proposal_without_ai_estimate(setup):
+    planner, task, calendar, _ = setup
+    from chronos.tasks import TaskService
+    TaskService(planner.db, planner.settings.tz).edit(task['id'], task['title'], datetime.fromisoformat(task['due_at']), task['project'],
+                           {"estimated_minutes": 120})
+    planner.ai = AsyncMock()
+    asyncio.run(planner.tick(NOW))
+    state = planner.get(task['id'])
+    assert state['minutes'] == 120 and state['duration_source'] == 'owner'
+    planner.ai.estimate_duration.assert_not_awaited()
+    calendar.insert.assert_not_awaited()

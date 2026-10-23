@@ -204,3 +204,18 @@ def test_display_dates_omit_year_without_changing_task():
     assert task["title"] == "Confirm coverage for 2026-10-05"
     assert task["due_at"].startswith("2026-")
     assert display_task_title("Version 2026-99-99") == "Version 2026-99-99"
+
+
+def test_effort_is_persisted_but_not_rendered(service):
+    task = service.create("Study graph algorithms", timing={"estimated_minutes": 120, "content": "Past exams"})
+    stored = service.get_open_by_id(task["id"])
+    assert stored["timing"]["estimated_minutes"] == 120
+    text = format_tasks([stored], TZ)
+    assert "Past exams" in text
+    assert "120" not in text and "estimated_minutes" not in text
+
+
+@pytest.mark.parametrize("value", [0, -1, True, "120", 1.5, 10081])
+def test_effort_rejects_invalid_values(value):
+    with pytest.raises(ValueError):
+        normalize_timing({"estimated_minutes": value})
