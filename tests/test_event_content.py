@@ -126,3 +126,50 @@ def test_new_explicit_content_request_does_not_reuse_old_target(store, monkeypat
     run('修改 New 的內容為 new detail', update=2)
     assert edit.await_args.args[0]['id'] == new['id']
     assert main.tasks.get_open_by_id(old['id'])['title'] == 'Old'
+
+
+@pytest.mark.parametrize('details', [None, 'Room 301; bring a calculator', 'SOURCE'])
+def test_exam_preview_omits_source_and_preserves_calendar_description(store, monkeypatch, details):
+    now = datetime.now(main.settings.tz)
+    start = (now + timedelta(days=(5 - now.weekday()) % 7 + 7)).replace(hour=13, minute=10, second=0, microsecond=0)
+    source = '10/28 (三) 下午 1:10~4:05 圖論演算法期中考'
+    details = source if details == 'SOURCE' else details
+    classify(monkeypatch, action='event_create', title='Graph Algorithms Midterm', start=start,
+             end=start + timedelta(minutes=175), event_category='exam', content=details)
+    message = run(source)['messages'][0]
+    assert 'Graph Algorithms Midterm' in message['text']
+    assert '13:10–16:05 · 175 min' in message['text']
+    assert '<b>Category</b> exam' in message['text']
+    assert source not in message['text']
+    if details and details != source:
+        assert details in message['text']
+    assert store.list_open_tasks() == []
+    bind_free_message(store, 123, 20, message)
+    calendar = AsyncMock()
+    calendar.event.return_value = None
+    calendar.busy.return_value = []
+    calendar.insert.side_effect = lambda body: body
+    asyncio.run(free_booking_callback(store, calendar, main.settings, 123, 20,
+        message['free_booking'], 'allow'))
+    body = calendar.insert.await_args.args[0]
+    assert body['colorId'] == EVENT_COLORS['exam']
+    assert body['extendedProperties']['private']['chronosEventCategory'] == 'exam'
+    assert source in body['description']
+    if details:
+        assert details in body['description']
+
+
+def test_exam_classifier_contract(monkeypatch):
+    from chronos.intents import Intent
+    ai = ExternalAI(Settings(_env_file=None))
+    output = Intent(action='event_create', title='Graph Algorithms Midterm', event_category='exam',
+                    start=datetime.now(main.settings.tz) + timedelta(days=1), minutes=175)
+    generate = AsyncMock(return_value=output)
+    monkeypatch.setattr(ai, '_generate_output', generate)
+    result = asyncio.run(ai.classify_intent('圖論演算法期中考', [], datetime.now(main.settings.tz)))
+    assert result.event_category == 'exam'
+    prompt = generate.await_args.args[0]
+    assert 'category exam, never contest' in prompt
+    assert 'Preparing or studying for an exam remains task_create' in prompt
+    assert 'competitions such as AtCoder remain contest' in prompt
+    assert 'do not repeat the title, date, time, duration or original input' in prompt

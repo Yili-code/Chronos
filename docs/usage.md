@@ -73,3 +73,6 @@
 「以後照這樣做」只有在回覆的卡片明確列出兩項建議時才能沿用；缺少上下文就會追問。語意解析使用已設定的 Gemini，輸入與該課已有偏好／原卡片兩項內容會傳給模型；失敗或格式不合格時不修改偏好或進度。一般進度沿用原流程，不新增 AI 呼叫。保存前再次核對偏好，避免覆蓋解析期間的新設定。十項合成案例及限制見 [辨識驗證](audits/course-habit-intents.md)。
 
 使用 `/coursehabit competitive-programming` 查看偏好；`/coursehabit competitive-programming | 複習本週內容 | 完成十題` 修改；`/coursehabit competitive-programming | off` 停用。修改只影響之後建議，已送出的卡片保留原內容。只輸入 `/coursehabit` 可查看所有課程代碼。偏好保存在目前資料庫；不跨獨立部署共用。
+
+
+新增指定時段的考試會建立 Calendar 確認卡片，分類為 `exam`；準備或複習考試仍是待辦，競賽則使用 `contest`。卡片保留英文標題、日期、起訖時間、時長、分類與額外備註，不重複附上原始輸入。確認後，Calendar 描述仍保留原始輸入供追溯；按下 Allow 前不會寫入日曆。
