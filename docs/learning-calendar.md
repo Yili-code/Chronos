@@ -11,6 +11,16 @@ Calendar only after YiLi presses **Confirm schedule**, and ask for the outcome a
 event ends. The five-minute deadline scheduler also drives this workflow, so a
 missed webhook tick recovers without leaving the computer on.
 
+You can request several existing tasks together, for example:
+`將 task 3, 4, 5 先排到 calendar 中，每個預估一個半小時`.
+Chronos resolves current list positions to permanent task IDs and queues all three
+in the requested order, with 90 minutes per task. Batches support up to 20 tasks;
+an explicit work-block duration must be 15–180 minutes. Each block is proposed
+and confirmed separately, with fresh Calendar conflict checks before booking.
+Ambiguous matches still ask which task you mean. If any selected task is closed,
+already booked, awaiting feedback or managed by a backward plan, the batch is
+not queued; existing plans are preserved.
+
 ## Owner rules
 
 - Work blocks start at or after 09:00 and end at or before 21:00, Asia/Taipei.

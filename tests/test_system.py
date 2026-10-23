@@ -77,7 +77,7 @@ def test_creation_shows_updated_list_and_retries_only_undelivered_list(system, t
     assert len(service.list_open()) == 4
     assert bot.send_message.await_count == 3
     card, failed_list, retried_list = bot.send_message.await_args_list
-    assert card.args[1].startswith("<b>Task created</b>")
+    assert card.args[1].startswith("<b>I have added it, Sir.</b>")
     assert failed_list.args[1] == retried_list.args[1]
     assert "<b>Course scope</b>" in retried_list.args[1]
     assert "Check operating system class scope" in retried_list.args[1].split("<b>Course scope</b>")[1]
@@ -290,17 +290,17 @@ def test_webhook_auth_and_commands(system):
     assert bot.send_message.await_args_list[-2].args[1].startswith('<b>Updated · Task 1</b>')
     assert bot.send_message.await_args_list[-1].args[1].startswith('<b>Tasks</b>')
     assert send('/done 1').status_code == 200
-    assert bot.send_message.call_args.args[1] == 'Completed Test task\n\nNo open tasks. All clear.'
+    assert bot.send_message.call_args.args[1] == 'Completed Test task\n\nNo open tasks, Sir. A welcome state of affairs.'
     assert service.list_open() == []
     assert send('/done 3').status_code == 200
-    assert bot.send_message.call_args.args[1] == 'Task 3 not found.\n\nNo open tasks. All clear.'
+    assert bot.send_message.call_args.args[1] == 'Task 3 not found.\n\nNo open tasks, Sir. A welcome state of affairs.'
     parse_count = main.ai.parse.await_count
     assert send('/reschedule 4 tomorrow').status_code == 200
-    assert bot.send_message.call_args.args[1] == 'Unknown command. Use /info to see available commands.'
+    assert bot.send_message.call_args.args[1] == 'I could not recognise that request, Sir. Please use /info for the available options.'
     assert main.ai.parse.await_count == parse_count
     for removed in ('/prepare 27', '/draft 27', '/preparation_budget'):
         assert send(removed).status_code == 200
-        assert bot.send_message.call_args.args[1] == 'Unknown command. Use /info to see available commands.'
+        assert bot.send_message.call_args.args[1] == 'I could not recognise that request, Sir. Please use /info for the available options.'
     assert main.ai.parse.await_count == parse_count
     service.create('Draft roadmap')
     main.ai.edit = AsyncMock(return_value=ParsedTask(
@@ -696,7 +696,7 @@ def test_clear_requires_button_confirmation_and_deletes_every_task(system):
         'id': 'clear-1', 'data': 'clear:confirm', 'message': {'chat': {'id': 123}}}}
     assert client.post('/telegram/webhook', headers=headers, json=callback).status_code == 200
     assert service.list_open() == []
-    assert bot.send_message.call_args.args[1] == 'Deleted 2 tasks.\n\nNo open tasks. All clear.'
+    assert bot.send_message.call_args.args[1] == 'Deleted 2 tasks.\n\nNo open tasks, Sir. A welcome state of affairs.'
     bot.answer_callback_query.assert_awaited_with('clear-1')
     for _ in range(2):
         assert client.post('/telegram/webhook', headers=headers, json=callback).status_code == 200
@@ -789,3 +789,27 @@ def test_course_no_record_webhook_only_sends_acknowledgement(system):
     bot.send_message.assert_awaited_once()
     assert bot.send_message.await_args.args[1] == "收到"
     main.ai.classify_intent.assert_not_awaited()
+
+
+def test_batch_acknowledgement_delivers_once_and_keeps_learning_trigger(system, monkeypatch):
+    from chronos.tasks import ParsedTask
+    client, service, bot, config = system
+    config.enable_learning_calendar = True
+    calendar = AsyncMock()
+    monkeypatch.setattr(main, "learning_calendar", lambda: calendar)
+    monkeypatch.setattr(main.ai, "parse_many", AsyncMock(return_value=[ParsedTask("First"), ParsedTask("Second")]))
+    payload = {"update_id": 990021, "message": {"message_id": 990020,
+               "chat": {"id": 123}, "text": "/addplaceholder"}}
+    # Use a natural creation request through the normal prepared-action path.
+    original = main.prepare_message
+    async def prepare(text, **kwargs):
+        return await original("Create two tasks", create_only=True, **kwargs)
+    monkeypatch.setattr(main, "prepare_message", prepare)
+    headers = {"X-Telegram-Bot-Api-Secret-Token": "test-hook"}
+    assert client.post("/telegram/webhook", headers=headers, json=payload).status_code == 200
+    assert client.post("/telegram/webhook", headers=headers, json=payload).status_code == 200
+    assert len(service.list_open()) == 2
+    assert bot.send_message.await_count == 1
+    assert "I have added 2 tasks, Sir." in bot.send_message.await_args.args[1]
+    assert len(bot.send_message.await_args.kwargs["reply_markup"]["inline_keyboard"]) == 2
+    calendar.tick.assert_awaited()

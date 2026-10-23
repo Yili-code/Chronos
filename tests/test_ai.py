@@ -5,7 +5,7 @@ from datetime import datetime
 import httpx
 import pytest
 
-from chronos.ai import AIError, ExternalAI
+from chronos.ai import AIError, ExternalAI, relative_date_reference
 from chronos.settings import Settings
 
 
@@ -14,9 +14,91 @@ def config(**changes):
                     gemini_api_key="test-secret", gemini_model="test-model", **changes)
 
 
+@pytest.mark.parametrize("today,next_monday,next_friday,day_after", [
+    ("2026-10-23", "2026-10-26", "2026-10-30", "2026-10-25"),
+    ("2026-10-25", "2026-10-26", "2026-10-30", "2026-10-27"),
+    ("2026-10-26", "2026-11-02", "2026-11-06", "2026-10-28"),
+    ("2026-12-31", "2027-01-04", "2027-01-08", "2027-01-02"),
+])
+def test_relative_date_references_follow_iso_weeks_and_year_rollover(today, next_monday, next_friday, day_after):
+    reference = relative_date_reference(datetime.fromisoformat(today + "T12:00:00+08:00"))
+    assert reference["今天/today"] == today
+    assert reference["下週一/next Monday"] == next_monday
+    assert reference["下週五/next Friday"] == next_friday
+    assert reference["後天/day after tomorrow"] == day_after
+
+
 def test_default_model_is_flash_lite(monkeypatch):
     monkeypatch.delenv("CHRONOS_GEMINI_MODEL", raising=False)
     assert Settings(_env_file=None).gemini_model == "gemini-3.5-flash-lite"
+
+
+def test_edit_rejects_silently_omitted_content_operation(monkeypatch):
+    operations = {name: {"op": "keep", "value": None} for name in
+                  ("title", "due_at", "project", "due_date", "scheduled", "event", "uncertain")}
+    def handler(request):
+        payload = json.loads(request.content)
+        assert "content" in payload["generationConfig"]["responseJsonSchema"]["required"]
+        return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": json.dumps(operations)}]}}]})
+    mock_provider(monkeypatch, handler)
+    with pytest.raises(AIError, match="invalid response"):
+        asyncio.run(ExternalAI(config()).edit({"title": "Report", "due_at": None, "project": None},
+                                               "內容改成剩下兩頁"))
+
+
+@pytest.mark.parametrize("details", [
+    {"start": "2026-10-24T20:00:00+08:00", "end": None, "minutes": 180, "question": None},
+    {"start": None, "end": None, "minutes": None, "question": "明天幾點開始？持續多久？"},
+])
+def test_incomplete_event_timing_gets_focused_extraction(monkeypatch, details):
+    payloads = []
+    def handler(request):
+        payloads.append(json.loads(request.content))
+        result = ({"action": "event_create", "title": "AtCoder contest", "event_category": "contest"}
+                  if len(payloads) == 1 else details)
+        return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": json.dumps(result)}]}}]})
+    mock_provider(monkeypatch, handler)
+    ai = ExternalAI(config())
+    intent = asyncio.run(ai.classify_intent("明天晚上八點參加 AtCoder 比賽，三小時", [],
+        datetime.fromisoformat("2026-10-23T15:00:00+08:00")))
+    assert len(payloads) == 2
+    assert intent.action == "event_create" and intent.title == "AtCoder contest"
+    assert intent.minutes == details["minutes"] and intent.question == details["question"]
+    assert json.loads(payloads[1]["contents"][0]["parts"][0]["text"])["instruction"] == "明天晚上八點參加 AtCoder 比賽，三小時"
+    if details["start"]:
+        assert intent.start.isoformat() == details["start"]
+    else:
+        assert intent.start is None
+
+
+def test_complete_event_does_not_make_another_provider_call(monkeypatch):
+    calls = []
+    def handler(request):
+        calls.append(request)
+        result = {"action": "event_create", "title": "Meeting", "event_category": "meeting",
+                  "start": "2026-10-24T14:00:00+08:00", "minutes": 60}
+        return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": json.dumps(result)}]}}]})
+    mock_provider(monkeypatch, handler)
+    intent = asyncio.run(ExternalAI(config()).classify_intent("明天下午兩點開會一小時", [],
+        datetime.fromisoformat("2026-10-23T15:00:00+08:00")))
+    assert intent.minutes == 60 and len(calls) == 1
+
+
+def test_preferences_are_fresh_data_without_replacing_the_request(monkeypatch):
+    saved = {"study_time": "Prefer evenings"}
+    payloads = []
+    def handler(request):
+        payloads.append(json.loads(request.content))
+        return valid_response()
+    mock_provider(monkeypatch, handler)
+    ai = ExternalAI(config(), preference_source=lambda: dict(saved))
+    asyncio.run(ai.parse("Read database chapter 1"))
+    first = payloads[0]["contents"][0]["parts"]
+    assert first[0]["text"] == "Read database chapter 1"
+    assert json.loads(first[1]["text"])["owner_preferences"] == saved
+    saved.clear()
+    asyncio.run(ai.parse("Read database chapter 2"))
+    assert len(payloads[1]["contents"][0]["parts"]) == 1
 
 
 def mock_provider(monkeypatch, handler):
@@ -65,6 +147,7 @@ def test_external_edit_applies_explicit_field_operations(monkeypatch):
         assert "Preserve every field the instruction does not change" in prompt
         assert "keep/clear must use null values" in prompt
         return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": json.dumps({
+            "content": {"op": "keep", "value": None},
             "title": {"op": "keep", "value": None},
             "due_at": {"op": "clear", "value": None},
             "due_date": {"op": "set", "value": "2026-09-18"},
@@ -281,3 +364,54 @@ def test_parse_many_still_rejects_provider_batch_over_limit(monkeypatch):
         {"content": {"parts": [{"text": json.dumps({"tasks": items})}]}}]}))
     with pytest.raises(AIError):
         asyncio.run(ExternalAI(config()).parse_many("Create 21 tasks"))
+
+
+def test_capture_effort_contract_and_result(monkeypatch):
+    def handler(request):
+        payload = json.loads(request.content)
+        prompt = payload["systemInstruction"]["parts"][0]["text"]
+        assert "timing.estimated_minutes" in prompt
+        assert "Never put effort estimates in title, content" in prompt
+        assert "content/progress in concise natural English" in prompt
+        return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": json.dumps({
+            "title": "Study graph theory midterm past exams", "due_at": None, "project": None,
+            "timing": {"estimated_minutes": 120}})}]}}]})
+    mock_provider(monkeypatch, handler)
+    task = asyncio.run(ExternalAI(config()).parse("Study graph theory midterm past exams, about two hours"))
+    assert task.timing["estimated_minutes"] == 120
+    assert not task.timing.get("content")
+
+
+def test_effort_edit_operations_are_typed():
+    from chronos.ai import EffortEdit
+    assert EffortEdit(op="set", value=120).value == 120
+    for op, value in [("set", None), ("keep", 120), ("clear", 120), ("set", "120")]:
+        with pytest.raises(ValueError):
+            EffortEdit(op=op, value=value)
+
+
+@pytest.mark.parametrize("combined", ["OS midterm 10/30 09:20 到十一點", ""])
+def test_event_timing_extraction_retains_clarification_context(monkeypatch, combined):
+    payloads = []
+    context = {"clarification": {"instruction": "OS midterm 10/30 09:20",
+               "question": "請提供結束時間", "parsed_intent": {"action": "clarify"}}}
+    def handler(request):
+        payload = json.loads(request.content)
+        payloads.append(payload)
+        if len(payloads) == 1:
+            result = {"action": "event_create", "title": "OS Midterm", "event_category": "exam",
+                      "instruction": combined}
+        else:
+            supplied = json.loads(payload["contents"][0]["parts"][0]["text"])
+            assert supplied["context"] == context
+            assert supplied["current_message"] == "到十一點"
+            assert supplied["instruction"] == (combined or "到十一點")
+            result = {"start": "2026-10-30T09:20:00+08:00", "end": "2026-10-30T11:00:00+08:00",
+                      "minutes": None, "question": None}
+        return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": json.dumps(result)}]}}]})
+    mock_provider(monkeypatch, handler)
+    intent = asyncio.run(ExternalAI(config()).classify_intent("到十一點", [],
+        datetime.fromisoformat("2026-10-23T16:00:00+08:00"), context=context))
+    assert len(payloads) == 2
+    assert intent.question is None and intent.event_category == "exam"
+    assert (intent.end-intent.start).total_seconds() == 100*60

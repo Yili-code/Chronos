@@ -307,7 +307,7 @@ def test_firestore_clear_callback_does_not_read_after_writing(monkeypatch):
 
     receipt = db.process_update(102, main.clear_tasks_reply)
 
-    assert receipt == {"reply": "Deleted 1 task.\n\nNo open tasks. All clear.", "delivered": False}
+    assert receipt == {"reply": "Deleted 1 task.\n\nNo open tasks, Sir. A welcome state of affairs.", "delivered": False}
     assert service.list_open() == []
 
 

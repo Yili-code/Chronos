@@ -16,6 +16,59 @@ from chronos import main
 NOW = datetime.fromisoformat("2026-10-19T09:00:00+08:00")
 
 
+def test_batch_owner_duration_survives_sequential_approval_and_restart(setup):
+    planner, task, calendar, bot = setup
+    others = [planner.db.create_task(f'Lecture {i}', NOW + timedelta(days=3), None, NOW) for i in range(2)]
+    ids = [others[1]['id'], task['id'], others[0]['id']]
+    reply, queued = planner.request_proposals(ids, minutes=90)
+    assert queued and '90 minutes each' in reply
+    occupied = []
+    async def busy(*args):
+        return list(occupied)
+    calendar.busy.side_effect = busy
+    planner = LearningCalendar(planner.db, calendar, bot, planner.settings)
+    for index, task_id in enumerate(ids):
+        asyncio.run(planner.tick(NOW))
+        state = planner.get(task_id)
+        assert state['status'] == 'proposed'
+        assert state['minutes'] == 90 and state['duration_source'] == 'owner'
+        assert calendar.insert.await_count == index
+        start, end = (datetime.fromisoformat(state[k]) for k in ('start', 'end'))
+        assert end - start == timedelta(minutes=90)
+        assert all(end <= a or start >= b for a, b in occupied)
+        asyncio.run(planner.callback('approve', task_id, state['token'], 50))
+        assert planner.get(task_id)['status'] == 'scheduled'
+        assert calendar.insert.await_count == index + 1
+        occupied.append((start, end))
+    assert [int(call.args[0]['extendedProperties']['private']['chronosTask'])
+        for call in calendar.insert.await_args_list] == ids
+
+
+@pytest.mark.parametrize('status', ['scheduled', 'awaiting_feedback', 'creating', 'backward_managed'])
+def test_batch_rejects_ineligible_member_without_changing_other_plans(setup, status):
+    planner, task, calendar, _ = setup
+    other = planner.db.create_task('Other', None, None, NOW)
+    planner.update(task['id'], lambda _: {'status': 'proposed', 'token': 'original', 'minutes': 30})
+    planner.update(other['id'], lambda _: {'status': status, 'token': 'blocked'})
+    before = [planner.get(i) for i in (task['id'], other['id'])]
+    _, queued = planner.request_proposals([task['id'], other['id']], minutes=90)
+    assert not queued
+    assert [planner.get(i) for i in (task['id'], other['id'])] == before
+    assert planner.db.get_task_action_state('learning:proposal-queue') is None
+    calendar.insert.assert_not_awaited()
+
+
+def test_batch_retires_old_proposal_and_cannot_approve_stale_token(setup):
+    planner, task, calendar, _ = setup
+    asyncio.run(planner.tick(NOW))
+    old = planner.get(task['id'])
+    other = planner.db.create_task('Other', None, None, NOW)
+    planner.request_proposals([other['id'], task['id']], minutes=90)
+    asyncio.run(planner.callback('approve', task['id'], old['token'], 50))
+    calendar.insert.assert_not_awaited()
+    assert planner.get(task['id'])['requested_minutes'] == 90
+
+
 def test_plan_groups_pending_work_and_separates_booked_tasks(setup):
     planner, task, _, _ = setup
     other = planner.db.create_task('Remaining chapter', None, None, NOW)
@@ -190,7 +243,7 @@ def test_deadline_plan_button_prepares_and_displays_proposal(system, monkeypatch
 
     assert response.status_code == 200
     assert "is next" in bot.send_message.await_args_list[-2].args[1]
-    assert "<b>Execution plan</b>" in bot.send_message.await_args_list[-1].args[1]
+    assert "<b>Your proposed work session, Sir.</b>" in bot.send_message.await_args_list[-1].args[1]
     buttons = bot.send_message.await_args_list[-1].kwargs["reply_markup"]["inline_keyboard"]
     assert [button["text"] for row in buttons for button in row] == [
         "Confirm schedule", "Adjust plan", "Defer"]
@@ -278,7 +331,7 @@ def test_no_slot_and_calendar_error_do_not_silently_book(setup):
     calendar.busy.return_value = [(NOW, NOW + timedelta(days=7))]
     asyncio.run(planner.tick(NOW))
     assert planner.get(task["id"])["status"] == "no_slot"
-    assert "No viable execution window" in bot.send_message.await_args.args[1]
+    assert "I could not find a suitable work session, Sir." in bot.send_message.await_args.args[1]
     calendar.insert.assert_not_awaited()
 
 
@@ -1597,3 +1650,16 @@ def test_updated_notice_is_deleted_after_seven_seconds(system, monkeypatch):
     asyncio.run(main.deliver_learning_reply(123, 1234567, receipt))
     pause.assert_awaited_once_with(7)
     telegram.request.assert_awaited_with('deleteMessage', {'chat_id': 123, 'message_id': 987})
+
+
+def test_owner_task_effort_drives_proposal_without_ai_estimate(setup):
+    planner, task, calendar, _ = setup
+    from chronos.tasks import TaskService
+    TaskService(planner.db, planner.settings.tz).edit(task['id'], task['title'], datetime.fromisoformat(task['due_at']), task['project'],
+                           {"estimated_minutes": 120})
+    planner.ai = AsyncMock()
+    asyncio.run(planner.tick(NOW))
+    state = planner.get(task['id'])
+    assert state['minutes'] == 120 and state['duration_source'] == 'owner'
+    planner.ai.estimate_duration.assert_not_awaited()
+    calendar.insert.assert_not_awaited()

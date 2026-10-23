@@ -141,7 +141,10 @@ class LearningCalendar:
             if creating:
                 active = creating[0]
             elif not states.get(active) or states[active]["status"] not in phases | {"queued"}:
-                active = next((key for key, state in states.items() if state and state["status"] == "editing"), None)
+                active = next((key for key in queue.get("requested_task_ids", [])
+                    if states.get(key) and states[key]["status"] in phases | {"queued"}), None)
+                if active is None:
+                    active = next((key for key, state in states.items() if state and state["status"] == "editing"), None)
                 if active is None:
                     active = next((key for key, state in states.items() if state and state["status"] in phases), None)
             retired = list(queue.get("retire_message_ids", []))
@@ -183,21 +186,36 @@ class LearningCalendar:
 
     def request_proposal(self, task_id, *, immediate=False):
         """Atomically give an explicit owner request the next approval turn."""
+        return self.request_proposals([task_id], immediate=immediate)[0]
+
+    def request_proposals(self, task_ids, *, minutes=None, immediate=False):
+        """Queue an explicit batch atomically; each Calendar write still needs approval."""
+        task_ids = list(dict.fromkeys(task_ids))
+        if not 1 <= len(task_ids) <= 20 or any(type(i) is not int or i < 1 for i in task_ids):
+            raise ValueError("Select between 1 and 20 task IDs")
+        if minutes is not None and (type(minutes) is not int or not 15 <= minutes <= 180):
+            raise ValueError("Work blocks must be between 15 and 180 minutes")
         def request():
-            state = self.get(task_id) or {}
-            if state.get('status') == 'backward_managed':
-                return f'This task belongs to a backward plan. Use /backward progress {task_id} to review progress.'
+            tasks = self.db.list_open_tasks()
+            states = {i: self.get(i) or {} for i in dict.fromkeys([*(task['id'] for task in tasks), *task_ids])}
+            for task_id in task_ids:
+                if states[task_id].get('status') == 'backward_managed':
+                    return f'This task belongs to a backward plan. Use /backward progress {task_id} to review progress.', False
+            if not set(task_ids) <= {task['id'] for task in tasks}:
+                return "A selected task is no longer open. Nothing was queued.", False
             queue = self.db.get_task_action_state("learning:proposal-queue") or {}
             active = queue.get("active_task_id")
-            active_state = self.get(active) if active is not None else None
-            if state.get("status") in {"creating", "scheduled", "awaiting_feedback"}:
-                return "A work block is already scheduled or awaiting an outcome. Use the existing card first."
+            active_state = states.get(active)
+            for task_id in task_ids:
+                state = states[task_id]
+                if state.get("status") in {"creating", "scheduled", "awaiting_feedback"}:
+                    return "A work block is already scheduled or awaiting an outcome. Use the existing card first.", False
             if active_state and active_state.get("status") == "creating":
-                return f"Calendar confirmation for task #{active} is in progress. Try /plan {task_id} after it finishes."
+                return f"Calendar confirmation for task #{active} is in progress. Try again after it finishes.", False
             retired = list(queue.get("retire_message_ids", []))
             updates = {}
-            for task in self.db.list_open_tasks():
-                old = self.get(task["id"])
+            for task in tasks:
+                old = states[task['id']]
                 if not old or old.get("status") not in {"queued", "planning", "proposed", "editing", "no_slot"}:
                     continue
                 retired.extend(old[key] for key in ("message_id", "edit_message_id") if old.get(key))
@@ -206,22 +224,29 @@ class LearningCalendar:
                 for key in ("start", "end", "message_id", "edit_message_id"):
                     replacement.pop(key, None)
                 updates[task["id"]] = replacement
-            current = updates.get(task_id, state)
-            if current.get('duration_source') == 'nightly_ai':
-                current = dict(current)
-                for key in ('nightly_slot', 'nightly_batch', 'nightly_overview', 'nightly_reason',
-                            'duration_source', 'duration_estimate', 'requested_minutes'):
-                    current.pop(key, None)
+            for task_id in task_ids:
+                current = dict(updates.get(task_id, states[task_id]))
+                if current.get('duration_source') == 'nightly_ai':
+                    for key in ('nightly_slot', 'nightly_batch', 'nightly_overview', 'nightly_reason',
+                                'duration_source', 'duration_estimate', 'requested_minutes'):
+                        current.pop(key, None)
+                if minutes is not None:
+                    current.update(requested_minutes=minutes, duration_source='owner')
+                    current.pop('duration_estimate', None)
+                updates[task_id] = {**current, "status": "queued", "token": uuid4().hex}
             for key, replacement in updates.items():
                 self.db._save_task_action_state(f"learning:task:{key}", replacement)
-            self.db._save_task_action_state(f"learning:task:{task_id}",
-                {**current, "status": "queued", "token": uuid4().hex})
             self.db._save_task_action_state("learning:proposal-queue", {**queue,
-                "active_task_id": task_id, "retire_message_ids": list(dict.fromkeys(retired))})
+                "active_task_id": task_ids[0], "requested_task_ids": task_ids,
+                "retire_message_ids": list(dict.fromkeys(retired))})
             hour = datetime.now(self.settings.tz).hour
             timing = ("Preparing its execution plan" if immediate or self.settings.learning_start_hour <= hour < self.settings.learning_end_hour
                 else f"Execution planning resumes at {self.settings.learning_start_hour:02d}:00 after quiet hours")
-            return f"Task #{task_id} is next. {timing}; Calendar writing requires confirmation."
+            if len(task_ids) == 1:
+                return f"Task #{task_ids[0]} is next. {timing}; Calendar writing requires confirmation.", True
+            duration = f" ({minutes} minutes each)" if minutes is not None else ""
+            return (f"Queued {len(task_ids)} tasks{duration}: " + ", ".join(f"#{i}" for i in task_ids)
+                + f". {timing}; each Calendar block requires confirmation."), True
         return self.db._run_task_action(request)
 
     async def nightly_proposals(self, now=None):
@@ -301,6 +326,9 @@ class LearningCalendar:
                        if evidence.get("samples", 0) >= 3 else self.settings.learning_minutes)
             minutes = state.get("requested_minutes") or minutes
             source = state.get("duration_source") or ("profile" if evidence.get("samples", 0) >= 3 else "default")
+            owner_effort = (task.get("timing") or {}).get("estimated_minutes")
+            if owner_effort and source not in {"owner", "nightly_ai"}:
+                minutes, source = min(180, owner_effort), "owner"
             if is_course_scope_task(task) and source not in {"owner", "nightly_ai"}:
                 minutes, source = COURSE_SCOPE_MINUTES, "course_scope_rule"
             elif source not in {"owner", "nightly_ai"} and self.ai is not None:
@@ -355,13 +383,13 @@ class LearningCalendar:
 
     def proposal_content(self, task, state):
         if state["status"] == "no_slot":
-            text = (f"<b>No viable execution window</b>\n{escape(task['title'])}\n"
+            text = (f"<b>I could not find a suitable work session, Sir.</b>\n{escape(task['title'])}\n"
                     "No viable work block fits before the deadline within your fixed commitments and workload limits. "
                     "Change the deadline or duration, then use /plan again.")
             buttons = self.buttons(task["id"], state, [("retry", "Replan"), ("postpone", "Defer")])
         else:
             end = datetime.fromisoformat(state["end"]).astimezone(self.settings.tz)
-            text = (f"<b>Execution plan</b>\n{escape(task['title'])}\n"
+            text = (f"<b>Your proposed work session, Sir.</b>\n{escape(task['title'])}\n"
                     f"{display_time(state['start'], self.settings.tz)}–{end:%H:%M}")
             if state.get('duration_source') == 'nightly_ai':
                 estimate = state.get('duration_estimate', {}).get('estimated_minutes')
@@ -1045,7 +1073,7 @@ class LearningCalendar:
         await self.deliver_feedback(task, state)
 
     def feedback_content(self, task, state):
-        text = (f"<b>Execution check-in</b>\n\n{escape(task['title'])}\n"
+        text = (f"<b>How did the session go, Sir?</b>\n\n{escape(task['title'])}\n"
                 f"{display_time(state['start'], self.settings.tz)} · {state['minutes']} minutes planned\n\n"
                 "What is the outcome? Choose below.\n\n"
                 "Different duration? For 15 minutes completed, send\n"

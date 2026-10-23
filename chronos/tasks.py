@@ -4,6 +4,7 @@ from datetime import datetime, time, timedelta
 from html import escape
 from zoneinfo import ZoneInfo
 
+from .course_tags import COURSE_ID_TAGS
 from .repository import TaskRepository
 from .task_timing import normalize_timing, timing_details, urgent_deadline
 
@@ -271,7 +272,7 @@ def canonical_project(value: str) -> str:
 
 def format_tasks(tasks: list[dict], tz, project_aliases: dict[str, str] | None = None, *, now: datetime | None = None) -> str:
     if not tasks:
-        return "No open tasks. All clear."
+        return "No open tasks, Sir. A welcome state of affairs."
     sections = [("Tasks", []), ("Course scope", [])]
     for position, task in enumerate(tasks, start=1):
         section = sections[1 if is_course_scope_task(task) else 0][1]
@@ -346,7 +347,8 @@ def format_task(task: dict, tz, *, html: bool = False, now: datetime | None = No
     if task.get("planning_status") == "postponed":
         parts.append("Waiting for external conditions")
     if task.get("project"):
-        project = escape(str(task["project"])) if html else str(task["project"])
+        project = project_display_name(str(task["project"]))
+        project = escape(project) if html else project
         parts.append(f"#{project}")
     return " ".join(parts)
 
@@ -356,6 +358,8 @@ def project_display_name(project: str, aliases: dict[str, str] | None = None) ->
     configured = (aliases or {}).get(canonical)
     if configured:
         return configured
+    if project in COURSE_ID_TAGS:
+        return COURSE_ID_TAGS[project]
     if project == "資訊安全實務與管理":
         return "ISPM"
     if len(project) <= 16:

@@ -99,7 +99,7 @@ def test_scope_section_preserves_command_positions(tmp_path):
 def test_scope_only_list_has_no_empty_general_section():
     rendered = format_tasks([{"title": "Check security 10/15 course scope"}], TZ)
     assert rendered == "<b>Course scope</b>\n1. <b>Check security 10/15 course scope</b>"
-    assert format_tasks([], TZ) == "No open tasks. All clear."
+    assert format_tasks([], TZ) == "No open tasks, Sir. A welcome state of affairs."
 
 
 @pytest.mark.parametrize("title", [

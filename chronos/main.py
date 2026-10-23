@@ -28,6 +28,7 @@ from .tasks import (
     project_display_name,
 )
 from .telegram import TelegramClient
+from .reply_voice import creation_messages
 from .runtime_health import (
     RuntimeConfigurationError,
     configured_components,
@@ -41,8 +42,11 @@ from .reply_policy import is_no_change_reply
 from . import reminders
 from . import calendar_replan
 from .backward_planning import BackwardPlanner
-from .free_booking import bind_free_message, preview_free_event, free_booking_callback
+from .free_booking import bind_booking_request, bind_free_message, preview_free_event, free_booking_callback
 from . import task_review
+from . import course_habits
+from . import assignment_access
+from . import preferences
 from .evening_agenda import send_evening_agenda, tomorrow_agenda
 from .task_timing import display_time, task_sort_key, timing_details
 from .study_scheduler import tick_study, notify_study_failures
@@ -57,7 +61,8 @@ logger = logging.getLogger("chronos")
 db = create_database(settings)
 tasks = TaskService(db, settings.tz)
 ai_usage = AIUsageRecorder(db, settings.tz)
-ai = ExternalAI(settings, usage=ai_usage)
+ai = ExternalAI(settings, usage=ai_usage, preference_source=lambda:
+                preferences.read(db, settings.telegram_chat_id) if settings.telegram_chat_id is not None else {})
 telegram = TelegramClient(settings.telegram_bot_token)
 gmail = GmailClient(settings)
 google_calendar = GoogleCalendar(settings)
@@ -106,7 +111,8 @@ def record_course_progress_reply(
     prompt_id: int, message_id: int, text: str, *, local_date
 ) -> str | dict:
     """Record course progress and return only its acknowledgement."""
-    return db.record_course_reply(prompt_id, message_id, text, local_date=local_date)
+    remembered = course_habits.remember_reply(db, prompt_id, text)
+    return remembered or db.record_course_reply(prompt_id, message_id, text, local_date=local_date)
 
 
 def task_edit_keyboard(items: list[dict]) -> dict:
@@ -189,7 +195,7 @@ def clear_tasks_reply() -> str:
     # The clear operation runs inside the same Firestore transaction as the
     # update receipt. Firestore forbids reads after the first write, and the
     # post-clear state is already known without another query.
-    return f"Deleted {deleted} {noun}.\n\nNo open tasks. All clear."
+    return f"Deleted {deleted} {noun}.\n\nNo open tasks, Sir. A welcome state of affairs."
 
 
 @tracked_job(lambda: db)
@@ -627,6 +633,16 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
     if settings.telegram_chat_id and chat_id != settings.telegram_chat_id:
         raise HTTPException(status_code=403, detail="Unauthorized chat")
     update_id = update.update_id
+    if update.callback_query and update.callback_query.data == 'assignments:refresh':
+        receipt = db.get_update(update_id)
+        if receipt is None:
+            receipt = db.process_update(update_id, lambda: assignment_access.request_refresh(db, settings, chat_id, update_id))
+        await deliver_learning_reply(chat_id, update_id, receipt)
+        await telegram.answer_callback_query(update.callback_query.id)
+        for message in receipt.get('messages', []):
+            if message.get('assignment_refresh'):
+                await assignment_access.dispatch(db, settings, telegram, message['assignment_refresh'])
+        return {'ok': True}
     review_callback = re.fullmatch(r'taskreview:(open|(?:apply|cancel):[a-f0-9]{32})',
         update.callback_query.data or '') if update.callback_query else None
     if review_callback:
@@ -745,13 +761,16 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             except CalendarError:
                 reply = "Calendar could not confirm the result. Tap Allow again to check; no duplicate event will be created."
             receipt = db.process_update(update_id, lambda: reply)
+        if not free_callback and update.message:
+            bind_booking_request(db, chat_id, source_message.message_id, receipt)
         await deliver_learning_reply(chat_id, update_id, receipt)
         if free_callback:
             current = db.get_task_action_state("free:booking:" + free_callback[2])
             if (current and current.get("chat_id") == chat_id
                     and current.get("message_id") == source_message.message_id):
                 if current.get("status") == "booked":
-                    await delete_telegram_messages(chat_id, source_message.message_id)
+                    await delete_telegram_messages(chat_id, source_message.message_id,
+                        current.get("request_message_id"))
                 elif current.get("status") in {"cancelled", "expired", "conflict"}:
                     await telegram.request("editMessageReplyMarkup", {"chat_id": chat_id,
                         "message_id": source_message.message_id, "reply_markup": {"inline_keyboard": []}})
@@ -927,7 +946,9 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
     if update.callback_query:
         if receipt is None:
             data = update.callback_query.data
-            if data and re.fullmatch(r"image:\d+:\d+", data):
+            if data and re.fullmatch(r"chabit:[a-f0-9]{16}:[01]:(?:accept|skip)", data):
+                action = lambda: course_habits.respond(db, data, chat_id, source_message.message_id, datetime.now(settings.tz))
+            elif data and re.fullmatch(r"image:\d+:\d+", data):
                 from .image_deadlines import confirm_photo
                 action = lambda: confirm_photo(db, tasks, data, chat_id, datetime.now(settings.tz))
             elif data == "clear:confirm":
@@ -1003,13 +1024,17 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                     raise HTTPException(status_code=422, detail="Reply message id is required")
                 received_at = datetime.now(settings.tz)
                 received_date = received_at.date()
-                action = lambda: record_course_progress_reply(
+                habit_action = await course_habits.prepare_reply(
+                    db, ai, source_message.reply_to_message.message_id, text)
+                action = habit_action or (lambda: db.record_course_reply(
                     source_message.reply_to_message.message_id, source_message.message_id, text,
                     local_date=received_date,
-                )
+                ))
             else:
                 action = await prepare_message(text, update_id=update_id, chat_id=chat_id)
             receipt = db.process_update(update_id, action)
+    if update.message:
+        bind_booking_request(db, chat_id, source_message.message_id, receipt)
     help_callback = (
         update.callback_query is not None
         and re.fullmatch(
@@ -1087,11 +1112,15 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                 await learning_calendar().tick(force_proposal=True)
             except CalendarError:
                 logger.warning("Deadline study proposal deferred; check /plan or the next scheduler tick")
+    for message in receipt.get('messages', []):
+        if message.get('assignment_refresh'):
+            await assignment_access.dispatch(db, settings, telegram, message['assignment_refresh'])
     if settings.enable_learning_calendar and update.message and (
+        any(m.get("planning_requested") or m.get("task_created") for m in receipt.get("messages", [])) or
         receipt.get("reply", "").startswith("<b>Task created</b>") or (source_message.text or "").startswith(("/plan ", "/planedit ", "/taskupdate ", "/studyfeedback "))
     ):
         try:
-            await learning_calendar().tick()
+            await learning_calendar().tick(force_proposal=any(m.get("planning_requested") for m in receipt.get("messages", [])))
         except CalendarError:
             logger.warning("Learning calendar proposal deferred; check /plan or the next scheduler tick")
     return {"ok": True}
@@ -1226,8 +1255,10 @@ async def prepare_message(text: str, *, update_id: int | None = None, chat_id: i
                           bound_task_id: int | None = None, create_only: bool = False) -> Callable[[], str | dict]:
     """Resolve external input first; the returned action performs no async work."""
     normalized = text.strip()
+    if re.match(r'^/coursehabit(?:@[A-Za-z0-9_]+)?(?:\s|$)', normalized):
+        return lambda: course_habits.command(db, normalized)
     if not create_only and is_no_change_reply(normalized):
-        return lambda: "收到"
+        return lambda: "Understood, Sir."
     if create_only:
         try:
             parsed = await ai.parse_many(normalized)
@@ -1236,6 +1267,14 @@ async def prepare_message(text: str, *, update_id: int | None = None, chat_id: i
         parsed = task_review.defer_inferred_course_tags(parsed, normalized)
         return prepare_created_tasks(parsed, chat_id=chat_id)
     normalized = re.sub(r"^(/[A-Za-z_]+)@[A-Za-z0-9_]+(?=\s|$)", r"\1", normalized)
+    assignment_query = re.fullmatch(r'/assignments(?:\s+([a-z-]+))?(?:\s+([1-9][0-9]{0,5}))?', normalized)
+    if assignment_query:
+        course, page = assignment_query[1], int(assignment_query[2] or 1)
+        if course and course not in assignment_access.COURSES:
+            return lambda: '請使用目前課程代號，或直接說「資安課還有作業嗎？」。'
+        return lambda: assignment_access.query(db, settings, course=course, page=page)
+    if normalized == '/refreshassignments':
+        return lambda: assignment_access.request_refresh(db, settings, chat_id, update_id)
     if bound_task_id is not None and not normalized.startswith("/"):
         import sys
         from .intents import prepare
@@ -1496,7 +1535,7 @@ async def prepare_message(text: str, *, update_id: int | None = None, chat_id: i
         except ValueError as error:
             return lambda reply=str(error): reply
     else:
-        return lambda: "Unknown command. Use /info to see available commands."
+        return lambda: "I could not recognise that request, Sir. Please use /info for the available options."
     return prepare_created_task(parsed, chat_id=chat_id)
 
 
@@ -1509,16 +1548,16 @@ def prepare_created_tasks(parsed_tasks, *, chat_id=None):
     def create() -> dict:
         before = tasks.list_open()
         created = tasks.create_many(parsed_tasks)
-        messages = []
-        for task in created:
-            details = "\n".join(format_task_block(task, settings.tz, project_aliases=aliases))
-            messages.append(task_card(task, f"<b>Task created</b>\n{details}"))
+        messages = creation_messages(created, settings.tz, aliases, task_card, task_edit_keyboard)
         # Read once before writes, preserving the Firestore transaction contract.
         after = sorted([*before, *created], key=task_sort_key)
         suggestions = [suggestion for task in created if (suggestion := task_review.new_task_suggestion(
             db, task, [*before, *created], aliases, chat_id, datetime.now(settings.tz)))]
-        return message_bundle(*messages,
-            {"text": format_tasks(after, settings.tz, project_aliases=aliases), "parse_mode": "HTML"}, *suggestions)
+        # A batch acknowledgement already contains every newly created task.
+        # Keep the existing single-task list and its receipt/retry contract.
+        listing = ([{"text": format_tasks(after, settings.tz, project_aliases=aliases), "parse_mode": "HTML"}]
+                   if len(created) == 1 else [])
+        return message_bundle(*messages, *listing, *suggestions)
     return create
 
 
