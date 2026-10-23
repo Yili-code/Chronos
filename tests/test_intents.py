@@ -295,8 +295,11 @@ def test_legacy_card_edit_keeps_deterministic_path(system, monkeypatch):
     main.ai.classify_intent.assert_not_awaited()
 
 
-def test_batch_creation_is_atomic_and_replay_safe(store, monkeypatch):
-    text = "一次新增多筆 tasks 複習 database 第一章到第五章 需附上 hashtag"
+@pytest.mark.parametrize("text", [
+    "一次新增多筆 tasks 複習 database 第一章到第五章 需附上 hashtag",
+    "把資料庫第一章到第五章分成五個任務",
+])
+def test_batch_creation_is_atomic_and_replay_safe(store, monkeypatch, text):
     classify(monkeypatch, action="task_create", instruction="Review database chapters 1 to 5")
     parser = AsyncMock(return_value=[ParsedTask(f"Review database chapter {n}", project="database")
                                     for n in range(1, 6)])
