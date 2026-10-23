@@ -7,6 +7,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Callable, Iterator
 
+from .reply_policy import is_no_change_reply
 from .course_tracking import ProgressReportKind, ProgressSession, accept_reply, mark_missed_at_day_end
 from .course_tracking_store import session_from_firestore, session_to_firestore
 from .assignments import Assignment, to_record, from_record, set_deadline, owner_deadline_edit
@@ -326,6 +327,12 @@ class Database(TaskActions):
             row = connection.execute("SELECT * FROM tasks WHERE id = ?", (cursor.lastrowid,)).fetchone()
         return self._task_data(row)
 
+    def create_tasks(self, items: list[dict], created_at: datetime) -> list[dict]:
+        scope = self.connect() if self._transaction.get() is not None else self.transaction()
+        with scope:
+            return [self.create_task(item["title"], item.get("due_at"), item.get("project"),
+                                     created_at, item.get("timing")) for item in items]
+
     def continue_task(self, task, title, now):
         """Close a session task and create its successor in the caller's transaction."""
         successor = self.create_task(title, datetime.fromisoformat(task['due_at']) if task.get('due_at') else None,
@@ -636,6 +643,8 @@ class Database(TaskActions):
             if row is None:
                 return "這則回覆未對應到課後進度問題。請直接回覆原始訊息。"
             session = session_from_firestore(dict(row))
+            if is_no_change_reply(text):
+                return "收到"
             if local_date is not None:
                 expired = mark_missed_at_day_end(session, local_date=local_date)
                 if expired != session:

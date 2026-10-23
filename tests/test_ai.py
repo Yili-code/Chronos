@@ -242,3 +242,32 @@ def test_event_title_translation_uses_structured_output(monkeypatch):
     mock_provider(monkeypatch,handler)
     result=asyncio.run(ExternalAI(config()).calendar_event_title('和朋友約咖啡廳聊天'))
     assert result.title=='Coffee with friends'
+
+
+def test_parse_many_chapters_and_metadata_contract(monkeypatch):
+    def handler(request):
+        payload = json.loads(request.content)
+        schema = payload["generationConfig"]["responseJsonSchema"]
+        assert "tasks" in schema["properties"]
+        prompt = payload["systemInstruction"]["parts"][0]["text"]
+        assert "one task per chapter" in prompt
+        assert "neither title nor content" in prompt
+        items = [{"title": f"Review database chapter {n}", "project": "database",
+                  "due_at": None, "timing": {}} for n in range(1, 6)]
+        return httpx.Response(200, json={"candidates": [{"content": {"parts": [
+            {"text": json.dumps({"tasks": items})}]}}]})
+    mock_provider(monkeypatch, handler)
+    result = asyncio.run(ExternalAI(config()).parse_many(
+        "一次新增多筆 tasks 複習 database 第一章到第五章 需附上 hashtag"))
+    assert [item.title for item in result] == [f"Review database chapter {n}" for n in range(1, 6)]
+    assert all(item.project == "database" for item in result)
+    assert all(not item.timing.get("content") for item in result)
+
+
+@pytest.mark.parametrize("items", [[], [{"title": "Valid", "project": None, "due_at": None, "timing": {}},
+                                      {"title": "", "project": None, "due_at": None, "timing": {}}]])
+def test_parse_many_rejects_invalid_whole_batch(monkeypatch, items):
+    mock_provider(monkeypatch, lambda request: httpx.Response(200, json={"candidates": [
+        {"content": {"parts": [{"text": json.dumps({"tasks": items})}]}}]}))
+    with pytest.raises(AIError):
+        asyncio.run(ExternalAI(config()).parse_many("Create tasks"))

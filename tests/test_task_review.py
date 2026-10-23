@@ -92,6 +92,16 @@ def test_new_task_suggests_a_tag_but_does_not_apply_it(store, monkeypatch):
     assert main.tasks.list_open()[0]['project'] is None
 
 
+@pytest.mark.parametrize(('text', 'expected'), [
+    ('Study database chapter 1 with hashtag', None), ('Study database chapter 1 #custom', 'custom'),
+    ('Study database chapter 1 標籤設為 custom', 'custom'), ('Study database chapter 1 tag custom', 'custom')])
+def test_only_explicit_course_tag_values_bypass_approval(text, expected):
+    parsed = [ParsedTask('Study database chapter 1', project='custom')]
+    result = task_review.defer_inferred_course_tags(parsed, text)
+    assert result[0].project == expected
+    assert parsed[0].project == 'custom'
+
+
 def test_review_reuses_known_course_tag(store, monkeypatch):
     main.tasks.create('Known security topic', project='security')
     task = main.tasks.create('Learn network firewall')

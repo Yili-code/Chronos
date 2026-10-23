@@ -36,6 +36,7 @@ from .runtime_health import (
 from .task_actions import UndoConflict
 from .deadline_reminders import send_deadline_reminders
 from .free_time import free_slot_offer
+from .reply_policy import is_no_change_reply
 from . import reminders
 from . import calendar_replan
 from .backward_planning import BackwardPlanner
@@ -1200,12 +1201,15 @@ async def prepare_message(text: str, *, update_id: int | None = None, chat_id: i
                           bound_task_id: int | None = None, create_only: bool = False) -> Callable[[], str | dict]:
     """Resolve external input first; the returned action performs no async work."""
     normalized = text.strip()
+    if not create_only and is_no_change_reply(normalized):
+        return lambda: "收到"
     if create_only:
         try:
-            parsed = await ai.parse(normalized)
+            parsed = await ai.parse_many(normalized)
         except (AIError, ValueError) as error:
             return lambda reply=str(error): reply
-        return prepare_created_task(parsed, chat_id=chat_id)
+        parsed = task_review.defer_inferred_course_tags(parsed, normalized)
+        return prepare_created_tasks(parsed, chat_id=chat_id)
     normalized = re.sub(r"^(/[A-Za-z_]+)@[A-Za-z0-9_]+(?=\s|$)", r"\1", normalized)
     if bound_task_id is not None and not normalized.startswith("/"):
         import sys
@@ -1472,22 +1476,24 @@ async def prepare_message(text: str, *, update_id: int | None = None, chat_id: i
 
 
 def prepare_created_task(parsed, *, chat_id=None):
+    return prepare_created_tasks([parsed], chat_id=chat_id)
+
+
+def prepare_created_tasks(parsed_tasks, *, chat_id=None):
     aliases = tasks.project_aliases()
     def create() -> dict:
         before = tasks.list_open()
-        due_at = parsed.due_at
-        task = tasks.create(parsed.title, due_at, parsed.project, parsed.timing)
-        details = "\n".join(format_task_block(
-            task, settings.tz, project_aliases=aliases
-        ))
-        # Render the transaction outcome without reading Firestore after a write.
-        after = sorted([*before, task], key=task_sort_key)
-        suggestion = task_review.new_task_suggestion(db, task, before, aliases, chat_id, datetime.now(settings.tz))
-        return message_bundle(
-            task_card(task, f"<b>Task created</b>\n{details}"),
-            {"text": format_tasks(after, settings.tz, project_aliases=aliases), "parse_mode": "HTML"},
-            *([suggestion] if suggestion else []),
-        )
+        created = tasks.create_many(parsed_tasks)
+        messages = []
+        for task in created:
+            details = "\n".join(format_task_block(task, settings.tz, project_aliases=aliases))
+            messages.append(task_card(task, f"<b>Task created</b>\n{details}"))
+        # Read once before writes, preserving the Firestore transaction contract.
+        after = sorted([*before, *created], key=task_sort_key)
+        suggestions = [suggestion for task in created if (suggestion := task_review.new_task_suggestion(
+            db, task, [*before, *created], aliases, chat_id, datetime.now(settings.tz)))]
+        return message_bundle(*messages,
+            {"text": format_tasks(after, settings.tz, project_aliases=aliases), "parse_mode": "HTML"}, *suggestions)
     return create
 
 

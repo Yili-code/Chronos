@@ -42,6 +42,11 @@ class TaskService:
     def create(self, title: str, due_at: datetime | None = None, project: str | None = None, timing: dict | None = None) -> dict:
         return self.db.create_task(title.strip(), due_at, project, datetime.now(self.tz), normalize_timing(timing, due_at))
 
+    def create_many(self, parsed_tasks: list[ParsedTask]) -> list[dict]:
+        items = [{"title": item.title.strip(), "due_at": item.due_at, "project": item.project,
+                  "timing": normalize_timing(item.timing, item.due_at)} for item in parsed_tasks]
+        return self.db.create_tasks(items, datetime.now(self.tz))
+
     def list_open(self) -> list[dict]:
         tasks = self.db.list_open_tasks()
         for task in tasks:

@@ -1,5 +1,6 @@
 """Owner-approved task wording and course tags; suggestions never mutate tasks."""
 from datetime import datetime, timedelta
+from dataclasses import replace
 from html import escape
 import re
 from uuid import uuid4
@@ -18,7 +19,7 @@ COURSE_PATTERNS = {
     'computer-architecture': r'computer architecture|計算機結構',
     'software-engineering': r'software engineering|軟體工程',
     'graph-algorithms': r'graph algorithms?|圖論',
-    'database-systems': r'database systems?|資料庫',
+    'database-systems': r'\bdatabase\b|資料庫',
     'competitive-programming': r'competitive programming|程式競賽技巧導論',
     'operating-systems': r'operating systems?|作業系統',
 }
@@ -32,6 +33,15 @@ def infer_course(task):
         return None
     matches = [key for key, pattern in COURSE_PATTERNS.items() if re.search(pattern, text, re.I)]
     return matches[0] if len(matches) == 1 else None
+
+
+def defer_inferred_course_tags(parsed_tasks, instruction):
+    """A supplied tag is explicit; a course tag invented by the parser needs approval."""
+    explicit = re.search(r'#[\w.-]+|(?:標籤|标签|專案|专案)\s*(?:[:：=]|設為|设为|為|为|用)\s*\S+|\b(?:tag|project)\s+(?:(?:is|as)\s+)?[A-Za-z][\w.-]*', instruction, re.I)
+    if explicit:
+        return parsed_tasks
+    return [replace(item, project=None) if infer_course({'title': item.title, 'timing': item.timing}) else item
+            for item in parsed_tasks]
 
 
 def course_project(course, tasks, aliases):

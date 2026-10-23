@@ -23,6 +23,9 @@ def store(request, tmp_path, monkeypatch):
     monkeypatch.setattr(main, "db", db)
     monkeypatch.setattr(main, "tasks", TaskService(db, main.settings.tz))
     monkeypatch.setattr(main.ai, "parse", AsyncMock(return_value=ParsedTask("New task")))
+    async def parse_many(text, *args, **kwargs):
+        return [await main.ai.parse(text, *args, **kwargs)]
+    monkeypatch.setattr(main.ai, "parse_many", AsyncMock(side_effect=parse_many))
     return db
 
 
@@ -115,7 +118,7 @@ def test_model_text_is_not_an_executable_command(store, monkeypatch):
     classify(monkeypatch, action="task_create", instruction="/clear")
     run("記錄文字")
     assert len(main.tasks.list_open()) == 2
-    main.ai.parse.assert_awaited_once_with("/clear")
+    main.ai.parse_many.assert_awaited_once_with("記錄文字")
 
 
 def test_clear_requires_existing_confirmation(store, monkeypatch):
@@ -290,3 +293,59 @@ def test_legacy_card_edit_keeps_deterministic_path(system, monkeypatch):
         headers={"X-Telegram-Bot-Api-Secret-Token": "test-hook"}).status_code == 200
     assert tasks.list_open()[0]["title"] == "Final report"
     main.ai.classify_intent.assert_not_awaited()
+
+
+def test_batch_creation_is_atomic_and_replay_safe(store, monkeypatch):
+    text = "一次新增多筆 tasks 複習 database 第一章到第五章 需附上 hashtag"
+    classify(monkeypatch, action="task_create", instruction="Review database chapters 1 to 5")
+    parser = AsyncMock(return_value=[ParsedTask(f"Review database chapter {n}", project="database")
+                                    for n in range(1, 6)])
+    monkeypatch.setattr(main.ai, "parse_many", parser)
+    action = asyncio.run(main.prepare_message(text, update_id=9001, chat_id=123))
+    parser.assert_awaited_once_with(text)
+    assert main.tasks.list_open() == []
+    first = store.process_update(9001, action)
+    second = store.process_update(9001, action)
+    assert len(main.tasks.list_open()) == 5
+    assert first["reply"] == second["reply"]
+    assert len(first["messages"]) == 11
+    assert sum(bool(m.get('task_review')) for m in first['messages']) == 5
+    assert all(item["project"] is None for item in main.tasks.list_open())
+
+
+def test_batch_write_failure_rolls_back(store, monkeypatch):
+    monkeypatch.setattr(main.ai, "parse_many", AsyncMock(return_value=[ParsedTask("First"), ParsedTask("Second")]))
+    action = asyncio.run(main.prepare_message("Create two tasks", create_only=True))
+    create_many = store.create_tasks
+    def fail_batch(items, created_at):
+        create_many(items, created_at)
+        raise RuntimeError("Storage failed")
+    monkeypatch.setattr(store, "create_tasks", fail_batch)
+    with pytest.raises(RuntimeError, match="Storage failed"):
+        store.process_update(9002, action)
+    assert main.tasks.list_open() == []
+    assert store.get_update(9002) is None
+
+
+@pytest.mark.parametrize("bound", [False, True])
+def test_ai_acknowledgement_never_changes_tasks_or_calls_edit(store, monkeypatch, bound):
+    task = main.tasks.create("Preserve me")
+    before = main.tasks.list_open()
+    classify(monkeypatch, action="acknowledge", task_ids=[task["id"]])
+    edit = AsyncMock()
+    monkeypatch.setattr(main.ai, "edit", edit)
+    receipt = run("先保持原樣就好", bound_task_id=task["id"] if bound else None)
+    assert receipt["reply"] == "收到"
+    assert "messages" not in receipt
+    assert main.tasks.list_open() == before
+    edit.assert_not_awaited()
+    main.ai.parse_many.assert_not_awaited()
+
+
+def test_explicit_no_change_reply_skips_ai(store, monkeypatch):
+    task = main.tasks.create("Preserve me")
+    classify_mock = classify(monkeypatch, action="task_complete", task_ids=[task["id"]])
+    before = main.tasks.list_open()
+    assert run("不需要記錄", bound_task_id=task["id"])["reply"] == "收到"
+    assert main.tasks.list_open() == before
+    classify_mock.assert_not_awaited()

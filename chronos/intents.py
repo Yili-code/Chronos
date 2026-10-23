@@ -20,7 +20,7 @@ class Intent(BaseModel):
         "plan_list", "plan_request", "plan_edit", "plan_feedback", "backward", "backward_progress",
         "replan", "agenda", "free", "info", "reminder_create", "reminder_list", "reminder_cancel",
         "classday", "calendar_view", "calendar_edit", "ai_usage", "announcements", "announcement",
-        "mail_next", "cancel", "clarify", "unsupported",
+        "mail_next", "cancel", "clarify", "unsupported", "acknowledge",
     ]
     task_ids: list[Annotated[int, Field(strict=True, ge=1)]] = Field(default_factory=list, max_length=100)
     instruction: str = Field(default="", max_length=4000)
@@ -83,6 +83,9 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
     except (AIError, ValueError) as error:
         return lambda reply=str(error): "目前無法理解這個要求，沒有變更任何內容。\n" + escape(reply)
 
+    if intent.action == "acknowledge":
+        return lambda: "收到"
+
     instruction = intent.instruction or text
     # Keep the owner's field choice across a clarification, outside model discretion.
     content_choice = bool(re.search(r"(?:修改|更改|改|更新).{0,6}(?:內容|内容)|\b(?:edit|change|update)\s+(?:the\s+)?content\b", text, re.I))
@@ -142,7 +145,7 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
         if intent.action in simple:
             action = await app.prepare_message(simple[intent.action], update_id=update_id, chat_id=chat_id)
         elif intent.action == "task_create":
-            action = await app.prepare_message(instruction, update_id=update_id, chat_id=chat_id, create_only=True)
+            action = await app.prepare_message(text if not pending else instruction, update_id=update_id, chat_id=chat_id, create_only=True)
         elif intent.action == "task_edit":
             action = await app.prepare_message(f"/edit #{task_id} {instruction}", update_id=update_id)
         elif intent.action == "event_create":
