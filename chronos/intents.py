@@ -16,7 +16,7 @@ from .task_actions import task_fields
 class Intent(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     action: Literal[
-        "task_create", "task_edit", "task_complete", "task_list", "undo", "clear_tasks", "event_create",
+        "task_create", "task_edit", "task_complete", "task_list", "task_review", "undo", "clear_tasks", "event_create",
         "plan_list", "plan_request", "plan_edit", "plan_feedback", "backward", "backward_progress",
         "replan", "agenda", "free", "info", "reminder_create", "reminder_list", "reminder_cancel",
         "classday", "calendar_view", "calendar_edit", "ai_usage", "announcements", "announcement",
@@ -135,14 +135,14 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
     selected = by_id.get(task_id)
     # Fixed commands below are internal adapters to existing validated handlers.
     # Neither the model nor the user can supply a command name here.
-    simple = {"task_list": "/task", "undo": "/undo", "clear_tasks": "/clear",
+    simple = {"task_list": "/task", "task_review": "/reviewtasks", "undo": "/undo", "clear_tasks": "/clear",
               "plan_list": "/plan", "free": "/free", "info": "/info",
               "calendar_view": "/calendar", "ai_usage": "/ai_usage"}
     try:
         if intent.action in simple:
-            action = await app.prepare_message(simple[intent.action], update_id=update_id)
+            action = await app.prepare_message(simple[intent.action], update_id=update_id, chat_id=chat_id)
         elif intent.action == "task_create":
-            action = await app.prepare_message(instruction, update_id=update_id, create_only=True)
+            action = await app.prepare_message(instruction, update_id=update_id, chat_id=chat_id, create_only=True)
         elif intent.action == "task_edit":
             action = await app.prepare_message(f"/edit #{task_id} {instruction}", update_id=update_id)
         elif intent.action == "event_create":

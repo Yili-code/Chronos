@@ -40,6 +40,7 @@ from . import reminders
 from . import calendar_replan
 from .backward_planning import BackwardPlanner
 from .free_booking import bind_free_message, preview_free_event, free_booking_callback
+from . import task_review
 from .evening_agenda import send_evening_agenda, tomorrow_agenda
 from .task_timing import display_time, task_sort_key, timing_details
 from .study_scheduler import tick_study, notify_study_failures
@@ -249,6 +250,18 @@ def learning_calendar():
 
 async def deliver_learning_reply(chat_id, update_id, receipt):
     if receipt["delivered"]:
+        return
+    if any(m.get('task_review') for m in receipt.get('messages', [])):
+        messages = receipt['messages']
+        for count, part in enumerate(messages[receipt.get('delivered_count', 0):], receipt.get('delivered_count', 0) + 1):
+            result = await telegram.send_message(chat_id, part['text'],
+                **{k: part[k] for k in ('parse_mode', 'reply_markup') if k in part})
+            if not result.get('ok') or (part.get('task_review') and result.get('result', {}).get('message_id') is None):
+                raise HTTPException(status_code=502, detail='Task suggestion delivery pending')
+            if part.get('task_review'):
+                task_review.bind(db, chat_id, result['result']['message_id'], part)
+            db.mark_update_message_delivered(update_id, count)
+        db.mark_update_delivered(update_id)
         return
     if any(m.get('backward_plan') for m in receipt.get('messages', [])):
         for count, part in enumerate(receipt['messages'][receipt.get('delivered_count', 0):], receipt.get('delivered_count', 0)+1):
@@ -588,6 +601,24 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
     if settings.telegram_chat_id and chat_id != settings.telegram_chat_id:
         raise HTTPException(status_code=403, detail="Unauthorized chat")
     update_id = update.update_id
+    review_callback = re.fullmatch(r'taskreview:(open|(?:apply|cancel):[a-f0-9]{32})',
+        update.callback_query.data or '') if update.callback_query else None
+    if review_callback:
+        receipt = db.get_update(update_id)
+        if receipt is None:
+            if review_callback[1] == 'open':
+                action = await task_review.prepare(db, tasks, ai, settings, chat_id)
+            else:
+                operation, token = review_callback[1].split(':')
+                action = lambda: task_review.respond(db, tasks, settings, chat_id, source_message.message_id, token, operation)
+            receipt = db.process_update(update_id, action)
+        await deliver_learning_reply(chat_id, update_id, receipt)
+        await telegram.answer_callback_query(update.callback_query.id)
+        if review_callback[1] != 'open':
+            state = db.get_task_action_state(task_review.KEY + review_callback[1].split(':')[1])
+            if state and state.get('chat_id') == chat_id and state.get('message_id') == source_message.message_id and state.get('status') in {'applied', 'cancelled'}:
+                await delete_telegram_messages(chat_id, source_message.message_id)
+        return {'ok': True}
     backward = BackwardPlanner(db, google_calendar, ai, settings)
     backward_match = re.fullmatch(r'backward:(allow|edit|cancel):([a-f0-9]{32})', update.callback_query.data or '') if update.callback_query else None
     backward_command = re.fullmatch(r'/backward(?:@[A-Za-z0-9_]+)?(?:\s+(.+))?', source_message.text or '', re.DOTALL) if update.message else None
@@ -1005,6 +1036,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                 raise HTTPException(status_code=502, detail="Telegram reply failed; waiting for retry")
             sent_id = result.get("result", {}).get("message_id")
             if sent_id is not None:
+                task_review.bind(db, chat_id, sent_id, message)
                 bind_free_message(db, chat_id, sent_id, message)
                 calendar_replan.bind(db, chat_id, sent_id, message)
                 BackwardPlanner(db, google_calendar, ai, settings).bind(chat_id, sent_id, message)
@@ -1173,7 +1205,7 @@ async def prepare_message(text: str, *, update_id: int | None = None, chat_id: i
             parsed = await ai.parse(normalized)
         except (AIError, ValueError) as error:
             return lambda reply=str(error): reply
-        return prepare_created_task(parsed)
+        return prepare_created_task(parsed, chat_id=chat_id)
     normalized = re.sub(r"^(/[A-Za-z_]+)@[A-Za-z0-9_]+(?=\s|$)", r"\1", normalized)
     if bound_task_id is not None and not normalized.startswith("/"):
         import sys
@@ -1315,10 +1347,13 @@ async def prepare_message(text: str, *, update_id: int | None = None, chat_id: i
             now = datetime.now(settings.tz)
             return format_ai_usage(ai_usage.report(now), now.date().isoformat())
         return usage_report
+    if command == 'reviewtasks':
+        return await task_review.prepare(db, tasks, ai, settings, chat_id)
     if command in {"task", "tasks"}:
         def list_tasks() -> dict:
             items = tasks.list_open()
-            return message_bundle({"text": task_list_text(items), "parse_mode": "HTML"})
+            return message_bundle({"text": task_list_text(items), "parse_mode": "HTML",
+                                   **({'reply_markup': task_review.OPEN_KEYBOARD} if items else {})})
         return list_tasks
     if command == "undo":
         return prepare_undo()
@@ -1433,10 +1468,10 @@ async def prepare_message(text: str, *, update_id: int | None = None, chat_id: i
             return lambda reply=str(error): reply
     else:
         return lambda: "Unknown command. Use /info to see available commands."
-    return prepare_created_task(parsed)
+    return prepare_created_task(parsed, chat_id=chat_id)
 
 
-def prepare_created_task(parsed):
+def prepare_created_task(parsed, *, chat_id=None):
     aliases = tasks.project_aliases()
     def create() -> dict:
         before = tasks.list_open()
@@ -1447,9 +1482,11 @@ def prepare_created_task(parsed):
         ))
         # Render the transaction outcome without reading Firestore after a write.
         after = sorted([*before, task], key=task_sort_key)
+        suggestion = task_review.new_task_suggestion(db, task, before, aliases, chat_id, datetime.now(settings.tz))
         return message_bundle(
             task_card(task, f"<b>Task created</b>\n{details}"),
             {"text": format_tasks(after, settings.tz, project_aliases=aliases), "parse_mode": "HTML"},
+            *([suggestion] if suggestion else []),
         )
     return create
 
