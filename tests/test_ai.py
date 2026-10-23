@@ -364,3 +364,27 @@ def test_parse_many_still_rejects_provider_batch_over_limit(monkeypatch):
         {"content": {"parts": [{"text": json.dumps({"tasks": items})}]}}]}))
     with pytest.raises(AIError):
         asyncio.run(ExternalAI(config()).parse_many("Create 21 tasks"))
+
+
+def test_capture_effort_contract_and_result(monkeypatch):
+    def handler(request):
+        payload = json.loads(request.content)
+        prompt = payload["systemInstruction"]["parts"][0]["text"]
+        assert "timing.estimated_minutes" in prompt
+        assert "Never put effort estimates in title, content" in prompt
+        assert "content/progress in concise natural English" in prompt
+        return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": json.dumps({
+            "title": "Study graph theory midterm past exams", "due_at": None, "project": None,
+            "timing": {"estimated_minutes": 120}})}]}}]})
+    mock_provider(monkeypatch, handler)
+    task = asyncio.run(ExternalAI(config()).parse("Study graph theory midterm past exams, about two hours"))
+    assert task.timing["estimated_minutes"] == 120
+    assert not task.timing.get("content")
+
+
+def test_effort_edit_operations_are_typed():
+    from chronos.ai import EffortEdit
+    assert EffortEdit(op="set", value=120).value == 120
+    for op, value in [("set", None), ("keep", 120), ("clear", 120), ("set", "120")]:
+        with pytest.raises(ValueError):
+            EffortEdit(op=op, value=value)

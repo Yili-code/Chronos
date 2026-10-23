@@ -13,6 +13,7 @@ class TaskTiming(BaseModel):
     source_text: str | None = Field(default=None, max_length=2000)
     uncertain: str | None = Field(default=None, max_length=2000)
     content: str | None = Field(default=None, max_length=2000)
+    estimated_minutes: int | None = Field(default=None, strict=True, ge=1, le=10080)
 
     @field_validator("scheduled", "event")
     @classmethod

@@ -80,7 +80,7 @@ def test_content_clarification_keeps_original_target_and_instruction(store, monk
 
 def test_ai_content_edit_rejects_title_mutation(monkeypatch):
     ai = ExternalAI(Settings(_env_file=None))
-    fields = {k: FieldEdit(op='keep', value=None) for k in TaskEditOutput.model_fields}
+    fields = {k: {'op': 'keep', 'value': None} for k in TaskEditOutput.model_fields}
     fields['title'] = FieldEdit(op='set', value='Wrong title')
     monkeypatch.setattr(ai, '_generate_output', AsyncMock(return_value=TaskEditOutput(**fields)))
     with pytest.raises(AIError, match='preserve'):
@@ -106,7 +106,7 @@ def test_explicit_duration_cannot_be_silently_shortened(store, monkeypatch):
 
 def test_ai_content_operation_preserves_unrelated_fields(monkeypatch):
     ai = ExternalAI(Settings(_env_file=None))
-    fields = {k: FieldEdit(op='keep', value=None) for k in TaskEditOutput.model_fields}
+    fields = {k: {'op': 'keep', 'value': None} for k in TaskEditOutput.model_fields}
     fields['content'] = FieldEdit(op='set', value='One problem remaining')
     monkeypatch.setattr(ai, '_generate_output', AsyncMock(return_value=TaskEditOutput(**fields)))
     parsed = asyncio.run(ai.edit({'title': 'Stable title', 'project': 'course',
