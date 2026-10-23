@@ -87,8 +87,8 @@ def test_ai_content_edit_rejects_title_mutation(monkeypatch):
         asyncio.run(ai.edit({'title': 'Stable title'}, '修改內容為剩下一題'))
 
 
-def test_categories_have_distinct_colors():
-    assert len(set(EVENT_COLORS.values())) == len(EVENT_COLORS)
+def test_event_colors_preserve_existing_exam_palette():
+    assert EVENT_COLORS == {'exam': '3', 'contest': '3', 'meeting': '5', 'social': '6', 'other': '8'}
 
 
 @pytest.mark.parametrize(('text', 'minutes'), [('預計 3h', 180), ('1.5 hours', 90),

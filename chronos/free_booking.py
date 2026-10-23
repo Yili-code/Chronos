@@ -8,7 +8,7 @@ from .google_calendar import CalendarError
 from .learning_calendar import class_windows, short_task_windows, overlaps
 from .task_timing import display_date
 
-EVENT_COLORS = {'exam': '11', 'contest': '3', 'meeting': '5', 'social': '6', 'other': '8'}
+EVENT_COLORS = {'exam': '3', 'contest': '3', 'meeting': '5', 'social': '6', 'other': '8'}
 
 
 def preview_explicit_event(db, settings, chat_id, update_id, title, start, end, category, content, now, *, preview_content=None):
