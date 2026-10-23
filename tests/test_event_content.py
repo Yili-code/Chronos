@@ -171,5 +171,47 @@ def test_exam_classifier_contract(monkeypatch):
     prompt = generate.await_args.args[0]
     assert 'category exam, never contest' in prompt
     assert 'Preparing or studying for an exam remains task_create' in prompt
+    assert 'Context clarification.question is the exact previous question' in prompt
+    assert 'same date 09:20-11:00' in prompt
+    assert 'replaces the pending event instead' in prompt
     assert 'competitions such as AtCoder remain contest' in prompt
     assert 'do not repeat the title, date, time, duration or original input' in prompt
+
+
+@pytest.mark.parametrize('new_request', [False, True])
+def test_exam_end_answer_receives_complete_clarification_context(store, monkeypatch, new_request):
+    from chronos.intents import Intent
+    start = (datetime.now(main.settings.tz) + timedelta(days=7)).replace(hour=9, minute=20, second=0, microsecond=0)
+    original = 'OS midterm ' + start.strftime('%Y-%m-%d') + ' 09:20'
+    question = '請提供考試的結束時間或持續時間。'
+    mock = classify(monkeypatch, action='event_create', title='OS Midterm', start=start,
+                    event_category='exam', instruction=original, question=question)
+    run(original)
+    state = store.get_task_action_state('intent:clarify:123')
+    assert state['question'] == question
+    assert state['parsed_intent']['start'] == start.isoformat()
+    assert state['parsed_intent']['event_category'] == 'exam'
+    assert store.list_open_tasks() == []
+
+    async def contextual_answer(text, *args, context, **kwargs):
+        pending = context['clarification']
+        assert pending['question'] == question
+        assert pending['instruction'] == original
+        assert pending['parsed_intent']['title'] == 'OS Midterm'
+        if new_request:
+            return Intent(action='task_list')
+        return Intent(**{**pending['parsed_intent'], 'question': None,
+                         'end': start.replace(hour=11, minute=0),
+                         'instruction': original + ' 到十一點'})
+    mock.side_effect = contextual_answer
+    result = run('列出任務' if new_request else '到十一點', update=2)
+    if new_request:
+        assert 'free_booking' not in str(result)
+    else:
+        preview = result['messages'][0]
+        assert '09:20' in preview['text'] and '11:00' in preview['text']
+        assert '100 min' in preview['text']
+        assert preview['free_booking']
+    assert store.get_task_action_state('intent:clarify:123') == {}
+    assert store.list_open_tasks() == []
+    main.ai.parse.assert_not_awaited()
