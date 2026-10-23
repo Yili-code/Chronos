@@ -5,29 +5,53 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from test_learning_calendar import setup, NOW
+from test_learning_calendar import setup as base_setup, NOW
 from test_system import system
 from chronos import main
 from chronos.google_calendar import CalendarError
+from chronos.ai import AIError, NightlyPlanOutput, NightlySession
 
 NIGHT = NOW.replace(hour=21)
+
+
+@pytest.fixture
+def setup(base_setup):
+    planner, task, calendar, bot = base_setup
+    ai = AsyncMock()
+    async def allocate(tasks, windows, budget, history):
+        sessions, remaining = [], budget
+        candidates = iter(tasks)
+        item = next(candidates, None)
+        for window in windows:
+            start, end = (NOW.fromisoformat(window[k]) for k in ('start', 'end'))
+            while item and remaining >= 60 and start + timedelta(minutes=60) <= end and len(sessions) < 10:
+                sessions.append(NightlySession(task_id=item['id'], start=start, end=start + timedelta(minutes=60),
+                    estimated_minutes=60, reason='預計一小時可完成此工作。'))
+                start += timedelta(minutes=60)
+                remaining -= 60
+                item = next(candidates, None)
+        return NightlyPlanOutput(sessions=sessions)
+    ai.plan_tomorrow.side_effect = allocate
+    ai.estimate_duration.side_effect = AIError('No separate estimate in this fixture')
+    planner.ai = ai
+    return planner, task, calendar, bot
 
 
 def add(planner, name, age, due=None):
     return planner.db.create_task(name, due, None, NOW - timedelta(days=age))
 
 
-def test_oldest_four_ignore_deadline_order_and_include_pre_activation_tasks(setup):
+def test_whole_day_is_not_limited_to_four_tasks_and_includes_old_backlog(setup):
     planner, task, calendar, bot = setup
     newer = add(planner, 'Urgent but new', 1, NOW + timedelta(days=1))
     oldest = [add(planner, str(age), age) for age in (6, 5, 4, 3, 2)]
     result = asyncio.run(planner.nightly_proposals(NIGHT))
-    assert result['nightly_task_ids'] == [item['id'] for item in oldest[:4]]
-    assert planner.get(oldest[0]['id'])['status'] == 'proposed'
+    assert result['nightly_task_ids'] == [task['id']] + [item['id'] for item in oldest]
+    assert planner.get(oldest[0]['id'])['status'] == 'queued'
     assert planner.get(oldest[1]['id'])['status'] == 'queued'
-    assert planner.get(task['id']) is None and planner.get(newer['id']) is None
-    assert planner.get(oldest[4]['id']) is None
-    assert planner.get(oldest[0]['id'])['start'] >= (NIGHT + timedelta(days=1)).replace(hour=9).isoformat()
+    assert planner.get(task['id'])['status'] == 'proposed' and planner.get(newer['id']) is None
+    assert planner.get(oldest[4]['id'])['status'] == 'queued'
+    assert planner.get(oldest[0]['id'])['nightly_slot']['start'] >= (NIGHT + timedelta(days=1)).replace(hour=9).isoformat()
     assert bot.send_message.await_count == 1
     calendar.insert.assert_not_awaited()
 
@@ -95,7 +119,7 @@ def test_failure_retry_uses_saved_batch(setup):
     calendar.busy.side_effect = CalendarError('offline')
     with pytest.raises(CalendarError):
         asyncio.run(planner.nightly_proposals(NIGHT))
-    assert planner.get(task['id'])['status'] == 'queued'
+    assert planner.get(task['id']) is None
     calendar.busy.side_effect = None
     asyncio.run(planner.nightly_proposals(NIGHT + timedelta(minutes=1)))
     assert planner.get(task['id'])['status'] == 'proposed'
@@ -134,9 +158,9 @@ def test_next_date_selects_only_new_unplanned_tasks_and_ties_use_id(setup):
     planner.db.complete_task(completed['id'], NIGHT)
     second = asyncio.run(planner.nightly_proposals(NIGHT + timedelta(days=1)))
     assert first['nightly_task_ids'] == [task['id']]
-    assert second['nightly_task_ids'] == [a['id'], b['id']]
+    assert second['nightly_task_ids'] == [task['id'], a['id'], b['id']]
     assert planner.get(completed['id']) is None
-    assert bot.send_message.await_count == 1  # The existing approval is still pending.
+    assert bot.send_message.await_count == 2  # Expired, unbooked work is replanned for the new target date.
     calendar.insert.assert_not_awaited()
 
 

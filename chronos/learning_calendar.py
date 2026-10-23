@@ -207,6 +207,11 @@ class LearningCalendar:
                     replacement.pop(key, None)
                 updates[task["id"]] = replacement
             current = updates.get(task_id, state)
+            if current.get('duration_source') == 'nightly_ai':
+                current = dict(current)
+                for key in ('nightly_slot', 'nightly_batch', 'nightly_overview', 'nightly_reason',
+                            'duration_source', 'duration_estimate', 'requested_minutes'):
+                    current.pop(key, None)
             for key, replacement in updates.items():
                 self.db._save_task_action_state(f"learning:task:{key}", replacement)
             self.db._save_task_action_state(f"learning:task:{task_id}",
@@ -220,33 +225,8 @@ class LearningCalendar:
         return self.db._run_task_action(request)
 
     async def nightly_proposals(self, now=None):
-        """Select once per Taipei date; retries resume the existing approval queue."""
-        if not self.settings.enable_learning_calendar:
-            return {"enabled": False}
-        if not self.settings.learning_enabled_since or not self.calendar.configured():
-            return {"enabled": True, "waiting_for": "calendar authorization and activation"}
-        now = (now or datetime.now(self.settings.tz)).astimezone(self.settings.tz)
-        if now.hour != 21:
-            return {"waiting_for": "21:00 Asia/Taipei"}
-        day = now.date().isoformat()
-        key = "learning:nightly:" + day
-        def select():
-            receipt = self.db.get_task_action_state(key)
-            if receipt is not None:
-                return receipt
-            tasks = self.db.list_open_tasks()
-            states = {task["id"]: self.get(task["id"]) for task in tasks}
-            eligible = sorted((task for task in tasks if not states[task["id"]]),
-                key=lambda task: (datetime.fromisoformat(task["created_at"]), task["id"]))[:4]
-            receipt = {"date": day, "task_ids": [task["id"] for task in eligible]}
-            for task in eligible:
-                self.db._save_task_action_state(f"learning:task:{task['id']}",
-                    {"status": "queued", "token": uuid4().hex, "nightly_batch": day})
-            self.db._save_task_action_state(key, receipt)
-            return receipt
-        receipt = self.db._run_task_action(select)
-        result = await self.tick(now)
-        return {**result, "nightly_task_ids": receipt["task_ids"], "date": day}
+        from .nightly_planning import run
+        return await run(self, now)
 
     def waiting_turn(self, active):
         return (f"Confirm or adjust the current execution plan first (task #{active}). This task is queued."
@@ -286,9 +266,13 @@ class LearningCalendar:
                 return None
             if old and old["status"] != "queued" and not (old["status"] == "planning" and old["lease_until"] < now.isoformat()):
                 return None
+            if old and old.get('duration_source') == 'nightly_ai' and old.get('snapshot') != task_fields(task):
+                self.db._save_task_action_state(f"learning:task:{task_id}", {**old, 'status': 'needs_replan'})
+                return None
             state = {"status": "planning", "token": claim,
                 "lease_until": (now + timedelta(minutes=3)).isoformat(), "snapshot": task_fields(task),
                 "nightly_batch": (old or {}).get("nightly_batch"),
+                **{k: old[k] for k in ('nightly_slot', 'nightly_overview', 'nightly_reason') if old and k in old},
                 "requested_minutes": (old or {}).get("requested_minutes"),
                 "duration_source": (old or {}).get("duration_source"),
                 "duration_estimate": (old or {}).get("duration_estimate"),
@@ -304,7 +288,12 @@ class LearningCalendar:
             return
         try:
             await self.calendar.verify_owner()
-            busy = await self.calendar.busy(now, now + timedelta(days=7))
+            window = state.get('nightly_slot') if state.get('duration_source') == 'nightly_ai' else None
+            if window:
+                begin, stop = (datetime.fromisoformat(window[k]) for k in ('start', 'end'))
+                busy = await self.calendar.busy(begin, stop)
+            else:
+                busy = await self.calendar.busy(now, now + timedelta(days=7))
             profile = self.db.get_task_action_state("learning:profile") or {}
             subject = task.get("project") or "general"
             evidence = profile.get(subject, {})
@@ -312,9 +301,9 @@ class LearningCalendar:
                        if evidence.get("samples", 0) >= 3 else self.settings.learning_minutes)
             minutes = state.get("requested_minutes") or minutes
             source = state.get("duration_source") or ("profile" if evidence.get("samples", 0) >= 3 else "default")
-            if is_course_scope_task(task) and source != "owner":
+            if is_course_scope_task(task) and source not in {"owner", "nightly_ai"}:
                 minutes, source = COURSE_SCOPE_MINUTES, "course_scope_rule"
-            elif source != "owner" and self.ai is not None:
+            elif source not in {"owner", "nightly_ai"} and self.ai is not None:
                 estimate = state.get("duration_estimate")
                 if not estimate or estimate.get("snapshot") != task_fields(task):
                     try:
@@ -332,7 +321,11 @@ class LearningCalendar:
                     minutes = (max(15, min(180, math.ceil(evidence["average_minutes"] / 15) * 15))
                                if evidence.get("samples", 0) >= 3 else self.settings.learning_minutes)
             policy = self.db.get_task_action_state("learning:course-calendar-policy")
-            slot = find_slot(task, now, busy, reservations, self.settings, minutes, booked_minutes, policy)
+            if source == 'nightly_ai':
+                from .nightly_planning import slot_allowed
+                slot = slot_allowed(self, task, state, now, [*busy, *reservations], booked_minutes)
+            else:
+                slot = find_slot(task, now, busy, reservations, self.settings, minutes, booked_minutes, policy)
             plan = {**state, "status": "proposed" if slot else "no_slot", "minutes": minutes,
                     "duration_source": source, "delivery": "proposal_pending", "estimate_samples": evidence.get("samples", 0)}
             if slot:
@@ -348,7 +341,7 @@ class LearningCalendar:
                         if len(due) > 10 else
                         datetime.combine(datetime.fromisoformat(due).date(), time.max, self.settings.tz))
                     horizon = min(horizon, deadline)
-                if horizon > now:
+                if horizon > now and source != 'nightly_ai':
                     from .study_reflow import preview
                     reflow = await preview(self, task, {**plan, "start": horizon.isoformat()}, now)
                     if reflow:
@@ -370,6 +363,12 @@ class LearningCalendar:
             end = datetime.fromisoformat(state["end"]).astimezone(self.settings.tz)
             text = (f"<b>Execution plan</b>\n{escape(task['title'])}\n"
                     f"{display_time(state['start'], self.settings.tz)}–{end:%H:%M}")
+            if state.get('duration_source') == 'nightly_ai':
+                estimate = state.get('duration_estimate', {}).get('estimated_minutes')
+                text += f"\n{state['minutes']} min planned · estimated remaining work {estimate} min"
+                text += '\n' + escape(state.get('nightly_reason', ''))
+                if state.get('nightly_overview'):
+                    text = state['nightly_overview'] + '\n\n' + text
             if state.get("progress_note"):
                 text += f"\n\nExecution update · {escape(state['progress_note'])}"
             if state.get("calendar_moves"):
@@ -416,6 +415,12 @@ class LearningCalendar:
                 self.update(task["id"], lambda old: {**old, "status": "queued"})
                 return "The task or proposed time changed. A fresh execution plan will require approval."
             start, end = (datetime.fromisoformat(state[key]) for key in ("start", "end"))
+            if state.get('duration_source') == 'nightly_ai':
+                from .nightly_planning import slot_allowed
+                current_busy = await self.calendar.busy(start, end)
+                if slot_allowed(self, task, state, now, current_busy) is None:
+                    self.update(task['id'], lambda old: {**old, 'status': 'needs_replan'})
+                    return 'Tomorrow’s allocation no longer fits. No event was created; request a fresh plan.'
             if overlaps(start, end, short_task_windows(start.astimezone(self.settings.tz).date(), self.settings.tz,
                                                       (end - start).total_seconds() / 60)):
                 self.update(task["id"], lambda old: {**old, "status": "queued"})
@@ -437,7 +442,7 @@ class LearningCalendar:
                     return ("Calendar rearrangement paused. No new work block was created. "
                         "Some reviewed moves may already have succeeded; they are retained for reconciliation. "
                         f"Use /plan {task['id']} to prepare a fresh execution plan. " + str(error))
-            busy = await self.calendar.busy(start, end)
+            busy = current_busy if state.get('duration_source') == 'nightly_ai' else await self.calendar.busy(start, end)
             from .backward_planning import reserved_windows
             busy = [*busy, *reserved_windows(self.db)]
             if overlaps(start, end, busy):
@@ -1070,7 +1075,8 @@ class LearningCalendar:
         # Retain the active turn, then consume selected oldest tasks before other work.
         nightly_ids = {task["id"] for task in nightly}
         tasks = sorted(tasks, key=lambda task: (task["id"] not in nightly_ids,
-            datetime.fromisoformat(task["created_at"]), task["id"])) if nightly else tasks
+            datetime.fromisoformat((self.get(task['id']) or {}).get('nightly_slot', {}).get('start')
+                or task['created_at']), task["id"])) if nightly else tasks
         # Day buckets retain approved load after task completion without scanning
         # the ever-growing feedback history on every scheduler tick.
         booked_minutes = {}
