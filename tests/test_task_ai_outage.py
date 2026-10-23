@@ -113,7 +113,7 @@ def test_saved_exact_edit_recovers_after_outage_and_reordering(system):
 
 def test_ai_edit_keeps_legacy_tag(monkeypatch):
     operations = {name: {"op": "keep", "value": None} for name in
-                  ("title", "due_at", "project", "due_date", "scheduled", "event", "uncertain")}
+                  ("title", "content", "due_at", "project", "due_date", "scheduled", "event", "uncertain")}
     operations["title"] = {"op": "set", "value": "Confirm course coverage"}
     mock_provider(monkeypatch, lambda request: httpx.Response(200, json={"candidates": [
         {"content": {"parts": [{"text": json.dumps(operations)}]}}]}))

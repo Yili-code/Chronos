@@ -130,7 +130,7 @@ class FieldEdit(BaseModel):
 
 class TaskEditOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    content: FieldEdit = Field(default_factory=lambda: FieldEdit(op="keep", value=None))
+    content: FieldEdit
     title: FieldEdit
     due_at: FieldEdit
     project: FieldEdit
