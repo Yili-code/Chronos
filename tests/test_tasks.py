@@ -48,7 +48,7 @@ def test_dynamic_positions_hide_permanent_ids(tmp_path):
 
     assert [task["id"] for task in tasks.list_open()] == [earlier["id"], later["id"], no_due["id"]]
     assert format_tasks(tasks.list_open(), TZ, now=NOW) == (
-        "<b>Tasks</b>\n"
+        "<b>Unscheduled</b>\n"
         "1. <b>Earlier</b>\n"
         "<b>Due</b> 09/19 (Sat) 10:00\n"
         "<b>#Chronos</b>\n\n"
@@ -62,7 +62,7 @@ def test_dynamic_positions_hide_permanent_ids(tmp_path):
     assert tasks.get_open_by_position(3) is None
 
 
-def test_course_tasks_use_separate_layers_and_html_escaping():
+def test_course_tasks_share_schedule_groups_and_preserve_html_escaping():
     rendered = format_tasks([
         {"title": "確認資訊安全實務與管理今日上課範圍（2026-10-05）",
          "due_at": None, "project": "資訊安全實務與管理"},
@@ -70,35 +70,34 @@ def test_course_tasks_use_separate_layers_and_html_escaping():
          "due_at": None, "project": "計算機結構"},
     ], TZ)
     assert rendered == (
-        "<b>Tasks</b>\n"
-        "2. <b>複習計算機結構 10/06：Chapter 2 to around page 43 &amp; examples</b>\n"
-        "<b>#計算機結構</b>\n\n──────────\n\n"
-        "<b>Course scope</b>\n"
+        "<b>Unscheduled</b>\n"
         "1. <b>確認資訊安全實務與管理今日上課範圍（10/05）</b>\n"
-        "<b>#ISPM</b>"
+        "<b>#ISPM</b>\n\n"
+        "2. <b>複習計算機結構 10/06：Chapter 2 to around page 43 &amp; examples</b>\n"
+        "<b>#計算機結構</b>"
     )
 
 
-def test_scope_section_preserves_command_positions(tmp_path):
+
+def test_unscheduled_course_tasks_preserve_command_positions(tmp_path):
     tasks = service(tmp_path)
     first = tasks.create("Exercise 2")
     scope = tasks.create("Check software engineering 10/14 class scope", project="se")
     third = tasks.create("Learn network firewall")
     generated = tasks.create("Check security 10/15 scope")
     rendered = format_tasks(tasks.list_open(), TZ)
-    general, course = rendered.split("──────────")
-    assert "1. <b>Exercise 2</b>" in general
-    assert "3. <b>Learn network firewall</b>" in general
-    assert "2. <b>Check software engineering 10/14 class scope</b>" in course
-    assert "4. <b>Check security 10/15 scope</b>" in course
+    assert "1. <b>Exercise 2</b>" in rendered
+    assert "3. <b>Learn network firewall</b>" in rendered
+    assert "2. <b>Check software engineering 10/14 class scope</b>" in rendered
+    assert "4. <b>Check security 10/15 scope</b>" in rendered
     assert tasks.get_open_by_position(2)["id"] == scope["id"]
     assert tasks.complete_position(4)["id"] == generated["id"]
     assert [t["id"] for t in tasks.list_open()] == [first["id"], scope["id"], third["id"]]
 
 
-def test_scope_only_list_has_no_empty_general_section():
+def test_unscheduled_only_list_hides_empty_scheduled_section():
     rendered = format_tasks([{"title": "Check security 10/15 course scope"}], TZ)
-    assert rendered == "<b>Course scope</b>\n1. <b>Check security 10/15 course scope</b>"
+    assert rendered == "<b>Unscheduled</b>\n1. <b>Check security 10/15 course scope</b>"
     assert format_tasks([], TZ) == "No open tasks, Sir. A welcome state of affairs."
 
 
@@ -115,7 +114,7 @@ def test_scope_only_list_has_no_empty_general_section():
 def test_scope_classification_does_not_require_title_date(title):
     task = {"title": title, "timing": {"event": "2026-10-16"}}
     assert is_course_scope_task(task)
-    assert format_tasks([task], TZ).startswith("<b>Course scope</b>\n1.")
+    assert format_tasks([task], TZ).startswith("<b>Unscheduled</b>\n1.")
 
 
 @pytest.mark.parametrize("title", ["Check project scope", "Learn operating system", "Review class scope", "Check telescope"])
@@ -123,18 +122,17 @@ def test_other_tasks_stay_in_general_section(title):
     assert not is_course_scope_task({"title": title})
 
 
-def test_scope_grouping_is_reapplied_after_creation_edit_and_database_reopen(tmp_path):
+def test_course_tasks_remain_visible_after_edit_and_database_reopen(tmp_path):
     tasks = service(tmp_path)
     tasks.create("Exercise 2")
     task = tasks.create("Check operating system class scope", timing={"event": "2026-10-16"})
     for current in (tasks, TaskService(Database(tmp_path / "test.db"), TZ)):
-        general, course = format_tasks(current.list_open(), TZ).split("──────────")
-        assert "operating system" not in general
-        assert "2. <b>Check operating system class scope</b>" in course
-        assert "Course / event</b> 10/16 (Fri)" in course
+        rendered = format_tasks(current.list_open(), TZ)
+        assert "2. <b>Check operating system class scope</b>" in rendered
+        assert "Course / event</b> 10/16 (Fri)" in rendered
     tasks.edit(task["id"], "Check software engineering course scope", None, None)
     rendered = format_tasks(tasks.list_open(), TZ)
-    assert "software engineering" in rendered.split("──────────")[1]
+    assert "software engineering" in rendered
 
 
 def test_long_project_tags_use_short_display_aliases():
@@ -213,3 +211,33 @@ def test_sqlite_migrates_existing_telegram_receipts(tmp_path):
         columns = {row[1] for row in connection.execute("PRAGMA table_info(telegram_updates)")}
     assert {"messages_json", "delivered_count"} <= columns
 
+
+
+@pytest.mark.parametrize("status,booked", [("scheduled", True), ("awaiting_feedback", True), ("proposed", False), ("creating", False), ("cancelled", False)])
+def test_schedule_groups_use_confirmed_booking_and_preserve_positions(tmp_path, status, booked):
+    tasks = service(tmp_path)
+    first = tasks.create("Unplanned")
+    second = tasks.create("Booked & ready", timing={"scheduled": "2026-10-24T08:00:00+08:00"} if booked else {})
+    tasks.db.mutate_task_action_state(f"learning:task:{second['id']}", lambda old: {
+        "status": status, "start": "2026-10-24T02:30:00+00:00", "end": "2026-10-24T04:00:00+00:00"})
+    rendered = format_tasks(tasks.list_open(), TZ)
+    if booked:
+        scheduled, unscheduled = rendered.split("──────────")
+        assert "2. <b>Booked &amp; ready</b>" in scheduled
+        assert "10/24 (Sat) 10:30–12:00" in scheduled
+        assert scheduled.count("<b>Scheduled</b> 10/24") == 1
+        assert "1. <b>Unplanned</b>" in unscheduled
+    else:
+        assert "<b>Scheduled</b>" not in rendered
+        assert "10:30" not in rendered
+    assert tasks.get_open_by_position(1)["id"] == first["id"]
+    assert tasks.get_open_by_position(2)["id"] == second["id"]
+
+
+def test_scheduled_group_keeps_deadline_and_cross_day_range():
+    rendered = format_tasks([{"title": "Overnight", "due_at": "2026-10-26T15:59:00+00:00",
+        "scheduled_slot": {"start": "2026-10-24T23:00:00+08:00", "end": "2026-10-25T01:00:00+08:00"}}], TZ, now=NOW)
+    assert rendered.startswith("<b>Scheduled</b>")
+    assert "10/24 (Sat) 23:00–10/25 (Sun) 01:00" in rendered
+    assert "<b>Due</b> 10/26 (Mon) 23:59" in rendered
+    assert "Unscheduled" not in rendered

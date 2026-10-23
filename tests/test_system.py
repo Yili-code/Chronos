@@ -79,8 +79,8 @@ def test_creation_shows_updated_list_and_retries_only_undelivered_list(system, t
     card, failed_list, retried_list = bot.send_message.await_args_list
     assert card.args[1].startswith("<b>I have added it, Sir.</b>")
     assert failed_list.args[1] == retried_list.args[1]
-    assert "<b>Course scope</b>" in retried_list.args[1]
-    assert "Check operating system class scope" in retried_list.args[1].split("<b>Course scope</b>")[1]
+    assert "<b>Unscheduled</b>" in retried_list.args[1]
+    assert "Check operating system class scope" in retried_list.args[1].split("<b>Unscheduled</b>")[1]
     assert "Existing task" in retried_list.args[1]
     assert ("New task" if text.startswith("/add") else "Test task") in retried_list.args[1]
     assert "Created during retry" not in retried_list.args[1]
@@ -288,7 +288,7 @@ def test_webhook_auth_and_commands(system):
     assert send('/edit 1 改到週日').status_code == 200
     assert service.list_open()[0]['due_at'].startswith('2026-09-20T10:00')
     assert bot.send_message.await_args_list[-2].args[1].startswith('<b>Updated · Task 1</b>')
-    assert bot.send_message.await_args_list[-1].args[1].startswith('<b>Tasks</b>')
+    assert bot.send_message.await_args_list[-1].args[1].startswith('<b>Unscheduled</b>')
     assert send('/done 1').status_code == 200
     assert bot.send_message.call_args.args[1] == 'Completed Test task\n\nNo open tasks, Sir. A welcome state of affairs.'
     assert service.list_open() == []
@@ -308,7 +308,7 @@ def test_webhook_auth_and_commands(system):
     assert send('/edit 1 改成完成 roadmap 並移到 10/03 18:00').status_code == 200
     assert bot.send_message.await_args_list[-2].args[1].startswith('<b>Updated · Task 1</b>')
     assert bot.send_message.await_args_list[-1].args[1] == (
-        '<b>Tasks</b>\n'
+        '<b>Unscheduled</b>\n'
         '1. 🚨 <b>Finalize roadmap</b>\n'
         '<b>Due</b> 10/03 (Sat) 18:00\n'
         '<b>#Chronos</b>')
@@ -448,7 +448,7 @@ def test_failed_edit_is_saved_and_can_be_retried_by_stable_task_id(system):
     assert service.list_open()[0]['title'] == 'Short title'
     assert main.db.get_pending_task_edit(70) is None
     assert bot.send_message.await_args_list[-2].args[1].startswith('<b>Updated · Task 1</b>')
-    assert bot.send_message.await_args_list[-1].args[1].startswith('<b>Tasks</b>')
+    assert bot.send_message.await_args_list[-1].args[1].startswith('<b>Unscheduled</b>')
     bot.request.assert_awaited_with('editMessageReplyMarkup', {
         'chat_id': 123, 'message_id': 701, 'reply_markup': {'inline_keyboard': []},
     })
@@ -524,7 +524,7 @@ def test_persistence_order_and_reschedule(tmp_path):
     reopened = TaskService(Database(db.path), tz)
     assert [x['id'] for x in reopened.list_open()] == [earlier['id'], later['id'], no_due['id']]
     formatted = format_tasks(reopened.list_open(), tz, now=datetime(2026, 9, 14, tzinfo=tz))
-    assert formatted.startswith('<b>Tasks</b>\n1. <b>較早</b>\n<b>Due</b> 09/19 (Sat) 10:00')
+    assert formatted.startswith('<b>Unscheduled</b>\n1. <b>較早</b>\n<b>Due</b> 09/19 (Sat) 10:00')
     assert '#Chronos' in formatted
     assert reopened.complete(earlier['id'])
     assert not reopened.postpone(earlier['id'], datetime.now(tz))
