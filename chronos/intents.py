@@ -119,7 +119,8 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
         candidates = (candidates or [])[:8]
         lines = [escape(question)] + [f"{n}. {escape(by_id[i]['title'][:160])} (#{i})"
                               for n, i in enumerate(candidates, 1) if i in by_id]
-        state = {"instruction": instruction, "action": intent.action, "edit_field": intent.edit_field, "candidate_ids": candidates,
+        state = {"instruction": instruction, "question": question,
+                 "parsed_intent": intent.model_dump(mode="json"), "action": intent.action, "edit_field": intent.edit_field, "candidate_ids": candidates,
                  "snapshots": {str(i): task_fields(by_id[i]) for i in candidates if i in by_id},
                  "expires_at": (now + timedelta(minutes=10)).isoformat(), "token": uuid4().hex}
         def save():
