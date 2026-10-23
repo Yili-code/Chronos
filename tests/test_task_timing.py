@@ -138,7 +138,7 @@ def test_ai_keeps_date_precision_and_time_role(monkeypatch, timing):
 
 def test_ai_patch_preserves_unmentioned_fields(monkeypatch):
     operations = {name: {"op": "keep", "value": None} for name in
-                  ("title", "due_at", "project", "due_date", "scheduled", "event", "uncertain")}
+                  ("title", "content", "due_at", "project", "due_date", "scheduled", "event", "uncertain")}
     operations.update(due_at={"op": "clear", "value": None},
                       event={"op": "set", "value": "2026-10-10"})
     mock_provider(monkeypatch, lambda request: httpx.Response(200, json={"candidates": [
@@ -157,7 +157,7 @@ def test_ai_patch_preserves_unmentioned_fields(monkeypatch):
                                       {"op": "clear", "value": None}])
 def test_invalid_title_operations_fail_without_silent_changes(monkeypatch, invalid):
     operations = {name: {"op": "keep", "value": None} for name in
-                  ("title", "due_at", "project", "due_date", "scheduled", "event", "uncertain")}
+                  ("title", "content", "due_at", "project", "due_date", "scheduled", "event", "uncertain")}
     operations["title"] = invalid
     mock_provider(monkeypatch, lambda request: httpx.Response(200, json={"candidates": [
         {"content": {"parts": [{"text": json.dumps(operations)}]}}]}))

@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     telegram_chat_id: int | None = None
     public_base_url: str = ""
     scheduler_secret: str = ""
+    assignment_scan_job: str = Field(default="", pattern=r"^(?:[a-z][a-z0-9-]{0,62})?$")
+    assignment_scan_project: str = Field(default="", pattern=r"^(?:[a-z][a-z0-9-]{4,62})?$")
+    assignment_scan_region: str = Field(default="asia-east1", pattern=r"^[a-z]+-[a-z]+[0-9]$")
     enable_internal_scheduler: bool = True
     enable_study_tracking: bool = False
     enable_gmail: bool = False

@@ -11,6 +11,7 @@ from .db import create_database
 from .settings import settings
 from .tronclass_collector import TRACKED_SEMESTER
 from .telegram import TelegramClient
+from . import assignment_access
 
 
 def _excluded_course_ids(value: str) -> set[str]:
@@ -26,17 +27,27 @@ def _excluded_course_ids(value: str) -> set[str]:
 
 
 async def _main() -> dict:
-    if not settings.tronclass_username or not settings.tronclass_password:
-        raise RuntimeError("TronClass credentials are not configured")
     if not settings.telegram_chat_id or not settings.telegram_bot_token:
         raise RuntimeError("Telegram delivery is not configured")
     db = create_database(settings)
     db.initialize()
-    return await run_assignment_scan(
-        db, TelegramClient(settings.telegram_bot_token), settings.telegram_chat_id,
-        datetime.now(settings.tz), settings.tronclass_username, settings.tronclass_password,
-        excluded_course_ids=_excluded_course_ids(settings.tronclass_excluded_course_ids),
-    )
+    bot = TelegramClient(settings.telegram_bot_token)
+    now = datetime.now(settings.tz)
+    request = db.get_task_action_state(assignment_access.KEY) or {}
+    interactive = request.get('status') in assignment_access.ACTIVE and request.get('expires_at', '') > now.isoformat()
+    try:
+        if not settings.tronclass_username or not settings.tronclass_password:
+            raise RuntimeError('TronClass credentials are not configured')
+        report = await run_assignment_scan(
+            db, bot, settings.telegram_chat_id, now, settings.tronclass_username, settings.tronclass_password,
+            excluded_course_ids=_excluded_course_ids(settings.tronclass_excluded_course_ids), interactive=interactive)
+    except Exception:
+        report = {'assignment_scan': 'runner_failed'}
+        db.mutate_task_action_state(assignment_access.OUTCOME, lambda old: report)
+        await assignment_access.finish(db, bot, now, report)
+        raise
+    await assignment_access.finish(db, bot, now, report)
+    return report
 
 
 def main() -> int:

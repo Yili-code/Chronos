@@ -20,7 +20,7 @@ class Intent(BaseModel):
         "plan_list", "plan_request", "plan_edit", "plan_feedback", "backward", "backward_progress",
         "replan", "agenda", "free", "info", "reminder_create", "reminder_list", "reminder_cancel",
         "classday", "calendar_view", "calendar_edit", "ai_usage", "announcements", "announcement",
-        "mail_next", "cancel", "clarify", "unsupported", "acknowledge",
+        "mail_next", "cancel", "clarify", "unsupported", "acknowledge", "preference", "assignment_query", "assignment_scan",
     ]
     task_ids: list[Annotated[int, Field(strict=True, ge=1)]] = Field(default_factory=list, max_length=100)
     instruction: str = Field(default="", max_length=4000)
@@ -38,6 +38,11 @@ class Intent(BaseModel):
     content: str | None = Field(default=None, max_length=2000)
     event_category: Literal["contest", "meeting", "social", "other"] | None = None
     edit_field: Literal["title", "content"] | None = None
+    preference_operation: Literal["set", "list", "forget"] | None = None
+    preference_key: str | None = Field(default=None, min_length=1, max_length=80)
+    preference_value: str | None = Field(default=None, min_length=1, max_length=300)
+    assignment_course: Literal['security', 'computer-architecture', 'software-engineering', 'graph-algorithms',
+                              'database-systems', 'competitive-programming', 'operating-systems'] | None = None
 
 
 TARGET_ACTIONS = {"task_edit", "task_complete", "plan_request", "plan_edit", "plan_feedback"}
@@ -65,7 +70,10 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
     by_id = {item["id"]: item for item in items}
     if bound_task_id is not None and bound_task_id not in by_id:
         return lambda: "這項任務已結束，請從 /task 選擇其他任務。"
-    context = {"bound_task_id": bound_task_id, "clarification": pending}
+    from . import preferences
+    saved_preferences = preferences.read(app.db, chat_id) if persistent else {}
+    context = {"bound_task_id": bound_task_id, "clarification": pending,
+               "preferences": saved_preferences}
     reminder_items = list((app.db.get_task_action_state(app.reminders.KEY) or {}).values()) if persistent else []
     reminder_items = [item for item in reminder_items if item.get("chat_id") == chat_id
                       and item.get("status") in {"active", "pending"}]
@@ -128,6 +136,18 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
         return clarify(intent.question or "請補充要處理的事項。", ids)
     if intent.action == "unsupported":
         return lambda: "目前無法處理這個要求。可以查行程、新增或調整任務。"
+    if intent.action == "preference":
+        if not persistent:
+            return lambda: "請在 Telegram 對話管理偏好。"
+        operation = intent.preference_operation
+        if operation not in {"set", "list", "forget"}:
+            return clarify("想記住、查詢，還是忘記哪一項偏好？")
+        if operation != "list" and not intent.preference_key:
+            return clarify("請說明是哪一項偏好。")
+        if operation == "set" and not intent.preference_value:
+            return clarify("請說明偏好的內容。")
+        return lambda: preferences.apply(app.db, chat_id, operation,
+                                        intent.preference_key, intent.preference_value)
     if ids and pending:
         for task_id in ids:
             snapshot = pending.get("snapshots", {}).get(str(task_id))
@@ -142,7 +162,15 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
               "plan_list": "/plan", "free": "/free", "info": "/info",
               "calendar_view": "/calendar", "ai_usage": "/ai_usage"}
     try:
-        if intent.action in simple:
+        if intent.action == 'assignment_query':
+            from . import assignment_access
+            action = lambda: assignment_access.query(app.db, app.settings, course=intent.assignment_course, page=intent.page)
+        elif intent.action == 'assignment_scan':
+            from . import assignment_access
+            if intent.assignment_course is not None:
+                return lambda: assignment_access.query(app.db, app.settings, course=intent.assignment_course, page=intent.page)
+            action = lambda: assignment_access.request_refresh(app.db, app.settings, chat_id, update_id)
+        elif intent.action in simple:
             action = await app.prepare_message(simple[intent.action], update_id=update_id, chat_id=chat_id)
         elif intent.action == "task_create":
             action = await app.prepare_message(text if not pending else instruction, update_id=update_id, chat_id=chat_id, create_only=True)
@@ -198,6 +226,11 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
                     or not timedelta(0) < end - start <= timedelta(days=7)):
                 return clarify("想查哪一天、哪個時段的行程？")
             start, end = start.astimezone(app.settings.tz), end.astimezone(app.settings.tz)
+            # Calendar uses an exclusive end; whole-day/evening queries include the final second.
+            explicit_seconds = re.search(r"\d{1,2}:\d{2}:\d{2}|(?:點|点|時|时|分)\s*[0-9一二三四五六七八九十零〇]+秒", text)
+            if ((end.hour, end.minute, end.second, end.microsecond) == (23, 59, 59, 0)
+                    and not explicit_seconds and end + timedelta(seconds=1) - start <= timedelta(days=7)):
+                end += timedelta(seconds=1)
             await app.google_calendar.verify_owner()
             events = await app.google_calendar.agenda(start, end)
             from .evening_agenda import render_window_agenda
