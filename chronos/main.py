@@ -1,3 +1,4 @@
+import asyncio
 from html import escape
 import hmac
 import json
@@ -319,6 +320,14 @@ async def deliver_learning_reply(chat_id, update_id, receipt):
         if saved and saved.get("message_id") == message_id:
             learning_calendar().retire(previous.get("message_id"), previous.get("edit_message_id"))
     db.mark_update_delivered(update_id)
+    if message['text'].startswith('Updated. Review the new execution plan'):
+        message_id = result.get('result', {}).get('message_id')
+        if message_id is not None:
+            await asyncio.sleep(7)
+            try:
+                await delete_telegram_messages(chat_id, message_id)
+            except (RuntimeError, HTTPException):
+                logging.getLogger(__name__).warning('Planning update notice cleanup failed')
 
 
 async def delete_telegram_messages(chat_id: int, *message_ids: int | None) -> None:
@@ -768,7 +777,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             await telegram.answer_callback_query(update.callback_query.id)
         return {"ok": True}
     if update.callback_query and (update.callback_query.data or "").startswith("learn:"):
-        matched = re.fullmatch(r"learn:(approve|edit|earlier|later|longer|shorter|postpone|more|lots|shuffle|manual|reject|retry|done|partial|skipped):(\d+):([a-f0-9]{32})", update.callback_query.data)
+        matched = re.fullmatch(r"learn:(day[0-9]{8}|approve|edit|earlier|later|longer|shorter|postpone|more|lots|shuffle|manual|reject|retry|done|partial|skipped):(\d+):([a-f0-9]{32})", update.callback_query.data)
         if not matched or source_message.message_id is None:
             raise HTTPException(status_code=400, detail="Invalid planning callback")
         receipt = db.get_update(update_id)
@@ -812,7 +821,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             elif instruction in {"/cancel", "取消"}:
                 planner = learning_calendar()
                 state = planner.get(study_edit["task_id"])
-                reply = (planner.edit_menu(study_edit["task_id"], state) if state and state["status"] == "editing"
+                reply = (await planner.dated_edit_menu(study_edit["task_id"], state) if state and state["status"] == "editing"
                     and state["token"] == study_edit["token"] else "This manual adjustment has ended. Open Adjust plan on the current execution plan.")
                 db.mutate_task_action_state(pending_key, lambda old: {} if (old or {}).get("token") == study_edit["token"] else old)
             else:

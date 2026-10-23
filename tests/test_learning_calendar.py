@@ -476,7 +476,8 @@ def test_edit_replaces_card_and_requires_fresh_approval(setup):
     assert "10/19 (Mon)" in text
     assert [b["text"] for b in buttons] == ["Confirm schedule", "Adjust plan", "Defer"]
     prompt = asyncio.run(planner.callback("edit", task["id"], old["token"], 50))
-    assert len(prompt["messages"][0]["reply_markup"]["inline_keyboard"]) == 8
+    rows = prompt["messages"][0]["reply_markup"]["inline_keyboard"]
+    assert sum(not row[0]["callback_data"].startswith("learn:day") for row in rows) == 8
     prompt = asyncio.run(planner.callback("manual", task["id"], old["token"], 50))
     assert prompt["messages"][0]["reply_markup"]["force_reply"]
     assert "no longer available" in asyncio.run(planner.callback("approve", task["id"], old["token"], 50))
@@ -1606,6 +1607,49 @@ def test_checkins_run_after_cutoff_without_new_proposals(setup, finish):
     assert bot.send_message.await_count == 2
     assert planner.get(queued['id']) is None
     calendar.insert.assert_awaited_once()
+
+
+@pytest.mark.parametrize('free_minutes,visible', [(89, False), (90, True), (91, True)])
+def test_date_options_require_continuous_duration(setup, free_minutes, visible):
+    planner, task, calendar, _ = setup
+    asyncio.run(planner.tick(NOW))
+    state = planner.get(task['id'])
+    state.update(minutes=90)
+    day = (NOW + timedelta(days=1)).replace(hour=9)
+    # Remove class load to isolate the exact-duration boundary.
+    planner.db.mutate_task_action_state('learning:course-calendar-policy', lambda old: {
+        'first_day': '2026-01-01', 'last_regular_day': '2026-12-31',
+        'excluded_dates': [(NOW + timedelta(days=i)).date().isoformat() for i in range(1, 4)]})
+    calendar.busy.return_value = [(day + timedelta(minutes=free_minutes), day.replace(hour=23))]
+    menu = asyncio.run(planner.dated_edit_menu(task['id'], state, NOW))
+    labels = [row[0]['text'] for row in menu['messages'][0]['reply_markup']['inline_keyboard']]
+    assert ('10/20 (Tue)' in labels) is visible
+    calendar.insert.assert_not_awaited()
+
+
+def test_date_callback_rechecks_busy_calendar_without_booking(setup):
+    planner, task, calendar, _ = setup
+    asyncio.run(planner.tick(NOW))
+    state = planner.update(task['id'], lambda old: {**old, 'status': 'editing', 'edit_message_id': 60})
+    tomorrow = (NOW + timedelta(days=1)).replace(hour=0)
+    calendar.busy.return_value = [(tomorrow, tomorrow + timedelta(days=1))]
+    reply = asyncio.run(planner.callback('day20261020', task['id'], state['token'], 60))
+    assert 'No continuous' in reply
+    assert planner.get(task['id'])['token'] == state['token']
+    calendar.insert.assert_not_awaited()
+
+
+def test_updated_notice_is_deleted_after_seven_seconds(system, monkeypatch):
+    _, service, telegram, _ = system
+    monkeypatch.setattr(main, 'telegram', telegram)
+    pause = AsyncMock()
+    monkeypatch.setattr(main.asyncio, 'sleep', pause)
+    telegram.send_message.return_value = {'ok': True, 'result': {'message_id': 987}}
+    telegram.request.return_value = {'ok': True}
+    receipt = {'delivered': False, 'reply': 'Updated. Review the new execution plan and press Confirm schedule to book it.'}
+    asyncio.run(main.deliver_learning_reply(123, 1234567, receipt))
+    pause.assert_awaited_once_with(7)
+    telegram.request.assert_awaited_with('deleteMessage', {'chat_id': 123, 'message_id': 987})
 
 
 def test_owner_task_effort_drives_proposal_without_ai_estimate(setup):

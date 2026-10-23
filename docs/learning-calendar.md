@@ -128,6 +128,14 @@ Defer cannot alter an already approved Calendar event.
 
 ## Adjusting an execution plan
 
+The adjustment menu also offers tomorrow and the following two dates in the configured
+local timezone. A date appears only when a continuous block of the current planned
+duration fits before the deadline, within working hours and the daily workload limit,
+without conflicting with classes, Calendar events or reserved work. Selecting a date
+rechecks availability and creates a new preview; **Confirm schedule** is still required.
+The “Updated. Review the new execution plan…” acknowledgement is deleted after seven
+seconds. Telegram deletion failures leave the saved plan intact.
+
 Press **Adjust plan** to see concrete duration options plus **Earlier**, **Later**,
 **Find another slot**, **Set manually**, and **Defer**. Duration buttons show only
 their resulting minutes: for a 120-minute block, longer is `150 min` and shorter is
