@@ -5,13 +5,27 @@ from datetime import datetime
 import httpx
 import pytest
 
-from chronos.ai import AIError, ExternalAI
+from chronos.ai import AIError, ExternalAI, relative_date_reference
 from chronos.settings import Settings
 
 
 def config(**changes):
     return Settings(_env_file=None, gemini_api_base="https://generativelanguage.example/v1beta",
                     gemini_api_key="test-secret", gemini_model="test-model", **changes)
+
+
+@pytest.mark.parametrize("today,next_monday,next_friday,day_after", [
+    ("2026-10-23", "2026-10-26", "2026-10-30", "2026-10-25"),
+    ("2026-10-25", "2026-10-26", "2026-10-30", "2026-10-27"),
+    ("2026-10-26", "2026-11-02", "2026-11-06", "2026-10-28"),
+    ("2026-12-31", "2027-01-04", "2027-01-08", "2027-01-02"),
+])
+def test_relative_date_references_follow_iso_weeks_and_year_rollover(today, next_monday, next_friday, day_after):
+    reference = relative_date_reference(datetime.fromisoformat(today + "T12:00:00+08:00"))
+    assert reference["今天/today"] == today
+    assert reference["下週一/next Monday"] == next_monday
+    assert reference["下週五/next Friday"] == next_friday
+    assert reference["後天/day after tomorrow"] == day_after
 
 
 def test_default_model_is_flash_lite(monkeypatch):
