@@ -219,6 +219,35 @@ class LearningCalendar:
             return f"Task #{task_id} is next. {timing}; Calendar writing requires confirmation."
         return self.db._run_task_action(request)
 
+    async def nightly_proposals(self, now=None):
+        """Select once per Taipei date; retries resume the existing approval queue."""
+        if not self.settings.enable_learning_calendar:
+            return {"enabled": False}
+        if not self.settings.learning_enabled_since or not self.calendar.configured():
+            return {"enabled": True, "waiting_for": "calendar authorization and activation"}
+        now = (now or datetime.now(self.settings.tz)).astimezone(self.settings.tz)
+        if now.hour != 21:
+            return {"waiting_for": "21:00 Asia/Taipei"}
+        day = now.date().isoformat()
+        key = "learning:nightly:" + day
+        def select():
+            receipt = self.db.get_task_action_state(key)
+            if receipt is not None:
+                return receipt
+            tasks = self.db.list_open_tasks()
+            states = {task["id"]: self.get(task["id"]) for task in tasks}
+            eligible = sorted((task for task in tasks if not states[task["id"]]),
+                key=lambda task: (datetime.fromisoformat(task["created_at"]), task["id"]))[:4]
+            receipt = {"date": day, "task_ids": [task["id"] for task in eligible]}
+            for task in eligible:
+                self.db._save_task_action_state(f"learning:task:{task['id']}",
+                    {"status": "queued", "token": uuid4().hex, "nightly_batch": day})
+            self.db._save_task_action_state(key, receipt)
+            return receipt
+        receipt = self.db._run_task_action(select)
+        result = await self.tick(now)
+        return {**result, "nightly_task_ids": receipt["task_ids"], "date": day}
+
     def waiting_turn(self, active):
         return (f"Confirm or adjust the current execution plan first (task #{active}). This task is queued."
                 if active else "This task is queued. Its execution plan will be prepared shortly.")
@@ -259,6 +288,7 @@ class LearningCalendar:
                 return None
             state = {"status": "planning", "token": claim,
                 "lease_until": (now + timedelta(minutes=3)).isoformat(), "snapshot": task_fields(task),
+                "nightly_batch": (old or {}).get("nightly_batch"),
                 "requested_minutes": (old or {}).get("requested_minutes"),
                 "duration_source": (old or {}).get("duration_source"),
                 "duration_estimate": (old or {}).get("duration_estimate"),
@@ -1026,10 +1056,21 @@ class LearningCalendar:
                 await self.follow_up(task, state, now)
             elif state["status"] == "awaiting_feedback" and state.get("delivery") == "feedback_pending":
                 await self.deliver_feedback(task, state)
-        # Quiet hours restrict automatic proposals, not approved-session lifecycle work.
-        if not force_proposal and not self.settings.learning_start_hour <= now.hour < self.settings.learning_end_hour:
-            return {"enabled": True, "quiet_hours": True, "proposals_checked": 0}
+        # The nightly batch may prepare tomorrow's blocks during quiet hours.
+        # Approval, Calendar conflict checks and work-hour limits remain unchanged.
         active = self.sync_queue()
+        nightly = [task for task in tasks if (state := self.get(task["id"]))
+                   and state.get("nightly_batch") and state["status"] in
+                   {"queued", "planning", "proposed", "editing", "no_slot"}]
+        quiet = not self.settings.learning_start_hour <= now.hour < self.settings.learning_end_hour
+        if quiet and not force_proposal:
+            if not nightly or (active is not None and active not in {task["id"] for task in nightly}):
+                return {"enabled": True, "quiet_hours": True, "proposals_checked": 0}
+            tasks = nightly
+        # Retain the active turn, then consume selected oldest tasks before other work.
+        nightly_ids = {task["id"] for task in nightly}
+        tasks = sorted(tasks, key=lambda task: (task["id"] not in nightly_ids,
+            datetime.fromisoformat(task["created_at"]), task["id"])) if nightly else tasks
         # Day buckets retain approved load after task completion without scanning
         # the ever-growing feedback history on every scheduler tick.
         booked_minutes = {}
