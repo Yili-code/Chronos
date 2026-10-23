@@ -20,7 +20,7 @@ class Intent(BaseModel):
         "plan_list", "plan_request", "plan_edit", "plan_feedback", "backward", "backward_progress",
         "replan", "agenda", "free", "info", "reminder_create", "reminder_list", "reminder_cancel",
         "classday", "calendar_view", "calendar_edit", "ai_usage", "announcements", "announcement",
-        "mail_next", "cancel", "clarify", "unsupported", "acknowledge", "preference",
+        "mail_next", "cancel", "clarify", "unsupported", "acknowledge", "preference", "assignment_query", "assignment_scan",
     ]
     task_ids: list[Annotated[int, Field(strict=True, ge=1)]] = Field(default_factory=list, max_length=100)
     instruction: str = Field(default="", max_length=4000)
@@ -41,6 +41,8 @@ class Intent(BaseModel):
     preference_operation: Literal["set", "list", "forget"] | None = None
     preference_key: str | None = Field(default=None, min_length=1, max_length=80)
     preference_value: str | None = Field(default=None, min_length=1, max_length=300)
+    assignment_course: Literal['security', 'computer-architecture', 'software-engineering', 'graph-algorithms',
+                              'database-systems', 'competitive-programming', 'operating-systems'] | None = None
 
 
 TARGET_ACTIONS = {"task_edit", "task_complete", "plan_request", "plan_edit", "plan_feedback"}
@@ -160,7 +162,15 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
               "plan_list": "/plan", "free": "/free", "info": "/info",
               "calendar_view": "/calendar", "ai_usage": "/ai_usage"}
     try:
-        if intent.action in simple:
+        if intent.action == 'assignment_query':
+            from . import assignment_access
+            action = lambda: assignment_access.query(app.db, app.settings, course=intent.assignment_course, page=intent.page)
+        elif intent.action == 'assignment_scan':
+            from . import assignment_access
+            if intent.assignment_course is not None:
+                return lambda: assignment_access.query(app.db, app.settings, course=intent.assignment_course, page=intent.page)
+            action = lambda: assignment_access.request_refresh(app.db, app.settings, chat_id, update_id)
+        elif intent.action in simple:
             action = await app.prepare_message(simple[intent.action], update_id=update_id, chat_id=chat_id)
         elif intent.action == "task_create":
             action = await app.prepare_message(text if not pending else instruction, update_id=update_id, chat_id=chat_id, create_only=True)
