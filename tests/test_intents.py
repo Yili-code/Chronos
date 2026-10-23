@@ -121,6 +121,23 @@ def test_model_text_is_not_an_executable_command(store, monkeypatch):
     main.ai.parse_many.assert_awaited_once_with("記錄文字")
 
 
+def test_natural_tag_removal_preserves_other_fields_and_can_undo(store, monkeypatch):
+    task = main.tasks.create("Complete database report", project="database")
+    classify(monkeypatch, action="task_edit", task_ids=[task["id"]], instruction="資料庫報告不要標籤了")
+    parser = AsyncMock(return_value=ParsedTask(task["title"], project=None))
+    monkeypatch.setattr(main.ai, "edit", parser)
+    run("資料庫報告不要標籤了")
+    after = main.tasks.list_open()[0]
+    assert after["title"] == task["title"] and after["due_at"] == task["due_at"]
+    assert after["project"] is None
+    parser.assert_awaited_once()
+    assert parser.await_args.args[0]["id"] == task["id"]
+    assert parser.await_args.args[1] == "資料庫報告不要標籤了"
+    classify(monkeypatch, action="undo")
+    run("撤銷剛剛修改", 2)
+    assert main.tasks.list_open()[0]["project"] == "database"
+
+
 def test_clear_requires_existing_confirmation(store, monkeypatch):
     main.tasks.create("Keep until confirmed")
     classify(monkeypatch, action="clear_tasks")
@@ -295,8 +312,11 @@ def test_legacy_card_edit_keeps_deterministic_path(system, monkeypatch):
     main.ai.classify_intent.assert_not_awaited()
 
 
-def test_batch_creation_is_atomic_and_replay_safe(store, monkeypatch):
-    text = "一次新增多筆 tasks 複習 database 第一章到第五章 需附上 hashtag"
+@pytest.mark.parametrize("text", [
+    "一次新增多筆 tasks 複習 database 第一章到第五章 需附上 hashtag",
+    "把資料庫第一章到第五章分成五個任務",
+])
+def test_batch_creation_is_atomic_and_replay_safe(store, monkeypatch, text):
     classify(monkeypatch, action="task_create", instruction="Review database chapters 1 to 5")
     parser = AsyncMock(return_value=[ParsedTask(f"Review database chapter {n}", project="database")
                                     for n in range(1, 6)])

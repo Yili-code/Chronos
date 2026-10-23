@@ -22,7 +22,7 @@ def _eligible_first_scan(item, now: datetime) -> bool:
 
 
 async def run_assignment_scan(db, telegram, chat_id: int, now: datetime, username: str, password: str, *, excluded_course_ids: set[str] | None = None,
-                              collect=collect_assignments) -> dict:
+                              collect=collect_assignments, interactive=False) -> dict:
     now = aware(now)
     token = uuid4().hex
     def claim(previous):
@@ -33,15 +33,19 @@ async def run_assignment_scan(db, telegram, chat_id: int, now: datetime, usernam
     if claimed["token"] != token:
         return {"assignment_scan": "already_running"}
     try:
-        return await _scan(db, telegram, chat_id, now, username, password,
-                           excluded_course_ids=excluded_course_ids, collect=collect)
+        report = await _scan(db, telegram, chat_id, now, username, password,
+                           excluded_course_ids=excluded_course_ids, collect=collect, interactive=interactive)
+        db.mutate_task_action_state('assignment:last-outcome', lambda old: {
+            'observed_at': now.isoformat(), **{k: v for k, v in report.items()
+                if k in {'assignment_scan', 'created', 'updated', 'existing'}}})
+        return report
     finally:
         db.mutate_task_action_state("assignment-scan-lease", lambda current:
             {"token": token, "expires_at": now.isoformat()}
             if not current or current.get("token") == token else current)
 
 
-async def _scan(db, telegram, chat_id, now, username, password, *, excluded_course_ids, collect):
+async def _scan(db, telegram, chat_id, now, username, password, *, excluded_course_ids, collect, interactive=False):
     """Scan once using the configured course scope on every scheduled run."""
     now = aware(now)
     calendar = CalendarOverrides.from_record(db.get_calendar_overrides())
@@ -53,7 +57,7 @@ async def _scan(db, telegram, chat_id, now, username, password, *, excluded_cour
     except CollectorFailure as error:
         failed = record_failure(before, str(error))
         db.save_assignment_scan_state(failed.to_record())
-        if failed.consecutive_failures < 2 or failed.failure_notified:
+        if interactive or failed.consecutive_failures < 2 or failed.failure_notified:
             return {"assignment_scan": "failure_recorded", "consecutive_failures": failed.consecutive_failures}
         key = "assignment-scan:failure:" + sha256(f"{failed.failure_sequence}:{failed.failure_fingerprint}".encode()).hexdigest()
         ledger = StudyDeliveryLedger(db)
@@ -93,7 +97,7 @@ async def _scan(db, telegram, chat_id, now, username, password, *, excluded_cour
     db.save_assignment_scan_state(record_success(before, now, baseline_keys=baseline_keys).to_record())
     delivery = await tick_assignments(db, telegram, chat_id, now)
     status_sent = False
-    if created == 0:
+    if created == 0 and not interactive:
         key = f"assignment-scan:{now.date().isoformat()}:no-new"
         ledger = StudyDeliveryLedger(db)
         claim = ledger.claim(key, now)

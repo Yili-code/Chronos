@@ -7,6 +7,8 @@ param(
     [string]$GeminiModel = "gemini-3.5-flash-lite",
     [switch]$EnableGmail,
     [switch]$EnableStudyTracking,
+    [switch]$EnableAssignmentRefresh,
+    [string]$AssignmentScanJob = "chronos-assignment-scan",
     [switch]$DisableStudyTracking
 )
 
@@ -327,7 +329,7 @@ foreach ($entry in $environment.Split(',')) {
 }
 if ($null -ne $existingService) {
     foreach ($binding in $existingService.spec.template.spec.containers[0].env) {
-        if ($binding.name -notmatch '^CHRONOS_(CALENDAR_|LEARNING_|ENABLE_LEARNING_CALENDAR$)') { continue }
+        if ($binding.name -notmatch '^CHRONOS_(CALENDAR_|LEARNING_|ASSIGNMENT_SCAN_|ENABLE_LEARNING_CALENDAR$)') { continue }
         $reference = $binding.valueFrom.secretKeyRef
         if ($reference -and $reference.name -and $reference.key) {
             $secretBindings += "$($binding.name)=$($reference.name):$($reference.key)"
@@ -336,6 +338,22 @@ if ($null -ne $existingService) {
             $environmentValues[$binding.name] = ConvertTo-ChronosEnvironmentString $binding.value
         }
     }
+}
+if ($EnableAssignmentRefresh) {
+    if ($AssignmentScanJob -notmatch '^[a-z][a-z0-9-]{0,62}$') { throw "Invalid assignment scan Job name" }
+    $assignmentJobJson = (& $gcloudCommand run jobs describe $AssignmentScanJob --project $ProjectId --region $Region `
+        --format "json(metadata.labels,labels)" --quiet) -join "`n"
+    if ($LASTEXITCODE -ne 0) { throw "Could not verify assignment scan Job" }
+    $assignmentJob = $assignmentJobJson | ConvertFrom-Json
+    $assignmentLabels = if ($assignmentJob.PSObject.Properties['metadata']) { $assignmentJob.metadata.labels } else { $assignmentJob.labels }
+    if ($assignmentLabels.'commit-sha' -ne $releaseSha) {
+        throw "Deploy the assignment scanner from this same validated commit before enabling manual refresh"
+    }
+    Invoke-Gcloud run jobs add-iam-policy-binding $AssignmentScanJob --project $ProjectId --region $Region `
+        --member "serviceAccount:$runtimeAccount" --role roles/run.invoker --quiet | Out-Null
+    $environmentValues['CHRONOS_ASSIGNMENT_SCAN_JOB'] = $AssignmentScanJob
+    $environmentValues['CHRONOS_ASSIGNMENT_SCAN_PROJECT'] = $ProjectId
+    $environmentValues['CHRONOS_ASSIGNMENT_SCAN_REGION'] = $Region
 }
 $releaseSource = New-ChronosJobSource -Root $projectRoot -Dockerfile "Dockerfile"
 $releaseDirectory = $releaseSource.Directory
