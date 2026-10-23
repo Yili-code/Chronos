@@ -151,7 +151,7 @@ def respond(db, tasks, settings, chat_id, message_id, token, action, now=None):
             return '建議已過期，請重新產生。沒有變更。'
         if action == 'cancel':
             db._save_task_action_state(KEY + token, {**state, 'status': 'cancelled'})
-            return '已保留原本的任務與標籤。'
+            return {'messages': [{'text': '已保留原本的任務與標籤。', 'delete_after_seconds': 7}]}
         current = tasks.get_open_by_id(state['task_id'])
         if not current or task_fields(current) != state['before']:
             return '這項任務已被修改或結束，請重新確認。沒有套用舊建議。'
@@ -161,7 +161,7 @@ def respond(db, tasks, settings, chat_id, message_id, token, action, now=None):
         if not updated:
             return '這項任務已結束，沒有變更。'
         db._save_task_action_state(KEY + token, {**state, 'status': 'applied'})
-        return {'messages': [{'text': '<b>Task updated</b>\n' + escape(updated['title']) +
+        return {'messages': [{'delete_after_seconds': 7, 'text': '<b>Task updated</b>\n' + escape(updated['title']) +
             ('\n#' + escape(project_display_name(updated['project'], aliases)) if updated.get('project') else ''), 'parse_mode': 'HTML',
             'reply_markup': {'inline_keyboard': [[{'text': 'Undo this edit',
                 'callback_data': 'task:undo:' + updated['undo_token']}]]}}]}

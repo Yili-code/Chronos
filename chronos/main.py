@@ -320,7 +320,7 @@ async def deliver_learning_reply(chat_id, update_id, receipt):
         if saved and saved.get("message_id") == message_id:
             learning_calendar().retire(previous.get("message_id"), previous.get("edit_message_id"))
     db.mark_update_delivered(update_id)
-    if message['text'].startswith('Updated. Review the new execution plan'):
+    if message.get('delete_after_seconds') == 7 or message['text'].startswith('Updated. Review the new execution plan'):
         message_id = result.get('result', {}).get('message_id')
         if message_id is not None:
             await asyncio.sleep(7)
