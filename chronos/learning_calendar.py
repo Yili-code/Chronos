@@ -350,10 +350,24 @@ class LearningCalendar:
                                if evidence.get("samples", 0) >= 3 else self.settings.learning_minutes)
             policy = self.db.get_task_action_state("learning:course-calendar-policy")
             if source == 'nightly_ai':
-                from .nightly_planning import slot_allowed
-                slot = slot_allowed(self, task, state, now, [*busy, *reservations], booked_minutes)
+                from .nightly_planning import check_slot, replacement_slot
+                slot, reasons = check_slot(self, task, state, now, [*busy, *reservations], booked_minutes)
+                if not slot:
+                    state['nightly_invalid_reasons'] = reasons
+                    state['nightly_overview'] = ''
+                    busy = await self.calendar.busy(now, now + timedelta(days=7))
+                    slot = replacement_slot(self, task, state, now, [*busy, *reservations], booked_minutes)
+                    if slot:
+                        state['nightly_replanned_from'] = state['nightly_slot']
+                        state['nightly_slot'] = dict(zip(('start', 'end'), (v.isoformat() for v in slot)))
+                        state['nightly_reason'] = 'Replacement session checked against current availability; confirmation is required.'
             else:
                 slot = find_slot(task, now, busy, reservations, self.settings, minutes, booked_minutes, policy)
+            from .nightly_planning import deadline as task_deadline
+            due = task_deadline(task, self.settings)
+            horizon = min(now + timedelta(days=7), due) if due else now + timedelta(days=7)
+            state['availability_search'] = {'start': now.isoformat(), 'end': horizon.isoformat(),
+                'scope': 'deadline' if due and due <= now + timedelta(days=7) else 'seven_days'}
             plan = {**state, "status": "proposed" if slot else "no_slot", "minutes": minutes,
                     "duration_source": source, "delivery": "proposal_pending", "estimate_samples": evidence.get("samples", 0)}
             if slot:
@@ -383,9 +397,16 @@ class LearningCalendar:
 
     def proposal_content(self, task, state):
         if state["status"] == "no_slot":
-            text = (f"<b>I could not find a suitable work session, Sir.</b>\n{escape(task['title'])}\n"
-                    "No viable work block fits before the deadline within your fixed commitments and workload limits. "
-                    "Change the deadline or duration, then use /plan again.")
+            search = state.get('availability_search')
+            if search:
+                scope = ('before the task deadline' if search['scope'] == 'deadline' else 'in the next 7 days')
+                detail = (f"No continuous {state['minutes']}-minute block fits {scope} within your working hours, "
+                    "current commitments and daily workload limit. Try another duration or planning window.")
+            else:
+                detail = 'This saved allocation has no valid time. Use Replan to search current availability.'
+            text = (f"<b>I could not find a suitable work session, Sir.</b>\n{escape(task['title'])}\n" + detail)
+            if state.get('nightly_invalid_reasons'):
+                text += '\n' + self.allocation_explanation(state)
             buttons = self.buttons(task["id"], state, [("retry", "Replan"), ("postpone", "Defer")])
         else:
             end = datetime.fromisoformat(state["end"]).astimezone(self.settings.tz)
@@ -395,6 +416,8 @@ class LearningCalendar:
                 estimate = state.get('duration_estimate', {}).get('estimated_minutes')
                 text += f"\n{state['minutes']} min planned · estimated remaining work {estimate} min"
                 text += '\n' + escape(state.get('nightly_reason', ''))
+                if state.get('nightly_invalid_reasons'):
+                    text += '\n' + self.allocation_explanation(state)
                 if state.get('nightly_overview'):
                     text = state['nightly_overview'] + '\n\n' + text
             if state.get("progress_note"):
@@ -408,6 +431,16 @@ class LearningCalendar:
             buttons = self.buttons(task["id"], state, [
                 ("approve", "Confirm schedule"), ("edit", "Adjust plan"), ("postpone", "Defer")])
         return text, buttons
+
+    @staticmethod
+    def allocation_explanation(state):
+        labels = {'calendar_conflict': 'a Calendar event or reserved block overlaps it',
+            'pending_plan': 'another pending plan overlaps it', 'daily_limit': 'the daily workload limit would be exceeded',
+            'elapsed': 'its start time has passed', 'deadline': 'it ends after the task deadline',
+            'working_hours': 'it falls outside working hours', 'duration_changed': 'its duration no longer matches',
+            'fixed_commitment': 'it conflicts with a class or protected break'}
+        reasons = [labels[value] for value in state['nightly_invalid_reasons'] if value in labels]
+        return 'The original allocation no longer fits: ' + '; '.join(reasons) + '.'
 
     async def deliver_proposal(self, task, state):
         text, buttons = self.proposal_content(task, state)
@@ -478,8 +511,8 @@ class LearningCalendar:
                 from .nightly_planning import slot_allowed
                 current_busy = await self.calendar.busy(start, end)
                 if slot_allowed(self, task, state, now, current_busy) is None:
-                    self.update(task['id'], lambda old: {**old, 'status': 'needs_replan'})
-                    return 'Tomorrow’s allocation no longer fits. No event was created; request a fresh plan.'
+                    self.update(task['id'], lambda old: {**old, 'status': 'queued'})
+                    return 'That planned time is no longer available. No event was created. A fresh proposal will be prepared and requires confirmation.'
             if overlaps(start, end, short_task_windows(start.astimezone(self.settings.tz).date(), self.settings.tz,
                                                       (end - start).total_seconds() / 60)):
                 self.update(task["id"], lambda old: {**old, "status": "queued"})
@@ -1166,6 +1199,12 @@ class LearningCalendar:
             state = self.get(task["id"])
             if not state and datetime.fromisoformat(task["created_at"]) < datetime.fromisoformat(self.settings.learning_enabled_since):
                 continue
+            if (state and state['status'] == 'no_slot' and state.get('duration_source') == 'nightly_ai'
+                    and not state.get('availability_search')):
+                # Repair legacy allocation-only failures once, without resending
+                # genuinely exhausted searches on every scheduler tick.
+                state = self.update(task['id'], lambda old: {**old, 'status': 'queued'}
+                    if old and old.get('token') == state['token'] and old['status'] == 'no_slot' else old)
             if not state or state["status"] in {"queued", "planning"}:
                 await self.propose(task, now, [], booked_minutes)
                 state = self.get(task["id"])

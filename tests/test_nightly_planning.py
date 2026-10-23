@@ -174,3 +174,173 @@ def test_nightly_transport_uncertainty_never_resends_or_books(setup):
     asyncio.run(planner.nightly_proposals(NIGHT + timedelta(minutes=1)))
     assert bot.send_message.await_count == 1
     calendar.insert.assert_not_awaited()
+
+
+
+def seed_nightly(planner, task, status='queued'):
+    from chronos.task_actions import task_fields
+    start = (NIGHT + timedelta(days=1)).replace(hour=10, minute=30)
+    value = {'status': status, 'token': 'old-allocation', 'snapshot': task_fields(task),
+        'nightly_batch': NIGHT.date().isoformat(),
+        'nightly_slot': {'start': start.isoformat(), 'end': (start + timedelta(minutes=90)).isoformat()},
+        'nightly_overview': 'Obsolete 10:30 overview', 'nightly_reason': 'Original allocation',
+        'requested_minutes': 90, 'duration_source': 'nightly_ai',
+        'duration_estimate': {'estimated_minutes': 120}}
+    planner.update(task['id'], lambda old: value)
+    return value
+
+
+def test_stale_nightly_allocation_searches_again_without_booking(setup):
+    planner, task, calendar, bot = setup
+    state = seed_nightly(planner, task)
+    start = NOW.fromisoformat(state['nightly_slot']['start'])
+    calendar.busy.return_value = [(start, start + timedelta(minutes=90))]
+    asyncio.run(planner.tick(NIGHT))
+    fresh = planner.get(task['id'])
+    assert fresh['status'] == 'proposed'
+    assert fresh['nightly_slot'] != state['nightly_slot']
+    assert fresh['nightly_slot']['start'] == fresh['start']
+    assert fresh['minutes'] == fresh['requested_minutes'] == 90
+    assert fresh['duration_estimate']['estimated_minutes'] == 120
+    assert not fresh.get('nightly_overview')
+    assert 'calendar_conflict' in fresh['nightly_invalid_reasons']
+    text, _ = planner.proposal_content(task, fresh)
+    assert 'Obsolete' not in text
+    calendar.insert.assert_not_awaited()
+    asyncio.run(planner.callback('approve', task['id'], 'old-allocation', 50))
+    calendar.insert.assert_not_awaited()
+
+
+def test_failed_nightly_search_reports_real_horizon_without_inventing_deadline(setup):
+    planner, task, calendar, bot = setup
+    planner.db.edit_task(task['id'], task['title'], None, task['project'], {})
+    task = planner.db.get_task(task['id'])
+    seed_nightly(planner, task)
+    calendar.busy.return_value = [(NIGHT, NIGHT + timedelta(days=8))]
+    asyncio.run(planner.tick(NIGHT))
+    state = planner.get(task['id'])
+    assert state['status'] == 'no_slot'
+    assert state['availability_search']['scope'] == 'seven_days'
+    text, _ = planner.proposal_content(task, state)
+    assert 'next 7 days' in text and '90-minute' in text
+    assert 'before the deadline' not in text
+    assert 'original allocation' in text.lower()
+    calendar.insert.assert_not_awaited()
+
+
+def test_nightly_conflict_at_approval_requeues_for_fresh_consent(setup):
+    planner, task, calendar, bot = setup
+    seed_nightly(planner, task)
+    asyncio.run(planner.tick(NIGHT))
+    first = planner.get(task['id'])
+    start = NOW.fromisoformat(first['start'])
+    calendar.busy.return_value = [(start, NOW.fromisoformat(first['end']))]
+    reply = asyncio.run(planner.callback('approve', task['id'], first['token'], first['message_id']))
+    assert 'fresh' in reply.lower()
+    assert planner.get(task['id'])['status'] == 'queued'
+    calendar.insert.assert_not_awaited()
+    asyncio.run(planner.tick(NIGHT))
+    fresh = planner.get(task['id'])
+    assert fresh['status'] == 'proposed' and fresh['token'] != first['token']
+    assert 'approved_at' not in fresh
+    calendar.insert.assert_not_awaited()
+
+
+
+@pytest.mark.parametrize('cause', ['daily_limit', 'pending_plan', 'elapsed', 'duration_changed', 'deadline', 'fixed_commitment'])
+def test_replacement_preserves_allocation_constraints(setup, monkeypatch, cause):
+    from chronos.nightly_planning import slot_allowed
+    from chronos.task_actions import task_fields
+    planner, task, calendar, bot = setup
+    original = seed_nightly(planner, task)
+    start = NOW.fromisoformat(original['nightly_slot']['start'])
+    if cause == 'daily_limit':
+        planner.db.mutate_task_action_state('learning:day:' + start.date().isoformat(), lambda old: {'used': 540})
+    elif cause == 'pending_plan':
+        other = add(planner, 'Other allocated work', 1)
+        planner.update(other['id'], lambda old: {'status': 'queued', 'duration_source': 'nightly_ai',
+            'nightly_batch': NIGHT.date().isoformat(), 'nightly_slot': dict(original['nightly_slot'])})
+    elif cause == 'elapsed':
+        original['nightly_slot'] = {'start': NOW.isoformat(), 'end': (NOW + timedelta(minutes=90)).isoformat()}
+    elif cause == 'duration_changed':
+        original['nightly_slot']['end'] = (start + timedelta(minutes=60)).isoformat()
+    elif cause == 'deadline':
+        planner.db.edit_task(task['id'], task['title'], NOW + timedelta(days=2), task['project'], {})
+        task = planner.db.get_task(task['id'])
+        original['snapshot'] = task_fields(task)
+        original['nightly_slot'] = {'start': (start + timedelta(days=3)).isoformat(),
+                                    'end': (start + timedelta(days=3, minutes=90)).isoformat()}
+    else:
+        # The last five minutes conflict only with the class preparation buffer.
+        import chronos.learning_calendar as module
+        monkeypatch.setattr(module, 'class_windows', lambda day, tz, policy=None:
+            [(start.replace(hour=12, minute=10), start.replace(hour=13, minute=0))]
+            if day == start.date() else [])
+    planner.update(task['id'], lambda old: original)
+    asyncio.run(planner.tick(NIGHT))
+    fresh = planner.get(task['id'])
+    assert cause in fresh['nightly_invalid_reasons']
+    assert fresh['status'] == 'proposed'
+    assert slot_allowed(planner, task, fresh, NIGHT, calendar.busy.return_value) is not None
+    assert fresh['minutes'] == 90
+    calendar.insert.assert_not_awaited()
+
+
+def test_legacy_nightly_no_slot_is_recovered_once_without_duplicate_messages(setup):
+    planner, task, calendar, bot = setup
+    old = seed_nightly(planner, task, status='no_slot')
+    old.update(minutes=90, delivery='proposal_sent', message_id=40)
+    planner.update(task['id'], lambda state: old)
+    start = NOW.fromisoformat(old['nightly_slot']['start'])
+    calendar.busy.return_value = [(start, start + timedelta(minutes=90))]
+    asyncio.run(planner.tick(NIGHT))
+    state = planner.get(task['id'])
+    assert state['status'] == 'proposed' and state['token'] != old['token']
+    assert state['delivery'] == 'proposal_sent'
+    count = bot.send_message.await_count
+    asyncio.run(planner.tick(NIGHT + timedelta(minutes=5)))
+    assert bot.send_message.await_count == count
+    calendar.insert.assert_not_awaited()
+
+
+def test_exhausted_nightly_search_does_not_retry_and_resend_every_tick(setup):
+    planner, task, calendar, bot = setup
+    seed_nightly(planner, task)
+    calendar.busy.return_value = [(NIGHT, NIGHT + timedelta(days=8))]
+    asyncio.run(planner.tick(NIGHT))
+    state = planner.get(task['id'])
+    assert state['status'] == 'no_slot' and state['availability_search']['scope'] == 'deadline'
+    count = bot.send_message.await_count
+    asyncio.run(planner.tick(NIGHT + timedelta(minutes=5)))
+    assert bot.send_message.await_count == count
+    assert planner.get(task['id'])['token'] == state['token']
+    calendar.insert.assert_not_awaited()
+
+
+def test_short_nightly_replacement_respects_protected_breaks(setup):
+    from chronos.nightly_planning import slot_allowed
+    planner, task, calendar, bot = setup
+    old = seed_nightly(planner, task)
+    start = NOW.fromisoformat(old['nightly_slot']['start'])
+    old['requested_minutes'] = 10
+    calendar.busy.return_value = [(start.replace(hour=9, minute=0), start.replace(hour=12, minute=0))]
+    planner.update(task['id'], lambda state: old)
+    asyncio.run(planner.tick(NIGHT))
+    state = planner.get(task['id'])
+    assert state['status'] == 'proposed'
+    assert slot_allowed(planner, task, state, NIGHT, calendar.busy.return_value) is not None
+    assert state['minutes'] == 10
+    calendar.insert.assert_not_awaited()
+
+
+
+def test_replacement_calendar_read_failure_never_becomes_no_capacity(setup):
+    planner, task, calendar, bot = setup
+    old = seed_nightly(planner, task)
+    start = NOW.fromisoformat(old['nightly_slot']['start'])
+    calendar.busy.side_effect = [[(start, start + timedelta(minutes=90))], CalendarError('calendar offline')]
+    with pytest.raises(CalendarError, match='offline'):
+        asyncio.run(planner.tick(NIGHT))
+    assert planner.get(task['id'])['status'] == 'queued'
+    bot.send_message.assert_not_awaited()
+    calendar.insert.assert_not_awaited()
