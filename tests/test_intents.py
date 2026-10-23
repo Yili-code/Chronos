@@ -254,6 +254,24 @@ def test_valid_agenda_is_read_only(store, monkeypatch):
     main.ai.parse.assert_not_awaited()
 
 
+@pytest.mark.parametrize("text,hour,normalize", [
+    ("明天有什麼行程", 0, True),
+    ("今晚有什麼安排", 18, True),
+    ("查詢明天 00:00:00 到 23:59:59 的行程", 0, False),
+    ("查詢明天零點到二十三點五十九分五十九秒的行程", 0, False),
+])
+def test_agenda_includes_midnight_boundary_without_overriding_explicit_seconds(store, monkeypatch, text, hour, normalize):
+    start = datetime.now(main.settings.tz).replace(hour=hour, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    end = start.replace(hour=23, minute=59, second=59)
+    classify(monkeypatch, action="agenda", start=start, end=end)
+    calendar = AsyncMock()
+    calendar.agenda.return_value = []
+    monkeypatch.setattr(main, "google_calendar", calendar)
+    run(text)
+    calendar.agenda.assert_awaited_once_with(start, end + timedelta(seconds=1) if normalize else end)
+    assert main.tasks.list_open() == []
+
+
 def test_natural_scan_policy_update_is_validated(store, monkeypatch):
     from datetime import date
     classify(monkeypatch, action="calendar_edit", operation="disable", day=date(2026, 10, 22))
