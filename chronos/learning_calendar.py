@@ -301,6 +301,9 @@ class LearningCalendar:
                        if evidence.get("samples", 0) >= 3 else self.settings.learning_minutes)
             minutes = state.get("requested_minutes") or minutes
             source = state.get("duration_source") or ("profile" if evidence.get("samples", 0) >= 3 else "default")
+            owner_effort = (task.get("timing") or {}).get("estimated_minutes")
+            if owner_effort and source not in {"owner", "nightly_ai"}:
+                minutes, source = min(180, owner_effort), "owner"
             if is_course_scope_task(task) and source not in {"owner", "nightly_ai"}:
                 minutes, source = COURSE_SCOPE_MINUTES, "course_scope_rule"
             elif source not in {"owner", "nightly_ai"} and self.ai is not None:
