@@ -89,3 +89,7 @@ TronClass 匯入的作業使用可讀的課程英文簡稱：`#DB`（Database Sy
 `/plan` 顯示待安排、已延後與已安排的數量，最多提供兩個待安排任務按鈕；按鈕順序沿用既有清單，不代表優先順序。點選任務只請求提案，仍須確認後才寫入行事曆。
 
 「View all plans」展開所有計畫狀態，每頁最多六件；「Scheduled tasks」只看已安排任務。導覽只讀取資料，不會生成提案或改動排程。完整指令仍可從 `/help` 查閱。
+
+### Task list scheduling groups
+
+The task list groups open tasks into **Scheduled** and **Unscheduled**. Confirmed Calendar bookings show their local start and end times alongside any deadline. Pending proposals are not confirmed bookings. Existing planned times also appear in Scheduled. Empty groups are hidden. Numbers retain their original command positions across groups, so `/done N` and `/edit N` still select the displayed task.

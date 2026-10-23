@@ -164,7 +164,7 @@ def test_real_command_actions_do_not_read_after_firestore_writes(monkeypatch):
     action = asyncio.run(main.prepare_message("/add Newly created"))
     receipt = db.process_update(3, action)
     assert len(receipt["messages"]) == 2
-    assert receipt["messages"][1]["text"] == "<b>Tasks</b>\n1. <b>Newly created</b>"
+    assert receipt["messages"][1]["text"] == "<b>Unscheduled</b>\n1. <b>Newly created</b>"
     assert db.list_open_tasks()[0]["due_at"] is None
     assert db.get_update(3) == receipt
 

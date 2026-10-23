@@ -219,3 +219,20 @@ def test_effort_is_persisted_but_not_rendered(service):
 def test_effort_rejects_invalid_values(value):
     with pytest.raises(ValueError):
         normalize_timing({"estimated_minutes": value})
+
+
+@pytest.mark.parametrize("status", ["scheduled", "awaiting_feedback", "proposed", "creating", "cancelled"])
+def test_calendar_booking_is_visible_without_mutating_storage(service, status):
+    task = service.create("Booked work")
+    service.db.mutate_task_action_state(f"learning:task:{task['id']}", lambda old: {
+        "status": status, "start": "2026-10-24T10:30:00+08:00", "end": "2026-10-24T12:00:00+08:00"})
+    before = service.db.get_task_action_state(f"learning:task:{task['id']}")
+    rendered = format_tasks(service.list_open(), TZ)
+    if status in {"scheduled", "awaiting_feedback"}:
+        assert rendered.startswith("<b>Scheduled</b>")
+        assert "10/24 (Sat) 10:30–12:00" in rendered
+    else:
+        assert rendered.startswith("<b>Unscheduled</b>")
+        assert "10:30" not in rendered
+    assert service.db.get_task_action_state(f"learning:task:{task['id']}") == before
+    assert "scheduled_slot" not in service.db.list_open_tasks()[0]

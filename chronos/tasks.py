@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 from .course_tags import COURSE_ID_TAGS
 from .repository import TaskRepository
-from .task_timing import normalize_timing, timing_details, urgent_deadline
+from .task_timing import display_time, normalize_timing, timing_details, urgent_deadline
 
 
 @dataclass
@@ -54,6 +54,8 @@ class TaskService:
             state = self.db.get_task_action_state(f"learning:task:{task['id']}")
             if state and state.get("status") == "postponed":
                 task["planning_status"] = "postponed"
+            if state and state.get("status") in {"scheduled", "awaiting_feedback"} and state.get("start") and state.get("end"):
+                task["scheduled_slot"] = {"start": state["start"], "end": state["end"]}
         return tasks
 
     def complete(self, task_id: int) -> bool:
@@ -273,9 +275,9 @@ def canonical_project(value: str) -> str:
 def format_tasks(tasks: list[dict], tz, project_aliases: dict[str, str] | None = None, *, now: datetime | None = None) -> str:
     if not tasks:
         return "No open tasks, Sir. A welcome state of affairs."
-    sections = [("Tasks", []), ("Course scope", [])]
+    sections = [("Scheduled", []), ("Unscheduled", [])]
     for position, task in enumerate(tasks, start=1):
-        section = sections[1 if is_course_scope_task(task) else 0][1]
+        section = sections[0 if task.get("scheduled_slot") or (task.get("timing") or {}).get("scheduled") else 1][1]
         section.append((position, task))
     lines = []
     for title, entries in sections:
@@ -326,7 +328,15 @@ def format_task_block(
     alert = "🚨 " if urgent_deadline(task, tz, now=now) else ""
     title, *scope = task_title_lines(task['title'])
     lines = [f"{prefix}{alert}<b>{escape(title)}</b>", *(escape(line) for line in scope)]
+    slot = task.get("scheduled_slot")
+    if slot:
+        start = datetime.fromisoformat(slot["start"]).astimezone(tz)
+        end = datetime.fromisoformat(slot["end"]).astimezone(tz)
+        end_text = end.strftime("%H:%M") if start.date() == end.date() else display_time(slot["end"], tz)
+        lines.append(f"<b>Scheduled</b> {escape(display_time(slot['start'], tz))}–{escape(end_text)}")
     for label, value in timing_details(task, tz):
+        if slot and label == "Scheduled":
+            continue
         lines.append(f"<b>{label}</b> {escape(value)}")
     if task.get("planning_status") == "postponed":
         lines.append("<b>Status</b> Waiting for external conditions")
