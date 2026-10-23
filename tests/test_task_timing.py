@@ -65,8 +65,8 @@ def test_screenshot_correction_is_deterministic_and_transactional(service, monke
     assert stored["due_at"] is None
     assert stored["timing"]["event"] == "2026-10-10"
     assert stored["title"] == "Finish remote lecture" and stored["project"] == "CA"
-    assert "After None" in receipt["reply"]
-    assert "After 10/10 (Sat)" in receipt["reply"]
+    assert "<b>After</b> None" in receipt["reply"]
+    assert "<b>After</b> 10/10 (Sat)" in receipt["reply"]
     edit.assert_not_awaited()
 
 

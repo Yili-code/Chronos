@@ -158,7 +158,7 @@ def format_update_summary(
         new_tag = _display_tag(after.get("project"), aliases)
         changes.append(("Tag", old_tag, new_tag))
     for label, old, new in changes:
-        lines.extend(["", f"<b>{label}</b>", f"Before {escape(old)}", f"After {escape(new)}"])
+        lines.extend(["", f"<b>{label}</b>", f"<b>Before</b> {escape(old)}", f"<b>After</b> {escape(new)}"])
     if tag_alias:
         project, alias = tag_alias
         lines.extend([

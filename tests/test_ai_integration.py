@@ -37,7 +37,7 @@ def test_telegram_uses_external_ai(task_service, monkeypatch):
     monkeypatch.setattr(main.ai, "edit", edit)
     reply = asyncio.run(main.handle_message("/edit 1 改到週日中午"))
     assert "<b>Updated · Task 1</b>" in reply
-    assert "After 09/20 (Sun) 12:00" in reply
+    assert "<b>After</b> 09/20 (Sun) 12:00" in reply
     assert "<b>Tasks</b>" in reply
     assert task_service.list_open()[0]["due_at"] == due.isoformat()
 
@@ -66,9 +66,9 @@ def test_edit_uses_natural_language_and_returns_latest_list(task_service, monkey
     edit.assert_awaited_once()
     assert edit.call_args.args[0]["id"] == original["id"]
     assert "<b>Updated · Task 1</b>" in reply
-    assert "Before Draft launch plan" in reply
-    assert "After Finalize launch plan" in reply
-    assert "After 10/03 (Sat) 18:00" in reply
+    assert "<b>Before</b> Draft launch plan" in reply
+    assert "<b>After</b> Finalize launch plan" in reply
+    assert "<b>After</b> 10/03 (Sat) 18:00" in reply
     assert "<b>Tasks</b>\n1. 🚨 <b>Finalize launch plan</b>" in reply
     stored = task_service.list_open()[0]
     assert stored["title"] == "Finalize launch plan"

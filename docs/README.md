@@ -9,6 +9,7 @@
 3. [Study 課程追蹤](study.md)
 4. [Cloud Run + Firestore 部署](deployment.md)（選用、會建立雲端資源）
 5. [貢獻與問題回報](../CONTRIBUTING.md)
+6. [Calendar 活動分類與任務內容](event-and-content.md)
 
 ## Engineering learning
 
