@@ -272,7 +272,7 @@ def canonical_project(value: str) -> str:
 
 def format_tasks(tasks: list[dict], tz, project_aliases: dict[str, str] | None = None, *, now: datetime | None = None) -> str:
     if not tasks:
-        return "No open tasks. All clear."
+        return "No open tasks, Sir. A welcome state of affairs."
     sections = [("Tasks", []), ("Course scope", [])]
     for position, task in enumerate(tasks, start=1):
         section = sections[1 if is_course_scope_task(task) else 0][1]

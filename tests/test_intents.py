@@ -402,7 +402,14 @@ def test_batch_creation_is_atomic_and_replay_safe(store, monkeypatch, text):
     second = store.process_update(9001, action)
     assert len(main.tasks.list_open()) == 5
     assert first["reply"] == second["reply"]
-    assert len(first["messages"]) == 11
+    assert len(first["messages"]) == 6
+    acknowledgement = first["messages"][0]
+    assert acknowledgement["task_created"] is True
+    assert "task_id" not in acknowledgement
+    assert acknowledgement["text"].startswith("<b>I have added 5 tasks, Sir.</b>")
+    assert [row[0]["callback_data"] for row in acknowledgement["reply_markup"]["inline_keyboard"]] == [
+        f"task:edit:{task['id']}" for task in main.tasks.list_open()]
+    assert first["messages"] == second["messages"]
     assert sum(bool(m.get('task_review')) for m in first['messages']) == 5
     assert all(item["project"] is None for item in main.tasks.list_open())
 
@@ -429,7 +436,7 @@ def test_ai_acknowledgement_never_changes_tasks_or_calls_edit(store, monkeypatch
     edit = AsyncMock()
     monkeypatch.setattr(main.ai, "edit", edit)
     receipt = run("先保持原樣就好", bound_task_id=task["id"] if bound else None)
-    assert receipt["reply"] == "收到"
+    assert receipt["reply"] == "Understood, Sir."
     assert "messages" not in receipt
     assert main.tasks.list_open() == before
     edit.assert_not_awaited()
@@ -440,6 +447,6 @@ def test_explicit_no_change_reply_skips_ai(store, monkeypatch):
     task = main.tasks.create("Preserve me")
     classify_mock = classify(monkeypatch, action="task_complete", task_ids=[task["id"]])
     before = main.tasks.list_open()
-    assert run("不需要記錄", bound_task_id=task["id"])["reply"] == "收到"
+    assert run("不需要記錄", bound_task_id=task["id"])["reply"] == "Understood, Sir."
     assert main.tasks.list_open() == before
     classify_mock.assert_not_awaited()

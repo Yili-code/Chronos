@@ -46,7 +46,7 @@ def test_duration_and_no_task(store,kind,minutes,expected):
     assert datetime.fromisoformat(item['end'])-datetime.fromisoformat(item['start'])==timedelta(minutes=expected)
     assert item['status']=='active'
     assert store.list_open_tasks()==[]
-    assert 'added' in reply['messages'][0]['text']
+    assert 'Your reminder is set, Sir.' in reply['messages'][0]['text']
 
 
 def test_notification_only_wording_preserves_reminder_without_creating_todo(store):

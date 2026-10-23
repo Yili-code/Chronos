@@ -16,7 +16,7 @@ def key(chat_id):
 
 
 def card(state):
-    lines = ['<b>Review calendar changes</b>',
+    lines = ['<b>Your proposed calendar changes, Sir.</b>',
              f"Requested window: {escape(state['start'])} → {escape(state['end'])}"]
     blocked = state.get('blocked_events', [])
     if blocked:

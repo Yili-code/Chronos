@@ -383,13 +383,13 @@ class LearningCalendar:
 
     def proposal_content(self, task, state):
         if state["status"] == "no_slot":
-            text = (f"<b>No viable execution window</b>\n{escape(task['title'])}\n"
+            text = (f"<b>I could not find a suitable work session, Sir.</b>\n{escape(task['title'])}\n"
                     "No viable work block fits before the deadline within your fixed commitments and workload limits. "
                     "Change the deadline or duration, then use /plan again.")
             buttons = self.buttons(task["id"], state, [("retry", "Replan"), ("postpone", "Defer")])
         else:
             end = datetime.fromisoformat(state["end"]).astimezone(self.settings.tz)
-            text = (f"<b>Execution plan</b>\n{escape(task['title'])}\n"
+            text = (f"<b>Your proposed work session, Sir.</b>\n{escape(task['title'])}\n"
                     f"{display_time(state['start'], self.settings.tz)}–{end:%H:%M}")
             if state.get('duration_source') == 'nightly_ai':
                 estimate = state.get('duration_estimate', {}).get('estimated_minutes')
@@ -1032,7 +1032,7 @@ class LearningCalendar:
         await self.deliver_feedback(task, state)
 
     def feedback_content(self, task, state):
-        text = (f"<b>Execution check-in</b>\n\n{escape(task['title'])}\n"
+        text = (f"<b>How did the session go, Sir?</b>\n\n{escape(task['title'])}\n"
                 f"{display_time(state['start'], self.settings.tz)} · {state['minutes']} minutes planned\n\n"
                 "What is the outcome? Choose below.\n\n"
                 "Different duration? For 15 minutes completed, send\n"
