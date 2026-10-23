@@ -1741,3 +1741,57 @@ def test_replacing_explicit_batch_does_not_resume_old_members_at_night(setup):
     assert result['quiet_hours'] is True
     assert planner.get(task['id'])['status'] == 'queued'
     calendar.insert.assert_not_awaited()
+
+
+def test_compact_plan_overview_and_pagination_are_read_only(setup):
+    from chronos.plan_overview import view
+    planner, task, calendar, bot = setup
+    states = ['needs_replan', 'queued', 'queued', 'queued', 'queued',
+              'postponed', 'scheduled', 'proposed', 'editing', 'awaiting_feedback']
+    records = [task] + [planner.db.create_task(f'Work <{i}>', None, None, NOW)
+                        for i in range(len(states) - 1)]
+    for record, status in zip(records, states):
+        planner.update(record['id'], lambda old, status=status: {'status': status})
+    before = [planner.get(record['id']) for record in records]
+    summary = view(planner)
+    assert '5 to arrange · 1 deferred · 1 scheduled' in summary['text']
+    assert '3 awaiting your response' in summary['text']
+    assert 'Commands' not in summary['text'] and '/planedit' not in summary['text']
+    choices = [b for row in summary['reply_markup']['inline_keyboard'] for b in row
+               if b['callback_data'].startswith('task:plan:')]
+    assert len(choices) == 2
+    assert {b['callback_data'] for b in choices} == {
+        f"task:plan:{record['id']}" for record in records[:2]}
+    first, last = view(planner, 'all'), view(planner, 'all', 999999)
+    assert first['text'].count('<b>') == 7
+    assert last['text'].count('<b>') == 5
+    assert 'Work &lt;' in first['text']
+    assert 'Awaiting approval' in last['text']
+    assert 'Scheduled' in view(planner, 'scheduled')['text']
+    assert [planner.get(record['id']) for record in records] == before
+    calendar.insert.assert_not_awaited()
+    bot.send_message.assert_not_awaited()
+
+
+def test_plan_navigation_uses_saved_receipts_without_generation(system, monkeypatch):
+    client, service, bot, config = system
+    config.enable_learning_calendar = True
+    task = service.create('Arrange this')
+    planner = main.learning_calendar()
+    planner.update(task['id'], lambda old: {'status': 'queued'})
+    monkeypatch.setattr(main, 'learning_calendar', lambda: planner)
+    headers = {'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}
+    payload = {'update_id': 998991, 'message': {'message_id': 70,
+               'chat': {'id': 123}, 'text': '/plan'}}
+    assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 200
+    assert bot.send_message.await_count == 1
+    assert 'to arrange' in bot.send_message.await_args.args[1]
+    navigation = {'update_id': 998992, 'callback_query': {'id': 'overview',
+                  'data': 'planview:all:0', 'from': {'id': 123},
+                  'message': {'message_id': 71, 'chat': {'id': 123}}}}
+    assert client.post('/telegram/webhook', headers=headers, json=navigation).status_code == 200
+    assert client.post('/telegram/webhook', headers=headers, json=navigation).status_code == 200
+    assert bot.send_message.await_count == 2
+    assert 'Arrange this' in bot.send_message.await_args.args[1]
+    assert planner.get(task['id']) == {'status': 'queued'}
+    main.ai.estimate_duration.assert_not_awaited()
