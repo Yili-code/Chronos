@@ -226,6 +226,11 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
                     or not timedelta(0) < end - start <= timedelta(days=7)):
                 return clarify("想查哪一天、哪個時段的行程？")
             start, end = start.astimezone(app.settings.tz), end.astimezone(app.settings.tz)
+            # Calendar uses an exclusive end; whole-day/evening queries include the final second.
+            explicit_seconds = re.search(r"\d{1,2}:\d{2}:\d{2}|(?:點|点|時|时|分)\s*[0-9一二三四五六七八九十零〇]+秒", text)
+            if ((end.hour, end.minute, end.second, end.microsecond) == (23, 59, 59, 0)
+                    and not explicit_seconds and end + timedelta(seconds=1) - start <= timedelta(days=7)):
+                end += timedelta(seconds=1)
             await app.google_calendar.verify_owner()
             events = await app.google_calendar.agenda(start, end)
             from .evening_agenda import render_window_agenda

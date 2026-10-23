@@ -305,6 +305,7 @@ class ExternalAI:
             "backward creates a reviewed multi-step deadline plan; plan_request schedules an existing task. "
             "agenda is a calendar query with start/end timezone-aware ISO timestamps. Use local dates; "
             "morning 06–12, afternoon 12–18, evening 18–24; today/tomorrow whole day 00–24. "
+            "Calendar query ends are exclusive: use next-day 00:00, never 23:59:59, for midnight. "
             "free finds the next available slot; do not silently drop specific date/duration constraints: clarify instead. "
             "calendar_view/calendar_edit concern TronClass SCAN policy only, not Google Calendar events. "
             "calendar_edit operation is enable/disable/reset with day, or term with day and end_day. "
