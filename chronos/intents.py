@@ -1,6 +1,7 @@
 """Validated natural-language routing; models choose data, never executable commands."""
 from datetime import date, datetime, timedelta
 from html import escape
+import re
 from typing import Annotated, Literal
 from uuid import uuid4
 
@@ -15,7 +16,7 @@ from .task_actions import task_fields
 class Intent(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     action: Literal[
-        "task_create", "task_edit", "task_complete", "task_list", "undo", "clear_tasks",
+        "task_create", "task_edit", "task_complete", "task_list", "undo", "clear_tasks", "event_create",
         "plan_list", "plan_request", "plan_edit", "plan_feedback", "backward", "backward_progress",
         "replan", "agenda", "free", "info", "reminder_create", "reminder_list", "reminder_cancel",
         "classday", "calendar_view", "calendar_edit", "ai_usage", "announcements", "announcement",
@@ -33,9 +34,23 @@ class Intent(BaseModel):
     operation: Literal["enable", "disable", "reset", "term"] | None = None
     day: date | None = None
     end_day: date | None = None
+    title: str | None = Field(default=None, min_length=1, max_length=150)
+    content: str | None = Field(default=None, max_length=2000)
+    event_category: Literal["contest", "meeting", "social", "other"] | None = None
+    edit_field: Literal["title", "content"] | None = None
 
 
 TARGET_ACTIONS = {"task_edit", "task_complete", "plan_request", "plan_edit", "plan_feedback"}
+
+
+def explicit_event_minutes(text):
+    """Preserve explicit numeric duration even if the classifier omits it."""
+    matches = re.findall(r"(?<![\d:])(\d+(?:\.\d+)?)\s*(hours?|hrs?|h\b|小時|小时|minutes?|mins?|min\b|分鐘|分钟)", text, re.I)
+    if not matches:
+        return None
+    total = sum(float(value) * (60 if unit.lower().startswith('h') or unit in {'小時', '小时'} else 1)
+                for value, unit in matches)
+    return total if total == int(total) else -1
 
 
 async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None):
@@ -69,6 +84,20 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
         return lambda reply=str(error): "目前無法理解這個要求，沒有變更任何內容。\n" + escape(reply)
 
     instruction = intent.instruction or text
+    # Keep the owner's field choice across a clarification, outside model discretion.
+    content_choice = bool(re.search(r"(?:修改|更改|改|更新).{0,6}(?:內容|内容)|\b(?:edit|change|update)\s+(?:the\s+)?content\b", text, re.I))
+    field_answer = bool(re.fullmatch(r"\s*(?:(?:修改|更改|改|更新)(?:他|它|這個任務|这个任务)?的?(?:內容|内容)|(?:edit|change|update)\s+(?:the\s+)?content)[。.!！]?\s*", text, re.I))
+    if field_answer and pending and len(pending.get("candidate_ids", [])) == 1:
+        intent.action = "task_edit"
+        intent.task_ids = pending["candidate_ids"]
+        intent.question = None
+        intent.edit_field = "content"
+        instruction = pending["instruction"] + "\nOnly change content; preserve title."
+    elif intent.action == "task_edit" and (content_choice or intent.edit_field == "content"
+            or re.search(r"剩下|還剩|还剩|\bremaining\b", text, re.I)
+            or (pending and pending.get("edit_field") == "content" and intent.task_ids == pending.get("candidate_ids"))):
+        intent.edit_field = "content"
+        instruction += "\nOnly change content; preserve title."
     ids = list(dict.fromkeys(intent.task_ids))
     if bound_task_id is not None and intent.action in TARGET_ACTIONS:
         if ids and ids != [bound_task_id]:
@@ -79,7 +108,7 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
         candidates = (candidates or [])[:8]
         lines = [escape(question)] + [f"{n}. {escape(by_id[i]['title'][:160])} (#{i})"
                               for n, i in enumerate(candidates, 1) if i in by_id]
-        state = {"instruction": instruction, "action": intent.action, "candidate_ids": candidates,
+        state = {"instruction": instruction, "action": intent.action, "edit_field": intent.edit_field, "candidate_ids": candidates,
                  "snapshots": {str(i): task_fields(by_id[i]) for i in candidates if i in by_id},
                  "expires_at": (now + timedelta(minutes=10)).isoformat(), "token": uuid4().hex}
         def save():
@@ -116,6 +145,29 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
             action = await app.prepare_message(instruction, update_id=update_id, create_only=True)
         elif intent.action == "task_edit":
             action = await app.prepare_message(f"/edit #{task_id} {instruction}", update_id=update_id)
+        elif intent.action == "event_create":
+            if not persistent:
+                return lambda: "請在 Telegram 對話新增活動。"
+            if not intent.title or not intent.event_category or not intent.start:
+                return clarify("請補充活動名稱、分類及開始時間。")
+            stated_minutes = explicit_event_minutes(text)
+            if stated_minutes is not None:
+                if not 1 <= stated_minutes <= 1440 or (intent.minutes is not None and intent.minutes != stated_minutes):
+                    return clarify("活動時長與解析結果不一致，請確認開始時間及時長。")
+                intent.minutes = int(stated_minutes)
+            end = intent.end
+            if end is None and intent.minutes is not None:
+                end = intent.start + timedelta(minutes=intent.minutes)
+            if (intent.start.utcoffset() is None or end is None or end.utcoffset() is None
+                    or not timedelta(0) < end - intent.start <= timedelta(days=1)
+                    or intent.start <= now
+                    or (intent.minutes is not None and end - intent.start != timedelta(minutes=intent.minutes))):
+                return clarify("請提供未來活動的開始與結束時間，或明確時長。")
+            from .free_booking import preview_explicit_event
+            result = preview_explicit_event(app.db, app.settings, chat_id, update_id,
+                intent.title, intent.start, end, intent.event_category,
+                '\n'.join(dict.fromkeys(filter(None, [intent.content, instruction, text]))), now)
+            action = lambda: result
         elif intent.action == "task_complete":
             def action():
                 current = app.tasks.list_open()

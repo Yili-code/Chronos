@@ -8,9 +8,37 @@ from .google_calendar import CalendarError
 from .learning_calendar import class_windows, short_task_windows, overlaps
 from .task_timing import display_date
 
+EVENT_COLORS = {'contest': '3', 'meeting': '5', 'social': '6', 'other': '8'}
+
+
+def preview_explicit_event(db, settings, chat_id, update_id, title, start, end, category, content, now):
+    """Use the same durable approval card as /free, without creating a task."""
+    token = sha256(f'event:{chat_id}:{update_id}'.encode()).hexdigest()[:32]
+    source_key = 'event:source:' + token
+    state = {'title': title, 'start': start.astimezone(settings.tz).isoformat(),
+        'end': end.astimezone(settings.tz).isoformat(), 'category': category,
+        'content': content, 'explicit_event': True, 'chat_id': chat_id,
+        'expires_at': (now + timedelta(minutes=10)).isoformat(),
+        'source_key': source_key, 'status': 'pending', 'token': token}
+    def save():
+        existing = db.get_task_action_state('free:booking:' + token)
+        source = db.get_task_action_state(source_key)
+        db._save_task_action_state(source_key, source or {'active_token': token})
+        db._save_task_action_state('free:booking:' + token, existing or state)
+        return existing or state
+    saved = db._run_task_action(save)
+    minutes = int((end - start).total_seconds() / 60)
+    return {'messages': [{'text': f"<b>Add to Calendar?</b>\n{escape(saved['title'])}\n"
+        f"{slot_line(saved, settings)} · {minutes} min\n<b>Category</b> {escape(category)}\n"
+        f"{escape(content[:500])}", 'parse_mode': 'HTML', 'free_booking': token,
+        'reply_markup': {'inline_keyboard': [[{'text': 'Allow', 'callback_data': 'free:allow:' + token},
+                                             {'text': 'Cancel', 'callback_data': 'free:cancel:' + token}]]}}]}
+
 
 def slot_line(slot, settings):
     start, end = (datetime.fromisoformat(slot[k]).astimezone(settings.tz) for k in ('start', 'end'))
+    if start.date() != end.date():
+        return f"{display_date(start.date().isoformat())} {start:%H:%M}–{display_date(end.date().isoformat())} {end:%H:%M}"
     return f"{display_date(start.date().isoformat())} · {start:%H:%M}–{end:%H:%M}"
 
 
@@ -98,16 +126,32 @@ async def free_booking_callback(db, calendar, settings, chat_id, message_id, tok
         from .backward_planning import reserved_windows
         busy = [*busy, *reserved_windows(db)]
         policy=db.get_task_action_state('learning:course-calendar-policy')
-        if start <= now or overlaps(start,end,[*busy,*class_windows(start.date(),settings.tz,policy),
-                                              *short_task_windows(start.date(),settings.tz,120)]):
+        classes = []
+        day = start.date()
+        while day <= end.date():
+            classes.extend(class_windows(day, settings.tz, policy))
+            day += timedelta(days=1)
+        meals = [] if state.get('explicit_event') else short_task_windows(start.date(),settings.tz,120)
+        if start <= now or overlaps(start,end,[*busy,*classes,*meals]):
             db.mutate_task_action_state(key,lambda old:{**old,'status':'conflict'})
             return 'That slot is no longer free. Nothing booked. Use /free to find another.'
-        event=await calendar.insert({'id':event_id,'summary':state['title'],'colorId':'6',
+        event=await calendar.insert({'id':event_id,'summary':state['title'],
+            'colorId':EVENT_COLORS.get(state.get('category'), '6'),
+            **({'description': state['content']} if state.get('content') else {}),
             'start':{'dateTime':state['start'],'timeZone':settings.timezone},
             'end':{'dateTime':state['end'],'timeZone':settings.timezone},
             'visibility':'private','transparency':'opaque',
-            'extendedProperties':{'private':{'chronosFreeToken':token}}})
+            'extendedProperties':{'private':{'chronosFreeToken':token,
+                **({'chronosEventCategory':state['category']} if state.get('explicit_event') else {})}}})
     if event.get('status')=='cancelled' or event.get('extendedProperties',{}).get('private',{}).get('chronosFreeToken')!=token:
         raise CalendarError('Calendar event ownership or status changed. No replacement was created.')
+    if state.get('explicit_event'):
+        try:
+            matches = all(datetime.fromisoformat(event.get(k, {}).get('dateTime', '')) == datetime.fromisoformat(state[k])
+                          for k in ('start', 'end'))
+        except (ValueError, TypeError):
+            matches = False
+        if not matches:
+            raise CalendarError('Calendar event times differ from this preview. Check Calendar before retrying.')
     db.mutate_task_action_state(key,lambda old:{**old,'status':'booked','event_id':event_id})
     return f"Added to Calendar\n{state['title']}\n{slot_line(state,settings)}"

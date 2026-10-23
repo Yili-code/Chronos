@@ -74,6 +74,7 @@ class FieldEdit(BaseModel):
 
 class TaskEditOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    content: FieldEdit = Field(default_factory=lambda: FieldEdit(op="keep", value=None))
     title: FieldEdit
     due_at: FieldEdit
     project: FieldEdit
@@ -164,7 +165,16 @@ class ExternalAI:
             "Use clarify for missing information, multiple operations, ambiguous intent or ambiguous targets; "
             "unsupported for unsupported operations or conversation unrelated to Chronos. Never default to task_create. "
             "task_create requires a new actionable todo. Questions are never todos. "
-            "task_edit changes a todo title/deadline/project; plan_edit changes its work session. "
+            "task_edit changes a todo title/content/deadline/project; plan_edit changes its work session. "
+            "Title names the task; content records details or remaining work without renaming it. "
+            "task 6 的 competitive programming 剩下一題程式題 -> task_edit, task at position 6, edit_field content. "
+            "修改他的內容 answers a title/content clarification: retain the previous target and original detail text, edit_field content. "
+            "event_create creates a standalone Calendar event, never a todo: contest, meeting, social gathering or other personal event. "
+            "Course attendance and deliverable assignments remain task_create. A contest is an event even if its title says participate. "
+            "For event_create supply a concise English title, event_category contest/meeting/social/other, "
+            "timezone-aware start and end or explicit minutes. Preserve all supplied duration, location and details in content. "
+            "10/24 20:00 atcoder contest 預計 3h -> event_create, contest, start October 24 20:00 local, minutes 180. "
+            "Never invent a missing event start or duration: ask a clarification. Keep original date/time/duration wording in instruction. "
             "task_complete requires explicit completion of the whole task, not partial progress. "
             "plan_feedback uses explicit minutes and outcome done/partial/skipped. "
             "replan frees a calendar window by previewing moves, never deletes tasks/events. "
@@ -301,7 +311,8 @@ class ExternalAI:
         prompt = (
             "Parse the user's Chinese or English text as one task. Return only a JSON object with "
             "title (non-empty string), due_at (timezone-aware ISO 8601 datetime or null), and "
-            "project (string or null), and timing (due_date, scheduled, event, source_text, uncertain). "
+            "project (string or null), and timing (due_date, scheduled, event, source_text, uncertain, content). "
+            "Preserve task details in timing.content separately from its concise title. "
             "Write title as a concise, natural English action phrase. Remove creation commands, dates, "
             "times, and project tags from title. Preserve people's names, brands, official project names, "
             "and technical terms. Translate generic project tags to English lowercase kebab-case, while "
@@ -323,7 +334,10 @@ class ExternalAI:
         now = now or datetime.now(config.tz)
         prompt = (
             "Edit one existing task according to the user's Chinese or English instruction. Return only "
-            "field operations as a JSON object with title, due_at, project, due_date, scheduled, event, uncertain. "
+            "field operations as a JSON object with title, content, due_at, project, due_date, scheduled, event, uncertain. "
+            "content is independent task detail/progress, stored at timing.content; title is the stable task name. "
+            "When changing content/內容 or reporting remaining work, keep title and set content only. "
+            "Only rename a task when the owner requests changing its title/name. "
             "Each field is {op: keep|clear|set, value: string|null}. keep means untouched, clear means remove, "
             "and set requires a value. keep/clear must use null values. Never clear title. "
             "Preserve every field the instruction does not change using keep. "
@@ -340,6 +354,8 @@ class ExternalAI:
             f"Existing task: {json.dumps({'title': current_task['title'], 'due_at': current_task.get('due_at'), 'project': current_task.get('project'), 'timing': current_task.get('timing', {})}, ensure_ascii=False)}"
         )
         patch = await self._generate_output(prompt, instruction, TaskEditOutput.model_json_schema(), TaskEditOutput, "task")
+        if re.search(r"內容|内容|\bcontent\b", instruction, re.I) and patch.title.op != "keep":
+            raise AIError("Content edits must preserve the task title. No task was changed; rephrase the content.")
         values = {key: current_task.get(key) for key in ("title", "due_at", "project")}
         timing = dict(current_task.get("timing") or {})
         for name in TaskEditOutput.model_fields:
