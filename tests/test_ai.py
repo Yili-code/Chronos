@@ -19,6 +19,44 @@ def test_default_model_is_flash_lite(monkeypatch):
     assert Settings(_env_file=None).gemini_model == "gemini-3.5-flash-lite"
 
 
+@pytest.mark.parametrize("details", [
+    {"start": "2026-10-24T20:00:00+08:00", "end": None, "minutes": 180, "question": None},
+    {"start": None, "end": None, "minutes": None, "question": "明天幾點開始？持續多久？"},
+])
+def test_incomplete_event_timing_gets_focused_extraction(monkeypatch, details):
+    payloads = []
+    def handler(request):
+        payloads.append(json.loads(request.content))
+        result = ({"action": "event_create", "title": "AtCoder contest", "event_category": "contest"}
+                  if len(payloads) == 1 else details)
+        return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": json.dumps(result)}]}}]})
+    mock_provider(monkeypatch, handler)
+    ai = ExternalAI(config())
+    intent = asyncio.run(ai.classify_intent("明天晚上八點參加 AtCoder 比賽，三小時", [],
+        datetime.fromisoformat("2026-10-23T15:00:00+08:00")))
+    assert len(payloads) == 2
+    assert intent.action == "event_create" and intent.title == "AtCoder contest"
+    assert intent.minutes == details["minutes"] and intent.question == details["question"]
+    assert json.loads(payloads[1]["contents"][0]["parts"][0]["text"])["instruction"] == "明天晚上八點參加 AtCoder 比賽，三小時"
+    if details["start"]:
+        assert intent.start.isoformat() == details["start"]
+    else:
+        assert intent.start is None
+
+
+def test_complete_event_does_not_make_another_provider_call(monkeypatch):
+    calls = []
+    def handler(request):
+        calls.append(request)
+        result = {"action": "event_create", "title": "Meeting", "event_category": "meeting",
+                  "start": "2026-10-24T14:00:00+08:00", "minutes": 60}
+        return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": json.dumps(result)}]}}]})
+    mock_provider(monkeypatch, handler)
+    intent = asyncio.run(ExternalAI(config()).classify_intent("明天下午兩點開會一小時", [],
+        datetime.fromisoformat("2026-10-23T15:00:00+08:00")))
+    assert intent.minutes == 60 and len(calls) == 1
+
+
 def mock_provider(monkeypatch, handler):
     real_client = httpx.AsyncClient
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real_client(
