@@ -289,6 +289,62 @@ def test_natural_plan_request_uses_existing_proposal_state(store, monkeypatch):
     main.ai.parse.assert_not_awaited()
 
 
+def test_batch_plan_preserves_each_duration_fixed_ids_and_replay(store, monkeypatch):
+    items = [main.tasks.create(f"Lecture {i}") for i in range(5)]
+    main.tasks.complete(items[0]['id'])
+    ids = [item['id'] for item in items[2:]]
+    monkeypatch.setattr(main.settings, "enable_learning_calendar", True)
+    classify(monkeypatch, action="plan_request", task_ids=ids, target_selection="all", minutes=90)
+    text = "將 task 2, 3, 4 先排到 calendar 中，每個預估一個半小時"
+    first = run(text)
+    assert '90 minutes each' in first['reply']
+    assert first['messages'][0]['planning_requested'] is True
+    states = [main.learning_calendar().get(i) for i in ids]
+    assert all(s['requested_minutes'] == 90 and s['duration_source'] == 'owner' for s in states)
+    assert main.db.get_task_action_state('learning:proposal-queue')['requested_task_ids'] == ids
+    run(text)
+    assert [main.learning_calendar().get(i) for i in ids] == states
+    assert main.learning_calendar().get(items[1]['id']) is None
+
+
+@pytest.mark.parametrize('selection', ['single', 'ambiguous'])
+def test_multiple_candidate_plans_are_not_implicitly_a_batch(store, monkeypatch, selection):
+    ids = [main.tasks.create(f"Lecture {i}")['id'] for i in range(2)]
+    monkeypatch.setattr(main.settings, "enable_learning_calendar", True)
+    classify(monkeypatch, action="plan_request", task_ids=ids, target_selection=selection)
+    assert '要操作哪一項' in run('幫我安排 lecture')['reply']
+    assert all(main.learning_calendar().get(i) is None for i in ids)
+
+
+def test_batch_plan_rechecks_every_target_after_interpretation(store, monkeypatch):
+    items = [main.tasks.create(f"Lecture {i}") for i in range(2)]
+    monkeypatch.setattr(main.settings, "enable_learning_calendar", True)
+    classify(monkeypatch, action="plan_request", task_ids=[t['id'] for t in items], target_selection="all", minutes=90)
+    action = asyncio.run(main.prepare_message('安排這兩項各 90 分鐘', update_id=1, chat_id=123))
+    main.tasks.complete(items[1]['id'])
+    assert '任務已變更' in main.db.process_update(1, action)['reply']
+    assert all(main.learning_calendar().get(t['id']) is None for t in items)
+
+
+def test_natural_plan_webhook_triggers_proposal_once_with_durable_receipt(system, monkeypatch):
+    client, tasks, bot, config = system
+    config.enable_learning_calendar = True
+    ids = [tasks.create(f'Lecture {i}')['id'] for i in range(3)]
+    classify(monkeypatch, action='plan_request', task_ids=ids, target_selection='all', minutes=90)
+    tick = AsyncMock()
+    monkeypatch.setattr('chronos.learning_calendar.LearningCalendar.tick', tick)
+    payload = {'update_id': 99001, 'message': {'chat': {'id': 123}, 'message_id': 120,
+        'text': '安排這三項，各 90 分鐘'}}
+    assert client.post('/telegram/webhook', json=payload,
+        headers={'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}).status_code == 200
+    tick.assert_awaited_once_with(force_proposal=True)
+    tokens = [main.learning_calendar().get(i)['token'] for i in ids]
+    assert client.post('/telegram/webhook', json=payload,
+        headers={'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}).status_code == 200
+    assert [main.learning_calendar().get(i)['token'] for i in ids] == tokens
+    main.ai.classify_intent.assert_awaited_once()
+
+
 def test_natural_backward_preview_binds_for_confirmation(system, monkeypatch):
     client, tasks, bot, config = system
     config.enable_learning_calendar = True
