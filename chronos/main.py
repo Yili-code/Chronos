@@ -42,6 +42,7 @@ from . import calendar_replan
 from .backward_planning import BackwardPlanner
 from .free_booking import bind_free_message, preview_free_event, free_booking_callback
 from . import task_review
+from . import course_habits
 from . import assignment_access
 from . import preferences
 from .evening_agenda import send_evening_agenda, tomorrow_agenda
@@ -108,7 +109,8 @@ def record_course_progress_reply(
     prompt_id: int, message_id: int, text: str, *, local_date
 ) -> str | dict:
     """Record course progress and return only its acknowledgement."""
-    return db.record_course_reply(prompt_id, message_id, text, local_date=local_date)
+    remembered = course_habits.remember_reply(db, prompt_id, text)
+    return remembered or db.record_course_reply(prompt_id, message_id, text, local_date=local_date)
 
 
 def task_edit_keyboard(items: list[dict]) -> dict:
@@ -931,7 +933,9 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
     if update.callback_query:
         if receipt is None:
             data = update.callback_query.data
-            if data and re.fullmatch(r"image:\d+:\d+", data):
+            if data and re.fullmatch(r"chabit:[a-f0-9]{16}:[01]:(?:accept|skip)", data):
+                action = lambda: course_habits.respond(db, data, chat_id, source_message.message_id, datetime.now(settings.tz))
+            elif data and re.fullmatch(r"image:\d+:\d+", data):
                 from .image_deadlines import confirm_photo
                 action = lambda: confirm_photo(db, tasks, data, chat_id, datetime.now(settings.tz))
             elif data == "clear:confirm":
@@ -1233,6 +1237,8 @@ async def prepare_message(text: str, *, update_id: int | None = None, chat_id: i
                           bound_task_id: int | None = None, create_only: bool = False) -> Callable[[], str | dict]:
     """Resolve external input first; the returned action performs no async work."""
     normalized = text.strip()
+    if re.match(r'^/coursehabit(?:@[A-Za-z0-9_]+)?(?:\s|$)', normalized):
+        return lambda: course_habits.command(db, normalized)
     if not create_only and is_no_change_reply(normalized):
         return lambda: "收到"
     if create_only:
