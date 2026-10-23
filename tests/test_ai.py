@@ -33,6 +33,19 @@ def test_default_model_is_flash_lite(monkeypatch):
     assert Settings(_env_file=None).gemini_model == "gemini-3.5-flash-lite"
 
 
+def test_edit_rejects_silently_omitted_content_operation(monkeypatch):
+    operations = {name: {"op": "keep", "value": None} for name in
+                  ("title", "due_at", "project", "due_date", "scheduled", "event", "uncertain")}
+    def handler(request):
+        payload = json.loads(request.content)
+        assert "content" in payload["generationConfig"]["responseJsonSchema"]["required"]
+        return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": json.dumps(operations)}]}}]})
+    mock_provider(monkeypatch, handler)
+    with pytest.raises(AIError, match="invalid response"):
+        asyncio.run(ExternalAI(config()).edit({"title": "Report", "due_at": None, "project": None},
+                                               "內容改成剩下兩頁"))
+
+
 @pytest.mark.parametrize("details", [
     {"start": "2026-10-24T20:00:00+08:00", "end": None, "minutes": 180, "question": None},
     {"start": None, "end": None, "minutes": None, "question": "明天幾點開始？持續多久？"},
@@ -134,6 +147,7 @@ def test_external_edit_applies_explicit_field_operations(monkeypatch):
         assert "Preserve every field the instruction does not change" in prompt
         assert "keep/clear must use null values" in prompt
         return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": json.dumps({
+            "content": {"op": "keep", "value": None},
             "title": {"op": "keep", "value": None},
             "due_at": {"op": "clear", "value": None},
             "due_date": {"op": "set", "value": "2026-09-18"},
