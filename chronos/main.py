@@ -43,6 +43,7 @@ from .backward_planning import BackwardPlanner
 from .free_booking import bind_free_message, preview_free_event, free_booking_callback
 from . import task_review
 from . import assignment_access
+from . import preferences
 from .evening_agenda import send_evening_agenda, tomorrow_agenda
 from .task_timing import display_time, task_sort_key, timing_details
 from .study_scheduler import tick_study, notify_study_failures
@@ -57,7 +58,8 @@ logger = logging.getLogger("chronos")
 db = create_database(settings)
 tasks = TaskService(db, settings.tz)
 ai_usage = AIUsageRecorder(db, settings.tz)
-ai = ExternalAI(settings, usage=ai_usage)
+ai = ExternalAI(settings, usage=ai_usage, preference_source=lambda:
+                preferences.read(db, settings.telegram_chat_id) if settings.telegram_chat_id is not None else {})
 telegram = TelegramClient(settings.telegram_bot_token)
 gmail = GmailClient(settings)
 google_calendar = GoogleCalendar(settings)
