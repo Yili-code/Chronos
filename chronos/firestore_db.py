@@ -10,6 +10,7 @@ from typing import Callable
 from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
+from .reply_policy import is_no_change_reply
 from .course_tracking import ProgressReportKind, ProgressSession, accept_reply, mark_missed_at_day_end
 from .course_tracking_store import session_from_firestore, session_to_firestore
 from .assignments import Assignment, to_record, from_record, set_deadline, owner_deadline_edit
@@ -577,6 +578,8 @@ class FirestoreDatabase(TaskActions):
                 return "這則回覆未對應到課後進度問題。請直接回覆原始訊息。"
             snapshot = snapshots[0]
             session = session_from_firestore(snapshot.to_dict())
+            if is_no_change_reply(text):
+                return "收到"
             if local_date is not None:
                 expired = mark_missed_at_day_end(session, local_date=local_date)
                 if expired != session:

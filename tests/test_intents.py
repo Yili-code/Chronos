@@ -324,3 +324,27 @@ def test_batch_write_failure_rolls_back(store, monkeypatch):
         store.process_update(9002, action)
     assert main.tasks.list_open() == []
     assert store.get_update(9002) is None
+
+
+@pytest.mark.parametrize("bound", [False, True])
+def test_ai_acknowledgement_never_changes_tasks_or_calls_edit(store, monkeypatch, bound):
+    task = main.tasks.create("Preserve me")
+    before = main.tasks.list_open()
+    classify(monkeypatch, action="acknowledge", task_ids=[task["id"]])
+    edit = AsyncMock()
+    monkeypatch.setattr(main.ai, "edit", edit)
+    receipt = run("先保持原樣就好", bound_task_id=task["id"] if bound else None)
+    assert receipt["reply"] == "收到"
+    assert "messages" not in receipt
+    assert main.tasks.list_open() == before
+    edit.assert_not_awaited()
+    main.ai.parse_many.assert_not_awaited()
+
+
+def test_explicit_no_change_reply_skips_ai(store, monkeypatch):
+    task = main.tasks.create("Preserve me")
+    classify_mock = classify(monkeypatch, action="task_complete", task_ids=[task["id"]])
+    before = main.tasks.list_open()
+    assert run("不需要記錄", bound_task_id=task["id"])["reply"] == "收到"
+    assert main.tasks.list_open() == before
+    classify_mock.assert_not_awaited()
