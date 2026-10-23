@@ -311,21 +311,52 @@ limits. Longer adds 30 minutes (5 minutes for course-scope checks); shorter uses
 rounded up to five minutes, within 10–180 minutes. Each change produces a new
 execution plan and requires confirmation. Primary plan buttons use two columns for mobile readability.
 
-## Nightly backlog planning
+## Tomorrow-aware nightly planning
 
 At 21:00 Asia/Taipei, `chronos-nightly-planning` calls the authenticated
 `/internal/learning/nightly` endpoint. The local scheduler supports the same job.
-It selects up to four open tasks by creation time (oldest first, ID breaks ties),
-including tasks created before Calendar activation. Existing planning, booked,
-feedback, rejected, postponed and backward-plan states are left alone.
+It first reads tomorrow's Calendar busy intervals, fixed classes and known
+reservations, then subtracts lunch 12:00–13:00, dinner 17:00–18:00 and class
+preparation. `CHRONOS_LEARNING_CLASS_PREPARATION_MINUTES` defaults to 30; set 0
+to allow work immediately before class. Only original continuous openings of at
+least 30 minutes within 09:00–21:00 are offered to the planner. This is a minimum
+opening size, not a session duration or switching interval.
 
-A durable per-date receipt fixes the selected IDs before any external call.
-Retries resume that batch without selecting more tasks or resending delivered cards.
-The existing active approval stays first; selected tasks then receive proposals
-one at a time. Accept **Allow** to book each proposed block, or adjust/reject it.
-Proposal preparation may continue at night, including after midnight; actual work
-blocks retain the existing 09:00–21:00 and Calendar conflict/load limits.
-No task deadline changes and no Calendar writes occur merely from the nightly job.
-Fewer than four eligible tasks produces a smaller batch; an empty batch sends no card.
+For the current timetable, Wednesday yields 16:00–17:00 and 18:00–21:00;
+Thursday yields 13:00–17:00. Without the preparation buffer, Thursday also has
+18:00–18:30. Actual Calendar events and reservations can reduce these windows.
+
+A bounded structured AI request considers up to 20 eligible tasks, deadlines,
+content, age and measured execution history. It proposes at most ten distinct
+task sessions, with variable whole-minute durations within the existing 10–180
+minute session limit and a remaining-work estimate.
+A three-hour opening can hold one justified long session or multiple sessions
+such as 45 + 70 + 65 minutes. It need not be filled. A task receives at most one
+continuous session per nightly plan; a partial session can leave remaining work
+for a later plan. Estimates are not measured completion times.
+
+Deterministic checks reject unknown/repeated task IDs, overlaps, naive timestamps,
+out-of-window times, deadline violations, allocations longer than estimated work,
+and excessive daily load. The existing default daily cap of 540 minutes includes
+classes plus booked/proposed study; calendar availability does not override it.
+Explicitly deferred/rejected tasks, existing manual plans, scheduled blocks,
+pending feedback, backward-managed work and uncertain delivery are preserved.
+Expired unbooked nightly work can be planned again; course-scope control tasks
+are excluded. Explicit `/plan ID` releases an old nightly allocation for a fresh
+manual request.
+
+A durable per-date claim prevents concurrent generation. No task queue is saved
+until the complete AI result validates and task snapshots still match. Failed
+generation can retry; completed daily plans are reused without generating again.
+No suitable half-hour opening means no AI allocation or proposal. The active
+approval stays first, then selected sessions are proposed in chronological order,
+including after midnight. The first nightly card includes the day's overview.
+Exact allocated times survive the queue without 15/30-minute quantization, are
+limited to tomorrow, and are checked again against Calendar, preparation and
+workload before booking. A conflict never silently moves nightly work to a later
+day or rearranges existing events. Owner adjustments still need fresh approval.
+
+Accept **Confirm schedule** to book each block, or adjust/defer it. No task
+deadline changes and no Calendar writes occur merely from the nightly job.
 This cloud job requires deployment and Calendar activation before it can run while
 the computer is off. Local tests do not prove cloud scheduling or Telegram delivery.

@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     learning_end_hour: int = Field(default=21, ge=1, le=24)
     learning_minutes: int = Field(default=90, ge=15, le=180)
     learning_daily_minutes: int = Field(default=540, ge=90, le=720)
+    learning_class_preparation_minutes: int = Field(default=30, ge=0, le=120)
     gmail_client_id: str = ""
     gmail_client_secret: str = ""
     gmail_refresh_token: str = ""
