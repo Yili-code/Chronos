@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+
 import json
 import re
 from contextvars import ContextVar
@@ -10,6 +11,7 @@ from typing import Callable
 from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
+from .course_tags import assignment_project
 from .reply_policy import is_no_change_reply
 from .course_tracking import ProgressReportKind, ProgressSession, accept_reply, mark_missed_at_day_end
 from .course_tracking_store import session_from_firestore, session_to_firestore
@@ -208,7 +210,7 @@ class FirestoreDatabase(TaskActions):
             if snapshot.exists:
                 data = snapshot.to_dict()
                 return {"task_id": data["task_id"], "assignment": from_record(data["record"])}
-            task = self.create_task(assignment.title, assignment.deadline, assignment.course_id, assignment.discovered_at)
+            task = self.create_task(assignment.title, assignment.deadline, assignment_project(assignment.course_id), assignment.discovered_at)
             transaction.create(ref, {"task_id": task["id"], "record": to_record(assignment)})
             return {"task_id": task["id"], "assignment": assignment}
         return self._run_transaction(create)

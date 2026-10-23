@@ -7,6 +7,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Callable, Iterator
 
+from .course_tags import assignment_project
 from .reply_policy import is_no_change_reply
 from .course_tracking import ProgressReportKind, ProgressSession, accept_reply, mark_missed_at_day_end
 from .course_tracking_store import session_from_firestore, session_to_firestore
@@ -365,7 +366,7 @@ class Database(TaskActions):
             row = connection.execute("SELECT * FROM assignments WHERE source_key=?", (assignment.key,)).fetchone()
             if row:
                 return {"task_id": row["task_id"], "assignment": from_record(json.loads(row["record_json"]))}
-            task = self.create_task(assignment.title, assignment.deadline, assignment.course_id, assignment.discovered_at)
+            task = self.create_task(assignment.title, assignment.deadline, assignment_project(assignment.course_id), assignment.discovered_at)
             connection.execute("INSERT INTO assignments VALUES (?, ?, ?)",
                                (assignment.key, task["id"], json.dumps(to_record(assignment))))
             return {"task_id": task["id"], "assignment": assignment}

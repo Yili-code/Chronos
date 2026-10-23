@@ -64,6 +64,9 @@
 
 維護者可執行 `python -m chronos.telegram_menu`，將 owner 選單替換為上述六項並讀回驗證。程式修改、Git 推送與正式部署是不同步驟。
 
+
+TronClass 匯入的作業使用可讀的課程英文簡稱：`#DB`（Database Systems）、`#CA`（Computer Architecture）、`#ISPM`（Information Security Practice and Management）、`#OS`（Operating Systems）、`#GA`（Graph Algorithms）、`#SE`（Software Engineering）、`#CP`（Introduction to Competitive Programming）。課程 ID 僅作來源識別；既有數字課程標籤在任務卡與清單顯示時轉成同一簡稱，不改寫既有資料或使用者設定的別名。未登錄的課程不產生數字標籤。新增追蹤課程時必須一併登錄簡稱，測試會檢查課表與映射是否完整對應。
+
 ## 課後任務偏好
 
 程式競賽技巧導論預設在課後五分鐘提出「學習本週上課內容」與「完成至少六題程式設計題目」兩項建議。每項可獨立接受或略過；只有接受後才新增待辦，不推定截止時間、不直接建立 Calendar 活動。建議保留七天；重複點擊不會重複新增。停課與考試期間沿用原有課程日政策。
