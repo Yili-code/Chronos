@@ -18,7 +18,7 @@ class Intent(BaseModel):
     action: Literal[
         "task_create", "task_edit", "task_complete", "task_list", "task_review", "undo", "clear_tasks", "event_create",
         "plan_list", "plan_request", "plan_edit", "plan_feedback", "backward", "backward_progress",
-        "replan", "agenda", "free", "info", "reminder_create", "reminder_list", "reminder_cancel",
+        "study_replan", "replan", "agenda", "free", "info", "reminder_create", "reminder_list", "reminder_cancel",
         "classday", "calendar_view", "calendar_edit", "ai_usage", "announcements", "announcement",
         "mail_next", "cancel", "clarify", "unsupported", "acknowledge", "preference", "assignment_query", "assignment_scan",
     ]
@@ -107,6 +107,10 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
     saved_preferences = preferences.read(app.db, chat_id) if persistent else {}
     context = {"bound_task_id": bound_task_id, "clarification": pending,
                "preferences": saved_preferences}
+    from . import study_revision
+    recent_plan = study_revision.recent_context(app.db, now) if persistent else None
+    if recent_plan:
+        context['recent_study_agenda'] = recent_plan
     if agenda_context is not None:
         context['today_agenda'] = agenda_context
     interpret_items = [
@@ -308,6 +312,11 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
             parts = ([empty_named_query(intent.agenda_keywords, start, end)] if intent.agenda_keywords and not events
                      else render_window_agenda(events, start, end, app.settings.tz, db=app.db))
             result = app.message_bundle(*({"text": part, "parse_mode": "HTML"} for part in parts))
+            action = lambda: result
+        elif intent.action == "study_replan" or (intent.action == "replan" and study_revision.is_correction(text)):
+            if not persistent or not app.settings.enable_learning_calendar:
+                return lambda: "請在已啟用排程的 Telegram 對話操作。"
+            result = await study_revision.preview(app.learning_calendar(), chat_id, text, update_id, now=now)
             action = lambda: result
         elif intent.action in {"replan", "backward", "backward_progress"}:
             if not persistent or not app.settings.enable_learning_calendar:
