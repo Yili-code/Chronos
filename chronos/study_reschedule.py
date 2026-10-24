@@ -32,6 +32,7 @@ async def reschedule(planner, task_id, token, instruction, now):
             raise CalendarError('The booked event changed during an uncertain edit. Check Calendar before retrying.')
     elif bounds(event, planner.settings.tz) != tuple(datetime.fromisoformat(state[k]) for k in ('start', 'end')):
         raise CalendarError('The event was edited outside Chronos. Check Calendar before changing it here.')
+    window = None
     if not pending:
         note = state.get('progress_note', '')
         match = re.fullmatch(r'\s*(\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2})\s+(\d{1,2}:\d{2})(?:\s+(\d{1,3}))?\s*', instruction)
@@ -44,9 +45,18 @@ async def reschedule(planner, task_id, token, instruction, now):
                 if planner.ai is None:
                     return 'Use /planedit ID MM/DD HH:MM minutes. The booking is unchanged.'
                 edit = await planner.ai.parse_schedule_edit(instruction, task, state, now)
-                if not edit.actionable or edit.timing not in {'exact', 'keep'}:
-                    return 'Provide an exact start time for this booked event. The booking is unchanged.'
-                start = datetime.fromisoformat(edit.start if edit.timing == 'exact' else state['start'])
+                if not edit.actionable:
+                    return 'Please specify a time, a clear time window or a duration. The booking is unchanged.'
+                if edit.timing == 'window':
+                    window = (datetime.fromisoformat(edit.start), datetime.fromisoformat(edit.window_end))
+                    if any(v.tzinfo is None for v in window) or not timedelta(0) < window[1] - window[0] <= timedelta(days=7):
+                        raise ValueError
+                    start = window[0]
+                elif edit.timing == 'soon':
+                    window = (now, now + timedelta(days=7))
+                    start = now
+                else:
+                    start = datetime.fromisoformat(edit.start if edit.timing == 'exact' else state['start'])
                 minutes = edit.minutes if edit.minutes is not None else state['minutes']
                 note = edit.progress_note or note
             if start.tzinfo is None or not 10 <= minutes <= 180:
@@ -61,7 +71,7 @@ async def reschedule(planner, task_id, token, instruction, now):
     start, end = (datetime.fromisoformat(pending[k]) for k in ('start', 'end'))
     if pending['snapshot'] != task_fields(task):
         raise CalendarError('The task changed during this edit. Check /plan before retrying.')
-    agenda = await planner.calendar.agenda(start, end)
+    agenda = await planner.calendar.agenda(*(window or (start, end)))
     own_ids = {planner.settings.calendar_id.casefold()}
     if planner.settings.calendar_id.casefold() in {'primary', planner.settings.calendar_account.casefold()}:
         own_ids.update({'primary', planner.settings.calendar_account.casefold()})
@@ -70,11 +80,17 @@ async def reschedule(planner, task_id, token, instruction, now):
     reservations = [(datetime.fromisoformat(s['start']), datetime.fromisoformat(s['end']))
                     for t in planner.db.list_open_tasks() if t['id'] != task_id
                     for s in [planner.get(t['id'])] if s and s.get('start') and s['status'] == 'creating']
-    bucket = planner.db.get_task_action_state('learning:day:' + start.date().isoformat()) or {}
-    budget = {start.date().isoformat(): sum(v for k, v in bucket.items() if k != token)}
+    budget = {}
+    for offset in range(8 if window else 1):
+        day = (start + timedelta(days=offset)).astimezone(planner.settings.tz).date().isoformat()
+        bucket = planner.db.get_task_action_state('learning:day:' + day) or {}
+        budget[day] = sum(v for k, v in bucket.items() if k != token)
     policy = planner.db.get_task_action_state('learning:course-calendar-policy')
-    slot = find_slot(task, now, busy, reservations, planner.settings, pending['minutes'], budget, policy, window=(start, end))
-    if slot != (start, end):
+    slot = find_slot(task, now, busy, reservations, planner.settings, pending['minutes'], budget, policy, window=window or (start, end), align_minutes=window is not None)
+    if window and slot:
+        start, end = slot
+        pending.update(start=start.isoformat(), end=end.isoformat())
+    if not slot or slot != (start, end):
         return 'That time conflicts with your calendar, deadline or study limits. The booking is unchanged.'
     saved = planner.update(task_id, lambda old: {**old, 'pending_reschedule': pending}
                            if old.get('token') == token and old['status'] == 'scheduled' else old)

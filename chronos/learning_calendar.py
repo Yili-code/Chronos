@@ -85,8 +85,8 @@ def class_windows(day, tz, policy=None):
             for slot in COURSE_SCHEDULE if slot.weekday == day.weekday()]
 
 
-def find_slot(task, now, busy, reservations, config, minutes, booked_minutes=None, course_policy=None, randomize=False, window=None):
-    """Search 15-minute boundaries; class plus study load never exceeds the cap."""
+def find_slot(task, now, busy, reservations, config, minutes, booked_minutes=None, course_policy=None, randomize=False, window=None, align_minutes=True):
+    """Search 15-minute boundaries by default; class plus study load never exceeds the cap."""
     due = task.get("due_at") or (task.get("timing") or {}).get("due_date")
     deadline = (datetime.fromisoformat(due).astimezone(config.tz) if due and len(due) > 10 else
                 datetime.combine(datetime.fromisoformat(due).date(), time.max, config.tz) if due else
@@ -104,8 +104,9 @@ def find_slot(task, now, busy, reservations, config, minutes, booked_minutes=Non
         start = max(now + timedelta(minutes=10), datetime.combine(day, time(config.learning_start_hour), config.tz))
         if window:
             start = max(start, window[0])
-        start = start.replace(second=0, microsecond=0)
-        start += timedelta(minutes=(-start.minute) % 15)
+        if align_minutes:
+            start = start.replace(second=0, microsecond=0)
+            start += timedelta(minutes=(-start.minute) % 15)
         stop = min(horizon, datetime.combine(day, time(config.learning_end_hour % 24), config.tz)
                    + (timedelta(days=1) if config.learning_end_hour == 24 else timedelta()))
         while start + timedelta(minutes=minutes) <= stop:
