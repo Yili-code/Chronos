@@ -24,9 +24,20 @@ def looks_ordered(text):
 
 
 def looks_choice_answer(text):
-    return bool(len(text) <= 200 and not text.startswith('/') and
-        (re.search(r'\d{1,2}[/.-]\d{1,2}|\d{1,2}[號号日]|\b(?:earlier|later|latest|earliest)\b|\bref:[\w-]+',text,re.I)) and
-        (len(text) <= 30 or re.search(r'choose|select|use|take|那個|那个|選|选',text,re.I)))
+    if len(text) > 200 or text.startswith('/'):
+        return False
+    if re.search(r'\bref:[\w-]+|\b(?:earlier|later|latest|earliest)\b', text, re.I):
+        return True
+    if not re.search(r'\d{1,2}[/.-]\d{1,2}|\d{1,2}[號号日]',text):
+        return False
+    return bool(re.search(r'choose|select|use|take|那個|那个|那筆|那笔|選|选',text,re.I)
+        or re.fullmatch(r'\s*(?:(?:\d{4}[-/])?\d{1,2}[/.-]\d{1,2}|\d{1,2}[號号日])(?:\s*\([^)]*\))?(?:\s+\d{1,2}:\d{2}(?:\s*[-–—]\s*\d{1,2}:\d{2})?)?\s*', text))
+
+
+def has_clarification(state):
+    # Clarification retains intent, never approval or cached availability.
+    return bool(state and state.get('ordered_sequence') and state.get('status') == 'clarifying'
+                and isinstance(state.get('parsed'), dict))
 
 
 def choice_evidence(text, event, candidates, tz=None):
@@ -36,10 +47,23 @@ def choice_evidence(text, event, candidates, tz=None):
     start = datetime.fromisoformat(value.replace('Z','+00:00'))
     if tz is not None:
         start = start.astimezone(tz)
+    year = re.search(r'(?<!\d)(\d{4})[-/]\d{1,2}[-/]\d{1,2}', text)
+    if year and int(year[1]) != start.year:
+        return False
     dates = [start.strftime('%Y-%m-%d'), f'{start.month}/{start.day}',f'{start.month:02d}/{start.day:02d}']
     if any(re.search(r'(?<![0-9])'+re.escape(date)+r'(?![0-9])',text) for date in dates):
         times = re.findall(r'(?<![0-9])([0-2]?[0-9]:[0-5][0-9])(?![0-9])',text)
-        return not times or start.strftime('%H:%M') in [t.zfill(5) for t in times]
+        if times and start.strftime('%H:%M') != times[0].zfill(5):
+            return False
+        if len(times) > 1:
+            end_value = event.get('end',{}).get('dateTime')
+            if not end_value:
+                return False
+            end = datetime.fromisoformat(end_value.replace('Z','+00:00'))
+            if tz is not None:
+                end = end.astimezone(tz)
+            return end.strftime('%H:%M') == times[1].zfill(5)
+        return True
     def candidate_start(e):
         value = e.get('start',{}).get('dateTime') or e.get('start',{}).get('date')
         parsed = datetime.fromisoformat(value.replace('Z','+00:00'))
@@ -93,17 +117,18 @@ def event_info(planner, event):
     evidence = next((s for s in (history,current) if s and s.get('event_id') == event.get('id') and s.get('token') == props.get('chronosToken')), {})
     completed = bool(evidence and ((task and task.get('status') == 'done' and not evidence.get('successor_task_id'))
                      or evidence.get('feedback', {}).get('outcome') == 'done'))
-    issue = None
+    issue, issue_code = None, None
     if not completed and task:
         if evidence.get('successor_task_id'):
             issue = 'The remaining work has a separate session. Please choose that session rather than this past event.'
         elif (not current or current.get('event_id') != event.get('id') or current.get('token') != props.get('chronosToken')):
             issue = 'This event differs from the session currently tracked for the task. Please check /plan before moving it.'
+            issue_code = 'stale_booking'
         elif current.get('status') in {'creating', 'planning'} or (current.get('delivery') or '').endswith(('_uncertain', '_sending')):
             issue = 'An earlier booking is still being checked. Please review /plan before requesting another change.'
     return {'task_id': task['id'] if task else None, 'task_snapshot': task_fields(task) if task else None,
             'task_status': task.get('status') if task else None, 'task_state': current,
-            'completed': completed, 'issue': issue}
+            'completed': completed, 'issue': issue, 'issue_code': issue_code}
 
 
 def effective_config(cfg, parsed):
@@ -196,6 +221,7 @@ def card(state):
     lines = ['<b>Your revised study schedule</b>',
              'I have arranged the remaining sessions in order, using the earliest suitable times.',
              'Each session keeps its original duration. Please review before choosing Allow.']
+    lines += [escape(note) for note in state.get('selection_notes', [])]
     for item in state.get('completed_events', []):
         lines += ['', '<b>' + escape(item['title'][:100]) + '</b> · Completed; unchanged']
     for move in state['calendar_moves']:
@@ -224,8 +250,14 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
     if old.get('token') == token:
         return question_reply(old['question']) if old.get('status') == 'clarifying' else card(old)
     prefs = read_preferences(planner.db, chat_id)
-    previous = ({**old['parsed'], 'candidates': old.get('candidates',{}), 'original_instruction': old.get('original_instruction','')} if old.get('ordered_sequence') and old.get('status') in {'editing','clarifying'} and old.get('expires_at','') > now.isoformat() else None)
-    parsed = SequenceReplanOutput.model_validate(await planner.ai.parse_sequence_replan(instruction, now, prefs, previous))
+    previous = ({**old['parsed'], 'candidates': old.get('candidates',{}), 'original_instruction': old.get('original_instruction','')}
+        if has_clarification(old) or (old.get('ordered_sequence') and old.get('status') == 'editing' and old.get('expires_at','') > now.isoformat()) else None)
+    selection_reply = bool(previous and has_clarification(old) and looks_choice_answer(instruction))
+    parsed = (SequenceReplanOutput.model_validate(old['parsed']) if selection_reply else
+              SequenceReplanOutput.model_validate(await planner.ai.parse_sequence_replan(instruction, now, prefs, previous)))
+    if selection_reply:
+        parsed.choices = {}
+    confirmed_choices = dict(old.get('confirmed_choices', {})) if previous and not looks_ordered(instruction) else {}
     if previous and old.get('status') == 'clarifying' and not looks_ordered(instruction) and parsed.actionable:
         parsed = SequenceReplanOutput.model_validate({**old['parsed'],'choices':parsed.choices})
     if not parsed.actionable or not parsed.scope:
@@ -270,14 +302,27 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
     if not requested or len(requested) > 20:
         return 'No bounded group of matching events was found. Please narrow the subject/range; nothing changed.'
     parsed.ordinals = requested
-    issues, moves, completed, ambiguous = [], [], [], {}
+    issues, moves, completed, ambiguous, selection_notes = [], [], [], {}, []
     for number in requested:
         candidates = list(matches.get(number, {}).values())
+        current_candidates = [e for e in candidates if event_info(planner,e)['issue_code'] != 'stale_booking']
         if len(candidates) > 1 and previous and old.get('status') == 'clarifying':
             chosen = parsed.choices.get(str(number))
             explicit = [e for e in candidates if choice_evidence(instruction,e,candidates,cfg.tz)]
             if len(explicit) == 1 and (not chosen or chosen == explicit[0]['id']):
+                if explicit[0] not in current_candidates and current_candidates:
+                    ambiguous[str(number)] = [{k:e.get(k) for k in ('id','summary','start','end')} for e in current_candidates]
+                    issues.append(f'{parsed.unit.title()} {number}: The selected event is an older task booking. It will stay unchanged. Please choose the current session:\n' + '\n'.join(candidate_lines(current_candidates,cfg.tz)))
+                    continue
                 candidates = explicit
+                confirmed_choices[str(number)] = explicit[0]['id']
+            elif not explicit and confirmed_choices.get(str(number)):
+                retained = [e for e in candidates if e['id'] == confirmed_choices[str(number)]]
+                if retained:
+                    candidates = retained
+        if len(candidates) > 1 and current_candidates and len(current_candidates) < len(candidates):
+            candidates = current_candidates
+            selection_notes.append(f'{parsed.unit.title()} {number}: older task bookings stay unchanged; the remaining matching session is reviewed below.')
         if len(candidates) != 1:
             if len(candidates) > 1:
                 ambiguous[str(number)] = [{k:e.get(k) for k in ('id','summary','start','end')} for e in candidates]
@@ -311,10 +356,11 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
                 question += ' For identical times, include the displayed ref.'
             question += '\nThis selects the event; I will look for an earlier suitable time for it.'
         question += '\n\nYour calendar is unchanged. I will show the full schedule for your approval.'
-        if ambiguous:
+        if issues:
             clarification = {'ordered_sequence':True,'status':'clarifying','token':token,'chat_id':chat_id,
                 'parsed':parsed.model_dump(mode='json'),'candidates':ambiguous,'question':question,
-                'original_instruction':old.get('original_instruction') if previous else instruction,
+                'confirmed_choices':confirmed_choices,
+                'original_instruction':old.get('original_instruction') if previous and not looks_ordered(instruction) else instruction,
                 'expires_at':(now+timedelta(minutes=10)).isoformat()}
             planner.db.mutate_task_action_state(key(chat_id),lambda current:current if current and current.get('status') in {'creating','paused'} else clarification)
         return question_reply(question)
@@ -353,7 +399,7 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
     state = {'ordered_sequence': True, 'status': 'pending', 'token': token, 'chat_id': chat_id,
         'parsed': parsed.model_dump(mode='json'), 'preferences': prefs, 'policy': policy,
         'config': {k:getattr(cfg,k) for k in ('learning_start_hour','learning_end_hour','learning_daily_minutes')},
-        'calendar_moves': moves, 'completed_events': completed, 'applied_event_ids': [], 'recorded_states': {},
+        'calendar_moves': moves, 'completed_events': completed, 'selection_notes': selection_notes, 'applied_event_ids': [], 'recorded_states': {},
         'expires_at': (now+timedelta(hours=2)).isoformat(), 'start': start.isoformat(), 'end': stop.isoformat()}
     saved = planner.db.mutate_task_action_state(key(chat_id), lambda current: current if current and current.get('status') in {'creating','paused'} else state)
     return card(saved) if saved.get('token') == token else 'Another calendar operation needs recovery first.'

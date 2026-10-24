@@ -284,6 +284,22 @@ def test_paginated_command_preview_binds_every_page_and_cancel_removes_them(syst
     assert [call.args[1]['message_id'] for call in bot.request.await_args_list]==[40,50]
 
 
+def test_cancel_retained_non_executable_ordered_question(system):
+    from chronos import main, sequence_replan
+    client,tasks,bot,config=system
+    config.enable_learning_calendar=True
+    state={'token':'e'*32,'status':'clarifying','ordered_sequence':True,'chat_id':123,
+        'parsed':{'scope':'ISPM','ordinals':[1,2,3]},'expires_at':'2020-01-01T00:00:00+08:00'}
+    main.db.mutate_task_action_state(module.key(123),lambda old:state)
+    assert sequence_replan.has_clarification(state)
+    bot.send_message.return_value={'ok':True,'result':{'message_id':60}}
+    payload={'update_id':90604,'message':{'message_id':59,'chat':{'id':123},'text':'/cancel'}}
+    assert client.post('/telegram/webhook',headers={'X-Telegram-Bot-Api-Secret-Token':'test-hook'},json=payload).status_code==200
+    saved=main.db.get_task_action_state(module.key(123))
+    assert saved['status']=='cancelled' and not sequence_replan.has_clarification(saved)
+    bot.request.assert_not_awaited()
+
+
 def test_replan_calls_shared_ai_transport_and_validates_schema(monkeypatch):
     import json
     import httpx

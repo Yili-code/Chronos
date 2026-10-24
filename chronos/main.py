@@ -739,7 +739,9 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         and replan_session.get("status") == "editing" and not source_message.reply_to_message
         and replan_session.get("expires_at", "") > datetime.now(settings.tz).isoformat()
         and (not (source_message.text or "").startswith("/") or source_message.text == "/cancel"))
-    if replan_callback or replan_command or replan_edit:
+    replan_cancel_question = bool(update.message and replan_session and replan_session.get('ordered_sequence')
+        and replan_session.get('status') == 'clarifying' and source_message.text in {'/cancel', '取消'})
+    if replan_callback or replan_command or replan_edit or replan_cancel_question:
         receipt = db.get_update(update_id)
         if receipt is None:
             try:
@@ -748,6 +750,10 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                 elif replan_callback:
                     reply = await calendar_replan.callback(learning_calendar(), chat_id, source_message.message_id,
                                                            replan_callback[2], replan_callback[1])
+                elif replan_cancel_question:
+                    db.mutate_task_action_state(calendar_replan.key(chat_id), lambda old:
+                        {**old,'status':'cancelled'} if old and old.get('token') == replan_session['token'] and old.get('status') == 'clarifying' else old)
+                    reply = 'Cancelled. Your calendar is unchanged.'
                 elif replan_edit and source_message.text in {"/cancel", "取消"}:
                     reply = await calendar_replan.callback(learning_calendar(), chat_id, replan_session.get("message_id"),
                                                            replan_session["token"], "cancel")
