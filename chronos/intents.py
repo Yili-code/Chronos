@@ -18,7 +18,7 @@ class Intent(BaseModel):
     action: Literal[
         "task_create", "task_edit", "task_complete", "task_list", "task_review", "undo", "clear_tasks", "event_create",
         "plan_list", "plan_request", "plan_edit", "plan_feedback", "backward", "backward_progress",
-        "study_replan", "replan", "agenda", "free", "info", "reminder_create", "reminder_list", "reminder_cancel",
+        "sequence_replan", "study_replan", "replan", "agenda", "free", "info", "reminder_create", "reminder_list", "reminder_cancel",
         "classday", "calendar_view", "calendar_edit", "ai_usage", "announcements", "announcement",
         "mail_next", "cancel", "clarify", "unsupported", "acknowledge", "preference", "assignment_query", "assignment_scan",
     ]
@@ -121,6 +121,18 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
         interpret_items = [{"id": entry['task_id'], "position": position, **task_fields(by_id[entry['task_id']])}
                            for position, entry in enumerate(agenda_context['entries'], 1)
                            if entry.get('task_id') in by_id]
+    from . import sequence_replan
+    ordered_pending = app.db.get_task_action_state(app.calendar_replan.key(chat_id)) if persistent else None
+    if ordered_pending and ordered_pending.get('ordered_sequence') and ordered_pending.get('status') == 'clarifying' and ordered_pending.get('expires_at','') > now.isoformat():
+        context['ordered_sequence_question'] = {k:ordered_pending.get(k) for k in ('parsed','question','candidates')}
+    else:
+        ordered_pending = None
+    if persistent and app.settings.enable_learning_calendar and (sequence_replan.looks_ordered(text) or (ordered_pending and sequence_replan.looks_choice_answer(text))):
+        try:
+            result = await sequence_replan.preview(app.learning_calendar(), chat_id, text, update_id, now=now)
+        except (AIError, CalendarError, ValueError) as error:
+            result = 'Ordered rescheduling could not be prepared. Nothing changed.\n' + escape(str(error))
+        return lambda: result
     reminder_items = list((app.db.get_task_action_state(app.reminders.KEY) or {}).values()) if persistent else []
     reminder_items = [item for item in reminder_items if item.get("chat_id") == chat_id
                       and item.get("status") in {"active", "pending"}]
@@ -312,6 +324,11 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
             parts = ([empty_named_query(intent.agenda_keywords, start, end)] if intent.agenda_keywords and not events
                      else render_window_agenda(events, start, end, app.settings.tz, db=app.db))
             result = app.message_bundle(*({"text": part, "parse_mode": "HTML"} for part in parts))
+            action = lambda: result
+        elif intent.action == "sequence_replan":
+            if not persistent or not app.settings.enable_learning_calendar:
+                return lambda: "Please use the connected Telegram scheduling chat."
+            result = await sequence_replan.preview(app.learning_calendar(), chat_id, text, update_id, now=now)
             action = lambda: result
         elif intent.action == "study_replan" or (intent.action == "replan" and study_revision.is_correction(text)):
             if not persistent or not app.settings.enable_learning_calendar:

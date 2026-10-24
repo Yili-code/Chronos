@@ -745,11 +745,16 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                     instruction = replan_command[1] if replan_command else source_message.text
                     from . import study_revision
                     study_edit = bool(replan_edit and replan_session.get('study_revision'))
-                    previewer = study_revision.preview if study_edit or study_revision.is_correction(instruction or '') else calendar_replan.preview
+                    from . import sequence_replan
+                    ordered_edit = bool(replan_edit and replan_session.get('ordered_sequence'))
+                    previewer = (sequence_replan.preview if ordered_edit or sequence_replan.looks_ordered(instruction or '') else
+                                 study_revision.preview if study_edit or study_revision.is_correction(instruction or '') else calendar_replan.preview)
                     reply = (await previewer(learning_calendar(), chat_id, instruction, update_id)
                              if instruction else "Use /replan 清空今天現在到下午兩點的行程")
             except CalendarError:
                 reply = "Calendar could not confirm the arrangement. Nothing further was changed. If you pressed Allow, tap it again to recover its result."
+            except (AIError, ValueError):
+                reply = "The scheduling request could not be parsed. No new Calendar changes were made; please retry."
             receipt = db.process_update(update_id, lambda: reply)
         await deliver_learning_reply(chat_id, update_id, receipt)
         if update.callback_query:
