@@ -215,6 +215,73 @@ def test_webhook_routes_preview_edit_cancel_and_deduplicates(system, monkeypatch
     payload['message']['text'] = '/cancel'
     assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 200
     assert main.db.get_task_action_state(module.key(123))['status'] == 'cancelled'
+    bot.request.assert_awaited_with('deleteMessage', {'chat_id':123, 'message_id':50})
+
+
+@pytest.mark.parametrize('ordered', [False, True])
+def test_cancel_deletes_only_bound_preview_pages_and_retries_cleanup(system, ordered):
+    from chronos import main
+    client, tasks, bot, config = system
+    config.enable_learning_calendar = True
+    state = {'token':'b'*32, 'status':'pending', 'chat_id':123, 'message_id':50,
+             'preview_message_ids':[40,50], 'ordered_sequence':ordered,
+             'expires_at':(module.datetime.now(config.tz)+timedelta(hours=2)).isoformat()}
+    main.db.mutate_task_action_state(module.key(123),lambda old:state)
+    bot.send_message.return_value={'ok':True,'result':{'message_id':60}}
+    bot.request.side_effect=[{'ok':True}, {'ok':False,'error_code':500},
+                             {'ok':False,'error_code':400,'description':'Bad Request: message to delete not found'}, {'ok':True}]
+    payload={'update_id':90600,'callback_query':{'id':'cancel','data':'replan:cancel:'+'b'*32,
+             'message':{'message_id':50,'chat':{'id':123},'text':'Review'}}}
+    headers={'X-Telegram-Bot-Api-Secret-Token':'test-hook'}
+    assert client.post('/telegram/webhook',headers=headers,json=payload).status_code==502
+    assert main.db.get_task_action_state(module.key(123))['status']=='cancelled'
+    # A newer review must not change the cleanup targets saved for this update.
+    main.db.mutate_task_action_state(module.key(123),lambda old:{**old,'token':'c'*32,'status':'pending','message_id':70})
+    assert client.post('/telegram/webhook',headers=headers,json=payload).status_code==200
+    assert bot.send_message.await_count==1
+    assert [call.args[1]['message_id'] for call in bot.request.await_args_list]==[40,50,40,50]
+    assert all(call.args[0]=='deleteMessage' for call in bot.request.await_args_list)
+    assert main.db.get_task_action_state(module.key(123))['status']=='pending'
+
+
+@pytest.mark.parametrize('mismatch',['token','message','in_progress'])
+def test_cancel_does_not_delete_stale_or_unresolved_review(system,mismatch):
+    from chronos import main
+    client, tasks, bot, config = system
+    config.enable_learning_calendar=True
+    state={'token':'b'*32,'status':'creating' if mismatch=='in_progress' else 'pending',
+           'chat_id':123,'message_id':50,'expires_at':(module.datetime.now(config.tz)+timedelta(hours=2)).isoformat()}
+    main.db.mutate_task_action_state(module.key(123),lambda old:state)
+    bot.send_message.return_value={'ok':True,'result':{'message_id':60}}
+    payload={'update_id':90601,'callback_query':{'id':'cancel','data':'replan:cancel:'+('c'*32 if mismatch=='token' else 'b'*32),
+             'message':{'message_id':51 if mismatch=='message' else 50,'chat':{'id':123},'text':'Review'}}}
+    assert client.post('/telegram/webhook',headers={'X-Telegram-Bot-Api-Secret-Token':'test-hook'},json=payload).status_code==200
+    bot.request.assert_not_awaited()
+    assert main.db.get_task_action_state(module.key(123))['status']==state['status']
+
+
+def test_paginated_command_preview_binds_every_page_and_cancel_removes_them(system,monkeypatch):
+    from chronos import main
+    client, tasks, bot, config=system
+    config.enable_learning_calendar=True
+    token='d'*32
+    main.db.mutate_task_action_state(module.key(123),lambda old:{'token':token,'status':'pending','chat_id':123,
+        'expires_at':(module.datetime.now(config.tz)+timedelta(hours=2)).isoformat()})
+    monkeypatch.setattr(module,'preview',AsyncMock(return_value={'messages':[
+        {'text':'First page','replan_preview_token':token},
+        {'text':'Final page','replan_preview_token':token,'replan_token':token}]}))
+    bot.send_message.side_effect=[{'ok':True,'result':{'message_id':40}}, {'ok':True,'result':{'message_id':50}},
+                                  {'ok':True,'result':{'message_id':60}}]
+    bot.request.return_value={'ok':True}
+    headers={'X-Telegram-Bot-Api-Secret-Token':'test-hook'}
+    payload={'update_id':90602,'message':{'message_id':39,'chat':{'id':123},'text':'/replan move today'}}
+    assert client.post('/telegram/webhook',headers=headers,json=payload).status_code==200
+    saved=main.db.get_task_action_state(module.key(123))
+    assert saved['preview_message_ids']==[40,50] and saved['message_id']==50
+    payload={'update_id':90603,'callback_query':{'id':'cancel','data':'replan:cancel:'+token,
+        'message':{'message_id':50,'chat':{'id':123},'text':'Final page'}}}
+    assert client.post('/telegram/webhook',headers=headers,json=payload).status_code==200
+    assert [call.args[1]['message_id'] for call in bot.request.await_args_list]==[40,50]
 
 
 def test_replan_calls_shared_ai_transport_and_validates_schema(monkeypatch):

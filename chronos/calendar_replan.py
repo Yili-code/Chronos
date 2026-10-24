@@ -45,9 +45,11 @@ def card(state):
 
 
 def bind(db, chat_id, message_id, message):
-    token = message.get('replan_token')
+    token = message.get('replan_token') or message.get('replan_preview_token')
     if token:
-        db.mutate_task_action_state(key(chat_id), lambda old: {**old, 'message_id': message_id}
+        db.mutate_task_action_state(key(chat_id), lambda old: {**old,
+            'preview_message_ids': list(dict.fromkeys([*old.get('preview_message_ids', []), message_id])),
+            **({'message_id': message_id} if message.get('replan_token') else {})}
                                     if old and old.get('token') == token else old)
 
 

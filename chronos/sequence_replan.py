@@ -208,6 +208,8 @@ def card(state):
     lines += ['', 'Allow to apply these changes, or Edit to adjust your preferences.']
     token = state['token']
     messages = text_messages(lines)
+    for message in messages:
+        message['replan_preview_token'] = token
     messages[-1].update(replan_token=token,reply_markup={'inline_keyboard':[[{'text':a.title(),'callback_data':f'replan:{a}:{token}'} for a in ('allow','edit','cancel')]]})
     return {'messages':messages}
 

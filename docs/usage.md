@@ -149,3 +149,5 @@ Review shows before/after times and a short reason for every active item. Only A
 Verification uses isolated SQLite/Firestore-contract tests and Calendar transport substitutes. Readiness or read-only production discovery does not establish a real Telegram-to-Calendar-write end-to-end result.
 
 Original times are retained when they already match the earliest suitable placement. This is a bounded forward scheduling policy, not a claim of exhaustive global optimization.
+
+Cancel removes that review's Telegram preview, including all pages of a split review, while retaining a brief cancellation acknowledgement. Calendar events stay unchanged. Cleanup retries target only the cancelled review; stale buttons and unresolved in-progress changes do not delete an active review.
