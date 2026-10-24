@@ -133,12 +133,14 @@ def test_today_command(system, monkeypatch):
     before = datetime.now(main.settings.tz)
     output = asyncio.run(main.prepare_message("/TODAY@ChronosBot"))()
     after = datetime.now(main.settings.tz)
-    assert "Today" in output["messages"][0]["text"]
+    assert output["messages"][0]["text"].startswith("<b>")
+    assert "Today" not in output["messages"][0]["text"]
     text = output["messages"][0]["text"]
-    assert "90 minutes(123)\nStudy graphs" in text
-    assert "90 minutes\nPersonal event" in text
-    assert "90 minutes\nInvalid task reference" in text
+    assert "10/20 17:00–10/20 18:30 · Study graphs" in text
+    assert "10/20 17:00–10/20 18:30 · Personal event" in text
+    assert "10/20 17:00–10/20 18:30 · Invalid task reference" in text
     assert "<invalid>" not in text
+    assert "minutes" not in text and "(123)" not in text
     start, end = calendar.agenda.await_args.args
     assert start.date() == datetime.now(main.settings.tz).date()
     assert before <= start <= after
@@ -234,5 +236,29 @@ def test_today_remaining_day_can_be_empty():
     calendar = AsyncMock()
     calendar.agenda.return_value = []
     text = "\n".join(asyncio.run(tomorrow_agenda(calendar, config, NOW, day_offset=0)))
-    assert "Today" in text and "No events scheduled." in text
+    assert "Today" not in text and "No events scheduled." in text
     assert calendar.agenda.await_args.args == (NOW, NOW.replace(hour=0) + timedelta(days=1))
+
+
+def test_today_compact_format_matches_requested_layout():
+    from chronos.evening_agenda import tomorrow_agenda
+
+    config = Settings(_env_file=None)
+    calendar = AsyncMock()
+    calendar.agenda.return_value = [
+        {"summary": "Codeforces Round 1129", "start": {"dateTime": "2026-10-24T19:05:00+08:00"},
+         "end": {"dateTime": "2026-10-24T21:05:00+08:00"}},
+        {"summary": "Study ISPM Chapter 2", "start": {"dateTime": "2026-10-24T18:00:00+08:00"},
+         "end": {"dateTime": "2026-10-24T19:00:00+08:00"},
+         "extendedProperties": {"private": {"chronosTask": "207"}}},
+    ]
+    parts = asyncio.run(tomorrow_agenda(calendar, config, datetime.fromisoformat("2026-10-24T17:33:00+08:00"), day_offset=0))
+    assert parts == ["<b>10/24 (Sat)</b>\n\n18:00–19:00 · Study ISPM Chapter 2\n19:05–21:05 · Codeforces Round 1129"]
+
+
+def test_compact_agenda_escapes_titles_and_keeps_continuations_compact():
+    item = event("<Graphs>\nsecond line " + "x" * 450)
+    parts = render_agenda([item] * 20, NOW.date() + timedelta(days=1), NOW.tzinfo, compact=True)
+    assert len(parts) > 1 and all(len(part) < 4096 for part in parts)
+    assert all("&lt;Graphs&gt; second line" in part and "minutes" not in part for part in parts)
+    assert all("\n\n17:00" in part and "\n17:00" in part for part in parts)
