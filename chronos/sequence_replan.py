@@ -25,22 +25,28 @@ def looks_ordered(text):
 
 def looks_choice_answer(text):
     return bool(len(text) <= 200 and not text.startswith('/') and
-        (re.search(r'\d{1,2}[/.-]\d{1,2}|\d{1,2}[號号日]|\b(?:earlier|later|latest|earliest)\b',text,re.I)) and
+        (re.search(r'\d{1,2}[/.-]\d{1,2}|\d{1,2}[號号日]|\b(?:earlier|later|latest|earliest)\b|\bref:[\w-]+',text,re.I)) and
         (len(text) <= 30 or re.search(r'choose|select|use|take|那個|那个|選|选',text,re.I)))
 
 
-def choice_evidence(text, event, candidates):
+def choice_evidence(text, event, candidates, tz=None):
     value = event.get('start',{}).get('dateTime') or event.get('start',{}).get('date')
     if not value:
         return False
     start = datetime.fromisoformat(value.replace('Z','+00:00'))
+    if tz is not None:
+        start = start.astimezone(tz)
     dates = [start.strftime('%Y-%m-%d'), f'{start.month}/{start.day}',f'{start.month:02d}/{start.day:02d}']
     if any(re.search(r'(?<![0-9])'+re.escape(date)+r'(?![0-9])',text) for date in dates):
         times = re.findall(r'(?<![0-9])([0-2]?[0-9]:[0-5][0-9])(?![0-9])',text)
         return not times or start.strftime('%H:%M') in [t.zfill(5) for t in times]
-    if re.search(rf'(?<![0-9]){start.day}[號号日]',text) and sum((e.get('start',{}).get('dateTime','')[8:10] == f'{start.day:02d}') for e in candidates) == 1:
+    def candidate_start(e):
+        value = e.get('start',{}).get('dateTime') or e.get('start',{}).get('date')
+        parsed = datetime.fromisoformat(value.replace('Z','+00:00'))
+        return parsed.astimezone(tz) if tz is not None else parsed
+    if re.search(rf'(?<![0-9]){start.day}[號号日]',text) and sum(candidate_start(e).day == start.day for e in candidates) == 1:
         return True
-    values = [(e.get('start',{}).get('dateTime') or e.get('start',{}).get('date',''),e['id']) for e in candidates]
+    values = [(candidate_start(e),e['id']) for e in candidates]
     if re.search(r'\b(?:later|latest)\b|較晚|较晚',text,re.I):
         return event['id'] == max(values)[1]
     if re.search(r'\b(?:earlier|earliest)\b|較早|较早',text,re.I):
@@ -90,11 +96,11 @@ def event_info(planner, event):
     issue = None
     if not completed and task:
         if evidence.get('successor_task_id'):
-            issue = 'remaining work has a continuation task; choose its existing event before moving this history'
+            issue = 'The remaining work has a separate session. Please choose that session rather than this past event.'
         elif (not current or current.get('event_id') != event.get('id') or current.get('token') != props.get('chronosToken')):
-            issue = 'Calendar link differs from the current task booking; inspect /plan before retrying'
+            issue = 'This event differs from the session currently tracked for the task. Please check /plan before moving it.'
         elif current.get('status') in {'creating', 'planning'} or (current.get('delivery') or '').endswith(('_uncertain', '_sending')):
-            issue = 'a booking or delivery is still in progress or uncertain; inspect /plan before retrying'
+            issue = 'An earlier booking is still being checked. Please review /plan before requesting another change.'
     return {'task_id': task['id'] if task else None, 'task_snapshot': task_fields(task) if task else None,
             'task_status': task.get('status') if task else None, 'task_state': current,
             'completed': completed, 'issue': issue}
@@ -164,15 +170,42 @@ def question_reply(text):
     return text if len(text) <= 3500 else {'messages':text_messages(text.split('\n'))}
 
 
+def display_window(start, end, tz=None):
+    a, b = (datetime.fromisoformat(value.replace('Z', '+00:00')) for value in (start, end))
+    if tz is not None:
+        a, b = a.astimezone(tz), b.astimezone(tz)
+    # Include the year to keep saved reviews unambiguous across New Year.
+    return f'{a:%Y/%m/%d (%a) %H:%M}' + (f'–{b:%H:%M}' if a.date() == b.date() else f'–{b:%Y/%m/%d %H:%M}')
+
+
+def candidate_lines(candidates, tz):
+    labels = []
+    for event in candidates:
+        start, end = (event.get(k, {}) for k in ('start', 'end'))
+        if start.get('dateTime') and end.get('dateTime'):
+            labels.append(display_window(start['dateTime'], end['dateTime'], tz))
+        else:
+            labels.append((start.get('date') or 'Date unavailable') + ' · All day')
+    # Internal references are only needed when date/time cannot distinguish two
+    # records. Keep the normal case free of identifiers and duplicated titles.
+    return ['  • ' + label + (f" · ref:{event['id'][-16:]}" if labels.count(label) > 1 else '')
+            for event, label in zip(candidates, labels)]
+
+
 def card(state):
-    lines = ['<b>Review ordered study schedule</b>', 'Original events and durations are preserved. Nothing changes until Allow.']
+    lines = ['<b>Your revised study schedule</b>',
+             'I have arranged the remaining sessions in order, using the earliest suitable times.',
+             'Each session keeps its original duration. Please review before choosing Allow.']
     for item in state.get('completed_events', []):
         lines += ['', '<b>' + escape(item['title'][:100]) + '</b> · Completed; unchanged']
     for move in state['calendar_moves']:
         lines += ['', '<b>' + escape(move['title'][:100]) + '</b>',
-            f"{move['old_start'][:16].replace('T',' ')}–{move['old_end'][11:16]}",
-            f"→ {move['start'][:16].replace('T',' ')}–{move['end'][11:16]} · {move['minutes']} minutes",
+            'From: ' + display_window(move['old_start'], move['old_end']),
+            'To: ' + display_window(move['start'], move['end']) + f" · {move['minutes']} min",
             escape(move['reason'])]
+    if any(move.get('outcome_unknown') for move in state['calendar_moves']):
+        lines += ['', 'Past sessions are still included where completion has not been confirmed.']
+    lines += ['', 'Allow to apply these changes, or Edit to adjust your preferences.']
     token = state['token']
     messages = text_messages(lines)
     messages[-1].update(replan_token=token,reply_markup={'inline_keyboard':[[{'text':a.title(),'callback_data':f'replan:{a}:{token}'} for a in ('allow','edit','cancel')]]})
@@ -240,14 +273,16 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
         candidates = list(matches.get(number, {}).values())
         if len(candidates) > 1 and previous and old.get('status') == 'clarifying':
             chosen = parsed.choices.get(str(number))
-            explicit = [e for e in candidates if choice_evidence(instruction,e,candidates)]
+            explicit = [e for e in candidates if choice_evidence(instruction,e,candidates,cfg.tz)]
             if len(explicit) == 1 and (not chosen or chosen == explicit[0]['id']):
                 candidates = explicit
         if len(candidates) != 1:
             if len(candidates) > 1:
                 ambiguous[str(number)] = [{k:e.get(k) for k in ('id','summary','start','end')} for e in candidates]
-            detail = 'missing from Calendar' if not candidates else 'multiple candidates: ' + '; '.join(f"{e.get('summary','')[:70]} ({e.get('start',{}).get('dateTime',e.get('start',{}).get('date','?'))}) [ref:{e['id'][-16:]}]" for e in candidates[:4])
-            issues.append(f'{parsed.unit.title()} {number}: {detail}')
+            if not candidates:
+                issues.append(f'{parsed.unit.title()} {number}: I could not find an event in your calendar. Please check its title or tell me which event to use.')
+            else:
+                issues.append(f'{parsed.unit.title()} {number} — I found {len(candidates)} matching events:\n' + '\n'.join(candidate_lines(candidates, cfg.tz)))
             continue
         event = candidates[0]
         info = event_info(planner, event)
@@ -256,18 +291,24 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
             completed.append(common)
             continue
         if info['issue'] or not eligible(event, cfg):
-            issues.append(f"{parsed.unit.title()} {number}: {info['issue'] or 'not a movable owned single-person timed event; inspect Calendar'}")
+            issues.append(f"{parsed.unit.title()} {number}: {info['issue'] or 'I cannot safely move this event. Please check whether it is shared, recurring, all-day, or owned by another account.'}")
             continue
         a,b = bounds(event, cfg.tz)
         seconds = (b-a).total_seconds()
         if seconds <= 0 or seconds % 60 or seconds > cfg.learning_daily_minutes*60:
-            issues.append(f'{parsed.unit.title()} {number}: original duration does not fit the supported daily capacity; choose a larger supported window')
+            issues.append(f'{parsed.unit.title()} {number}: The full session exceeds the supported daily study limit. Please adjust that limit or split the session first.')
             continue
         moves.append({**common, 'old_start': a.isoformat(), 'old_end': b.isoformat(), 'minutes': int(seconds/60),
                       'budget_token': (info['task_state'] or {}).get('token') or 'sequence:' + event['id']})
     if issues:
-        question = ('Please resolve these items together before I change the group:\n' + '\n'.join(escape(i) for i in issues)
-                    + '\nChoose the date/time of each ambiguous item in one reply, or correct missing events and retry. No events changed.')
+        question = ('I can rearrange this group, Sir. I need to confirm ' + ('one detail' if len(issues) == 1 else 'a few details')
+                    + ' first.\n\n' + '\n\n'.join(escape(i) for i in issues))
+        if ambiguous:
+            question += '\n\nWhich event should I move? Reply with the date and time' + (' for each item' if len(ambiguous) > 1 else '') + '.'
+            if any('ref:' in line for line in issues):
+                question += ' For identical times, include the displayed ref.'
+            question += '\nThis selects the event; I will look for an earlier suitable time for it.'
+        question += '\n\nYour calendar is unchanged. I will show the full schedule for your approval.'
         if ambiguous:
             clarification = {'ordered_sequence':True,'status':'clarifying','token':token,'chat_id':chat_id,
                 'parsed':parsed.model_dump(mode='json'),'candidates':ambiguous,'question':question,
@@ -280,32 +321,30 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
     agenda = await planner.calendar.agenda(now, stop)
     fixed, budgets = fixed_and_budgets(planner, moves, agenda, now, stop)
     policy = planner.db.get_task_action_state('learning:course-calendar-policy')
+    # Selecting an event identifies what to move, not a date to preserve.
+    # Release all selected slots together and place predecessors as early as
+    # constraints permit; retaining a late first slot delays the entire group.
+    occupied, load = list(fixed), dict(budgets)
+    cursor = start
     failed = None
-    for prefer_original in (True,False):
-        occupied, load = list(fixed), dict(budgets)
-        cursor = start
-        failed = None
-        for move in moves:
-            task = planner.db.get_task(move['task_id']) if move['task_id'] is not None else {}
-            if task is None:
-                return 'A linked task changed during planning. Please retry the group; no events changed.'
-            due = deadline(task, cfg)
-            limit = min(stop, due) if due else stop
-            slot = choose_slot(task, move['minutes'], tuple(datetime.fromisoformat(move[k]) for k in ('old_start','old_end')),
-                               cursor, limit, occupied, load, cfg, policy, parsed.weekdays, now,prefer_original)
-            if not slot:
-                failed = (move,limit)
-                break
-            move.update(start=slot[0].isoformat(), end=slot[1].isoformat(),
-                        reason='Original slot retained; dependency order and constraints verified.' if slot[0].isoformat() == move['old_start'] else 'Placed in dependency order in an available working period; original duration retained.')
-            if datetime.fromisoformat(move['old_end']) <= now:
-                move['reason'] += ' Previous outcome remains unknown unless already reported; not marked complete.'
-            cursor = slot[1]
-            occupied.append(slot)
-            day = slot[0].date().isoformat()
-            load[day] = load.get(day,0) + move['minutes']
-        if failed is None:
+    for move in moves:
+        task = planner.db.get_task(move['task_id']) if move['task_id'] is not None else {}
+        if task is None:
+            return 'A linked task changed during planning. Please retry the group; no events changed.'
+        due = deadline(task, cfg)
+        limit = min(stop, due) if due else stop
+        slot = choose_slot(task, move['minutes'], tuple(datetime.fromisoformat(move[k]) for k in ('old_start','old_end')),
+                           cursor, limit, occupied, load, cfg, policy, parsed.weekdays, now, prefer_original=False)
+        if not slot:
+            failed = (move,limit)
             break
+        move.update(start=slot[0].isoformat(), end=slot[1].isoformat(),
+                    reason='This time still fits the session order.' if slot[0].isoformat() == move['old_start'] else 'Earliest suitable time after the preceding session.' if move != moves[0] else 'Earliest suitable time to begin the group.',
+                    outcome_unknown=datetime.fromisoformat(move['old_end']) <= now)
+        cursor = slot[1]
+        occupied.append(slot)
+        day = slot[0].date().isoformat()
+        load[day] = load.get(day,0) + move['minutes']
     if failed:
         move,limit = failed
         return f"Cannot place {escape(move['title'])} after its predecessors within the deadline, preferences and available capacity (search ends {limit:%m/%d %H:%M}). Choose a later deadline or smaller group; no events changed."
@@ -422,10 +461,10 @@ def record_applied(planner, state, move, lease):
 def outcome(state, unknown=(), problem=None):
     applied = set(state.get('applied_event_ids',[]))
     all_done = len(applied) == len(state['calendar_moves']) and not unknown and not problem
-    lines = ['Ordered rescheduling completed.' if all_done else 'Ordered rescheduling paused; the whole group is not complete.']
+    lines = ['Ordered rescheduling completed.' if all_done else 'I have paused the changes; the whole group is not complete.']
     for item in state['calendar_moves']:
         status = 'Result unverified or changed' if item['event_id'] in unknown else 'Updated and verified' if item['event_id'] in applied else 'Not updated'
-        lines.append(f"{state['parsed']['unit'].title()} {item['ordinal']}: {status} · {item['start'][:16]}–{item['end'][11:16]}")
+        lines += ['', f"{state['parsed']['unit'].title()} {item['ordinal']} · {status}", display_window(item['start'], item['end'])]
     if state['completed_events']:
         lines.append(f"{len(state['completed_events'])} confirmed completed chapter(s) kept unchanged.")
     if problem:

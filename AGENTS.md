@@ -116,6 +116,8 @@ macOS/Linux 改用 `.venv/bin/python`。測試依模組選跑；外部服務多�
 
 ## Chronos reply style (2026-10-23)
 
+- Apply the existing secretary voice to every new deterministic template, including clarification and review flows. Follow docs/reply-style.md: readable local time ranges, separate candidate lines, one necessary grouped question, brief before/after blocks, and no normal internal event IDs or raw ISO timestamps. Add output-contract tests; a prompt or memory preference alone does not enforce hard-coded replies.
+
 - Use restrained, formal, courteous English with a British butler sensibility. Address the user as Sir in acknowledgements and introductions, sparingly. Be calm, concise and precise; avoid emoji, exaggerated praise and repetitive service catchphrases.
 - Dry wit is optional and rare, suitable only for harmless situations. Never joke about failures, missed deadlines, uncertainty or destructive confirmations; never mock the user.
 - Anticipate useful next steps only from verified information and actual capabilities. A proposal is not a completed action. Preserve explicit approval, uncertain delivery and no-change wording.
