@@ -7,13 +7,16 @@ from uuid import uuid4
 from .task_timing import display_date
 
 
-def render_agenda(events, day, tz, label="Tomorrow", db=None, now=None, show_task_ids=False, *, heading=None):
+def render_agenda(events, day, tz, label="Tomorrow", db=None, now=None, show_task_ids=False, *, heading=None, compact=False):
     if heading is None:
-        heading = f"<b>{label} · {display_date(day.isoformat())}</b>"
+        date = display_date(day.isoformat())
+        heading = f"<b>{date if compact else label + ' · ' + date}</b>"
     now = now or datetime.now(tz)
     rows = []
     for event in events:
         title = escape((event.get("summary") or "Untitled event")[:500])
+        if compact:
+            title = " ".join(title.split())
         props = event.get("extendedProperties", {}).get("private", {})
         token = props.get("chronosToken")
         marker = None
@@ -37,7 +40,7 @@ def render_agenda(events, day, tz, label="Tomorrow", db=None, now=None, show_tas
             if marker is None and finish and datetime.fromisoformat(finish) <= now:
                 marker = "◇ Awaiting"
         if marker:
-            title += f"\n{marker}"
+            title += (" · " if compact else "\n") + marker
         if event["start"].get("date"):
             start = event["start"]["date"]
             rows.append((start, f"All day · {title}"))
@@ -49,13 +52,18 @@ def render_agenda(events, day, tz, label="Tomorrow", db=None, now=None, show_tas
             task_suffix = f"({task_id})" if show_task_ids and re.fullmatch(r"[1-9][0-9]*", task_id) else ""
             begin = start.strftime("%H:%M") if start.date() == day else start.strftime("%m/%d %H:%M")
             stop = end.strftime("%H:%M") if end.date() == day else end.strftime("%m/%d %H:%M")
-            rows.append((start.isoformat(), f"{begin}–{stop} · {duration} minutes{task_suffix}\n{title}"))
+            row = f"{begin}–{stop} · {title}" if compact else f"{begin}–{stop} · {duration} minutes{task_suffix}\n{title}"
+            rows.append((start.isoformat(), row))
     parts, text = [], heading
+    first_row = True
     for _, row in sorted(rows):
         if len(text) + len(row) > 3000:
             parts.append(text)
             text = heading + " · continued"
-        text += ("\n\n" if text else "") + row
+            first_row = True
+        separator = "\n\n" if first_row or not compact else "\n"
+        text += (separator if text else "") + row
+        first_row = False
     parts.append(text if rows else (heading + "\n\n" if heading else "") + "No events scheduled.")
     return parts
 
@@ -75,7 +83,7 @@ async def tomorrow_agenda(calendar, settings, now=None, *, day_offset=1, db=None
         start = now
     await calendar.verify_owner()
     events = await calendar.agenda(start, end)
-    return render_agenda(events, day, settings.tz, "Today" if day_offset == 0 else "Tomorrow", db=db, now=now, show_task_ids=day_offset == 0)
+    return render_agenda(events, day, settings.tz, "Today" if day_offset == 0 else "Tomorrow", db=db, now=now, compact=day_offset == 0)
 
 
 async def send_evening_agenda(db, calendar, telegram, settings, now=None):
