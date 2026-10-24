@@ -466,6 +466,43 @@ def test_explicit_no_change_reply_skips_ai(store, monkeypatch):
     task = main.tasks.create("Preserve me")
     classify_mock = classify(monkeypatch, action="task_complete", task_ids=[task["id"]])
     before = main.tasks.list_open()
-    assert run("不需要記錄", bound_task_id=task["id"])["reply"] == "Understood, Sir."
+    assert run("不需要記錄", bound_task_id=task["id"])["reply"] == "Understood, Sir. I’ll leave everything as it is."
     assert main.tasks.list_open() == before
     classify_mock.assert_not_awaited()
+
+
+@pytest.mark.parametrize("text,fragment", [
+    ("你好！", "Hello, Sir"), ("Thank you!", "welcome"),
+    ("你是真人嗎？", "AI assistant"), ("Who are you?", "Chronos"),
+    ("不用更新 task list。", "leave everything"),
+    ("What can you do?", "/info"), ("晚安", "Good night"),
+])
+def test_social_turns_preserve_tasks_pending_context_and_receipts(store, monkeypatch, text, fragment):
+    task = main.tasks.create("Keep this task")
+    before = main.tasks.list_open()
+    pending = {"instruction": "Edit title", "candidate_ids": [task["id"]]}
+    store.mutate_task_action_state("intent:clarify:123", lambda old: pending)
+    classifier = classify(monkeypatch, action="task_create")
+    receipt = run(text, update=77001, bound_task_id=task["id"])
+    assert fragment in receipt["reply"]
+    assert run(text, update=77001) == receipt
+    assert main.tasks.list_open() == before
+    assert store.get_task_action_state("intent:clarify:123") == pending
+    classifier.assert_not_awaited()
+    main.ai.parse_many.assert_not_awaited()
+
+
+@pytest.mark.parametrize("text", ["謝謝，明天提醒我交報告", "Hi, add a task to read", "你好是報告標題", "Who are you meeting tomorrow?"])
+def test_social_prefix_never_swallows_real_request(store, monkeypatch, text):
+    classifier = classify(monkeypatch, action="clarify", question="Which time?")
+    run(text)
+    classifier.assert_awaited_once()
+    assert main.tasks.list_open() == []
+
+
+def test_explicit_creation_keeps_social_word_as_task_title(store, monkeypatch):
+    classify(monkeypatch, action="unsupported")
+    action = asyncio.run(main.prepare_message("Hello", create_only=True))
+    store.process_update(77002, action)
+    main.ai.parse_many.assert_awaited_once_with("Hello")
+    assert len(main.tasks.list_open()) == 1

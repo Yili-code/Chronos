@@ -813,3 +813,18 @@ def test_batch_acknowledgement_delivers_once_and_keeps_learning_trigger(system, 
     assert "I have added 2 tasks, Sir." in bot.send_message.await_args.args[1]
     assert len(bot.send_message.await_args.kwargs["reply_markup"]["inline_keyboard"]) == 2
     calendar.tick.assert_awaited()
+
+
+@pytest.mark.parametrize("text,fragment", [("你好", "Hello, Sir"), ("謝謝", "welcome"), ("Are you human?", "AI assistant")])
+def test_social_webhook_replay_has_no_task_side_effects(system, text, fragment):
+    client, service, bot, config = system
+    payload = {"update_id": 992031, "message": {"message_id": 992030,
+               "chat": {"id": 123}, "text": text}}
+    headers = {"X-Telegram-Bot-Api-Secret-Token": "test-hook"}
+    before = service.list_open()
+    for _ in range(2):
+        assert client.post("/telegram/webhook", headers=headers, json=payload).status_code == 200
+    assert service.list_open() == before
+    bot.send_message.assert_awaited_once()
+    assert fragment in bot.send_message.await_args.args[1]
+    main.ai.classify_intent.assert_not_awaited()
