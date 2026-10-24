@@ -251,6 +251,8 @@ def test_webhook_auth_and_commands(system):
     assert bot.send_message.await_count == 0
     assert client.post('/telegram/webhook', headers=headers, json={'update_id': 0}).status_code == 200
     assert send('/start').status_code == 200
+    assert 'No open tasks' in bot.send_message.call_args.args[1]
+    assert send('/info').status_code == 200
     help_text = bot.send_message.call_args.args[1]
     assert help_text == main.HELP_TEXT
     assert help_text.splitlines() == ['<b>Chronos</b>', '', '「報告改到星期五交」',
@@ -828,3 +830,28 @@ def test_social_webhook_replay_has_no_task_side_effects(system, text, fragment):
     bot.send_message.assert_awaited_once()
     assert fragment in bot.send_message.await_args.args[1]
     main.ai.classify_intent.assert_not_awaited()
+
+
+@pytest.mark.parametrize("populated", [False, True])
+def test_start_shares_task_list_response_without_ai_or_mutation(system, populated):
+    client, service, bot, config = system
+    if populated:
+        service.create("Review project requirements")
+    before = service.list_open()
+    main.ai.classify_intent.reset_mock()
+    main.ai.parse.reset_mock()
+    responses = []
+    for update_id, command in enumerate(("/start", "/tasks"), 90001):
+        response = client.post('/telegram/webhook', headers={'X-Telegram-Bot-Api-Secret-Token': config.telegram_webhook_secret},
+                               json={'update_id': update_id, 'message': {'chat': {'id': 123}, 'text': command}})
+        assert response.status_code == 200
+        responses.append(bot.send_message.call_args)
+    assert responses[0] == responses[1]
+    assert service.list_open() == before
+    main.ai.classify_intent.assert_not_awaited()
+    main.ai.parse.assert_not_awaited()
+    if populated:
+        assert 'Review project requirements' in responses[0].args[1]
+        assert responses[0].kwargs['reply_markup'] == main.task_review.OPEN_KEYBOARD
+    else:
+        assert 'No open tasks' in responses[0].args[1]
