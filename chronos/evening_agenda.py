@@ -7,7 +7,7 @@ from uuid import uuid4
 from .task_timing import display_date
 
 
-def render_agenda(events, day, tz, label="Tomorrow", db=None, now=None, show_task_ids=False, *, heading=None, compact=False):
+def render_agenda(events, day, tz, label="Tomorrow", db=None, now=None, show_task_ids=False, *, heading=None, compact=False, event_groups=None):
     if heading is None:
         date = display_date(day.isoformat())
         heading = f"<b>{date if compact else label + ' · ' + date}</b>"
@@ -43,7 +43,7 @@ def render_agenda(events, day, tz, label="Tomorrow", db=None, now=None, show_tas
             title += (" · " if compact else "\n") + marker
         if event["start"].get("date"):
             start = event["start"]["date"]
-            rows.append((start, f"All day · {title}"))
+            rows.append((start, f"All day · {title}", event))
         else:
             start = datetime.fromisoformat(event["start"]["dateTime"]).astimezone(tz)
             end = datetime.fromisoformat(event["end"]["dateTime"]).astimezone(tz)
@@ -53,18 +53,25 @@ def render_agenda(events, day, tz, label="Tomorrow", db=None, now=None, show_tas
             begin = start.strftime("%H:%M") if start.date() == day else start.strftime("%m/%d %H:%M")
             stop = end.strftime("%H:%M") if end.date() == day else end.strftime("%m/%d %H:%M")
             row = f"{begin}–{stop} · {title}" if compact else f"{begin}–{stop} · {duration} minutes{task_suffix}\n{title}"
-            rows.append((start.isoformat(), row))
+            rows.append((start.isoformat(), row, event))
     parts, text = [], heading
     first_row = True
-    for _, row in sorted(rows):
+    group = []
+    for _, row, event in sorted(rows, key=lambda item: (item[0], item[1])):
         if len(text) + len(row) > 3000:
             parts.append(text)
+            if event_groups is not None:
+                event_groups.append(group)
+            group = []
             text = heading + " · continued"
             first_row = True
         separator = "\n\n" if first_row or not compact else "\n"
         text += (separator if text else "") + row
         first_row = False
+        group.append(event)
     parts.append(text if rows else (heading + "\n\n" if heading else "") + "No events scheduled.")
+    if event_groups is not None:
+        event_groups.append(group)
     return parts
 
 
@@ -74,6 +81,10 @@ def render_window_agenda(events, start, end, tz, db=None):
 
 
 async def tomorrow_agenda(calendar, settings, now=None, *, day_offset=1, db=None):
+    return [message['text'] for message in await agenda_messages(calendar, settings, now, day_offset=day_offset, db=db)]
+
+
+async def agenda_messages(calendar, settings, now=None, *, day_offset=1, db=None):
     """Read the remaining today or full future day without delivery receipts."""
     now = (now or datetime.now(settings.tz)).astimezone(settings.tz)
     day = now.date() + timedelta(days=day_offset)
@@ -83,7 +94,14 @@ async def tomorrow_agenda(calendar, settings, now=None, *, day_offset=1, db=None
         start = now
     await calendar.verify_owner()
     events = await calendar.agenda(start, end)
-    return render_agenda(events, day, settings.tz, "Today" if day_offset == 0 else "Tomorrow", db=db, now=now, compact=day_offset == 0)
+    groups = []
+    parts = render_agenda(events, day, settings.tz, "Today" if day_offset == 0 else "Tomorrow", db=db, now=now, compact=day_offset == 0, event_groups=groups)
+    messages = [{'text': part, 'parse_mode': 'HTML'} for part in parts]
+    if day_offset == 0 and db is not None:
+        from .agenda_context import snapshot
+        for message, group in zip(messages, groups):
+            message['today_agenda'] = snapshot(group, db, now, settings)
+    return messages
 
 
 async def send_evening_agenda(db, calendar, telegram, settings, now=None):

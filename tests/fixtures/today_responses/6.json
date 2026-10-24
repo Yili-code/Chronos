@@ -1,0 +1,26 @@
+{
+  "classify_intent": {
+    "action": "clarify",
+    "task_ids": [],
+    "target_selection": "single",
+    "instruction": "asdf ### 🧩 ???",
+    "question": "請問您需要我幫忙做什麼？",
+    "start": null,
+    "end": null,
+    "reference": null,
+    "page": 1,
+    "minutes": null,
+    "outcome": null,
+    "operation": null,
+    "day": null,
+    "end_day": null,
+    "title": null,
+    "content": null,
+    "event_category": null,
+    "edit_field": null,
+    "preference_operation": null,
+    "preference_key": null,
+    "preference_value": null,
+    "assignment_course": null
+  }
+}

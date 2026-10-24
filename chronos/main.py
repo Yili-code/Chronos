@@ -47,7 +47,8 @@ from . import task_review
 from . import course_habits
 from . import assignment_access
 from . import preferences
-from .evening_agenda import send_evening_agenda, tomorrow_agenda
+from .evening_agenda import send_evening_agenda
+from . import agenda_context
 from .task_timing import display_time, task_sort_key, timing_details
 from .study_scheduler import tick_study, notify_study_failures
 from .gmail import GmailClient, GmailError
@@ -1041,6 +1042,11 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                     action = await prepare_message(f"/edit #{bound_task} {instruction}", update_id=update_id)
                 else:
                     action = await prepare_message(text, update_id=update_id, chat_id=chat_id, bound_task_id=bound_task)
+            elif source_message.reply_to_message is not None and (agenda := db.get_task_action_state(
+                    f'agenda:message:{chat_id}:{source_message.reply_to_message.message_id}')):
+                import sys
+                action = await agenda_context.prepare(sys.modules[__name__], agenda, text,
+                                                      chat_id=chat_id, update_id=update_id)
             elif source_message.reply_to_message is not None:
                 if source_message.message_id is None:
                     raise HTTPException(status_code=422, detail="Reply message id is required")
@@ -1109,6 +1115,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                 raise HTTPException(status_code=502, detail="Telegram reply failed; waiting for retry")
             sent_id = result.get("result", {}).get("message_id")
             if sent_id is not None:
+                agenda_context.bind(db, chat_id, sent_id, message)
                 task_review.bind(db, chat_id, sent_id, message)
                 bind_free_message(db, chat_id, sent_id, message)
                 calendar_replan.bind(db, chat_id, sent_id, message)
@@ -1316,10 +1323,11 @@ async def prepare_message(text: str, *, update_id: int | None = None, chat_id: i
         command = normalized.split("@")[0].lower()
         label = "Today" if command == "/today" else "Tomorrow"
         try:
-            parts = await tomorrow_agenda(google_calendar, settings, day_offset=0 if command == "/today" else 1, db=db)
+            from .evening_agenda import agenda_messages
+            messages = await agenda_messages(google_calendar, settings, day_offset=0 if command == "/today" else 1, db=db)
         except CalendarError:
             return lambda: f"{label}'s agenda is unavailable right now. Please try {command} again shortly."
-        return lambda: message_bundle(*({"text": part, "parse_mode": "HTML"} for part in parts))
+        return lambda: message_bundle(*messages)
     schedule_question = re.fullmatch(
         r"(?:我)?(?:這|下)?(?:星期|週|周)([一二三四五六日天])(?:的)?(早上|上午|下午|晚上)?(?:有事嗎|有空嗎|有什麼(?:事|安排|行程)|有行程嗎)[？?]?",
         normalized,
