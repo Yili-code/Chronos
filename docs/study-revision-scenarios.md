@@ -36,3 +36,9 @@ Related existing revision/replan/intent suites passed 203 tests after the final 
 ## Limits
 
 These tests do not establish a real Telegram approval-to-Google-Calendar-write end-to-end result, live Firestore behavior, all possible paraphrases, or equivalence between local and production model settings. The reported 30 minutes in case 6 were not automatically posted to the feedback ledger. Follow-up answers after every clarification, cross-midnight context, automatic multi-day splitting and exhaustive scheduling optimality were outside these ten acceptance cases. Production deployment/readiness evidence is separate from this isolated scenario evidence.
+
+## Final validation and release
+
+Complete final-tree Python suite: 1,841 passed in 121.66 seconds (one existing Starlette deprecation warning). Extension: 21 passed. Compilation, local documentation links and diff checks passed. PR #71 required CI 40101336280 and exact merge-source push CI 40101551313 passed Python 3.11, Python 3.12 and extension.
+
+Application source 08cc118490e046ed67fff9c68f41c6ea7f0f6b4c was deployed as chronos-study-scenarios-08cc118 and read back at 100% traffic. Before promotion, the zero-traffic candidate passed public/authenticated readiness, actual Calendar read and 115 exact-source regression tests. Settings, pinned secret references, auto-accept policy and runtime resources were preserved; rollback is chronos-study-revision-134ccbf. These runtime checks do not extend the scenario evidence into a real write end-to-end claim.
