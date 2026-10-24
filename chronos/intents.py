@@ -28,6 +28,7 @@ class Intent(BaseModel):
     question: str | None = Field(default=None, max_length=250)
     start: datetime | None = None
     end: datetime | None = None
+    agenda_keywords: list[Annotated[str, Field(min_length=1, max_length=100)]] = Field(default_factory=list, max_length=6)
     reference: str | None = Field(default=None, max_length=64, pattern=r"^[a-f0-9]+$")
     page: int = Field(default=1, ge=1, le=999999)
     minutes: int | None = Field(default=None, ge=1, le=1440)
@@ -287,6 +288,9 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
             else:
                 action = await app.learning_calendar().prepare_feedback(selected, intent.outcome, intent.minutes, instruction)
         elif intent.action == "agenda":
+            from .agenda_query import matching_events, empty_named_query, normalized
+            if any(not normalized(term) or normalized(term) not in normalized(text) for term in intent.agenda_keywords):
+                return clarify('請確認要查詢的活動名稱。沒有變更。')
             start, end = intent.start, intent.end
             if (not start or not end or start.utcoffset() is None or end.utcoffset() is None
                     or not timedelta(0) < end - start <= timedelta(days=7)):
@@ -300,7 +304,9 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
             await app.google_calendar.verify_owner()
             events = await app.google_calendar.agenda(start, end)
             from .evening_agenda import render_window_agenda
-            parts = render_window_agenda(events, start, end, app.settings.tz, db=app.db)
+            events = matching_events(events, intent.agenda_keywords)
+            parts = ([empty_named_query(intent.agenda_keywords, start, end)] if intent.agenda_keywords and not events
+                     else render_window_agenda(events, start, end, app.settings.tz, db=app.db))
             result = app.message_bundle(*({"text": part, "parse_mode": "HTML"} for part in parts))
             action = lambda: result
         elif intent.action in {"replan", "backward", "backward_progress"}:

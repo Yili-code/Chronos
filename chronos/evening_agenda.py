@@ -77,7 +77,7 @@ def render_agenda(events, day, tz, label="Tomorrow", db=None, now=None, show_tas
 
 def render_window_agenda(events, start, end, tz, db=None):
     heading = f"{start:%m/%d %H:%M}–{end:%m/%d %H:%M}" if len(events) > 1 else ""
-    return render_agenda(events, start.date(), tz, db=db, heading=heading)
+    return render_agenda(events, start.date(), tz, db=db, heading=heading, compact=True)
 
 
 async def tomorrow_agenda(calendar, settings, now=None, *, day_offset=1, db=None):
