@@ -66,12 +66,15 @@ def render_window_agenda(events, start, end, tz, db=None):
 
 
 async def tomorrow_agenda(calendar, settings, now=None, *, day_offset=1, db=None):
-    """Read the full local day live, without changing evening delivery receipts."""
+    """Read the remaining today or full future day without delivery receipts."""
     now = (now or datetime.now(settings.tz)).astimezone(settings.tz)
     day = now.date() + timedelta(days=day_offset)
     start = datetime.combine(day, time.min, settings.tz)
+    end = start + timedelta(days=1)
+    if day_offset == 0:
+        start = now
     await calendar.verify_owner()
-    events = await calendar.agenda(start, start + timedelta(days=1))
+    events = await calendar.agenda(start, end)
     return render_agenda(events, day, settings.tz, "Today" if day_offset == 0 else "Tomorrow", db=db, now=now, show_task_ids=day_offset == 0)
 
 
