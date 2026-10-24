@@ -28,6 +28,8 @@ Chronos uses a restrained, courteous butler voice. The purpose is to make confir
 
 Owned templates are edited at their source. There is no transport-level substitution or extra model request to restyle arbitrary text. New templates must follow the policy in AGENTS.md. The feature does not turn every reply into unrestricted generated conversation.
 
+Ordered scheduling replies must act like a capable secretary: state what is ready, ask only the necessary grouped question, and explain the next action. List candidates on separate lines with readable local dates and time ranges. Hide internal event IDs and raw ISO timestamps unless identical candidates genuinely require a reference. A date used to identify an event must never be presented as a preference to retain that date. Reviews use one introduction, compact From/To blocks and brief reasons; describe shared constraints once rather than repeating a diagnostic paragraph for every session. Preserve explicit approval and honest partial or unknown results. Add output-contract tests for every new clarification/review surface alongside behavioral tests.
+
 Batch acknowledgement previews bound long title, content, uncertainty and tag display fields before HTML escaping. An ellipsis marks abbreviated fields; stored tasks remain complete. Groups stay below Telegram's message limit for validated task fields, retain time-role clarification and do not bind a multi-task message to an arbitrary single task. Existing single-task list delivery is retained. Optional per-task review cards remain separate because each has its own approval state.
 
 ## Verification boundaries

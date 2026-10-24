@@ -131,7 +131,8 @@ def test_confirmed_completed_kept_unknown_elapsed_replanned(group):
     assert isinstance(result,dict),result
     assert [m['ordinal'] for m in state['completed_events']]==[1]
     assert [m['ordinal'] for m in state['calendar_moves']]==[2,3]
-    assert 'unknown' in state['calendar_moves'][0]['reason']
+    assert state['calendar_moves'][0]['outcome_unknown'] is True
+    assert 'completion has not been confirmed' in '\n'.join(m['text'] for m in result['messages'])
     reply=allow(group,state)
     assert reply.startswith('Ordered rescheduling completed.'),reply
     assert events['ISPM-1']==original
@@ -157,7 +158,7 @@ def test_group_problems_are_collected_without_any_writes(group,case):
     assert isinstance(result,str),result
     assert state is None or (case=='ambiguous' and state['status']=='clarifying' and 'calendar_moves' not in state)
     if case=='missing':assert 'Chapter 1' in result and 'Chapter 3' in result
-    if case=='ambiguous':assert 'multiple candidates' in result
+    if case=='ambiguous':assert '2 matching events' in result
     if case=='deadline':assert 'deadline' in result
     assert events==before
     calendar.move_event.assert_not_awaited()
@@ -330,13 +331,14 @@ def test_ambiguous_date_answer_keeps_group_and_constraints(group):
     planner.ai.parse_sequence_replan.return_value.start_hour=13
     result,state=preview(group)
     assert isinstance(result,str) and state['status']=='clarifying'
-    assert '2026-10-29' in result and 'ref:alternate' in result
+    assert '2026/10/29 (Thu) 13:00–14:00' in result and 'ref:' not in result
     planner.ai.parse_sequence_replan.return_value=SequenceReplanOutput(actionable=True,scope='ISPM',ordinals=[1,2,3],choices={'1':'alternate'})
     result,state=preview(group,'10/29 那個',2)
     assert isinstance(result,dict),result
     assert state['parsed']['start_hour']==13
     assert [m['ordinal'] for m in state['calendar_moves']]==[1,2,3]
     assert state['calendar_moves'][0]['event_id']=='alternate'
+    assert state['calendar_moves'][0]['start'] < alternate['start']['dateTime']
     assert all(datetime.fromisoformat(m['start']).hour>=13 for m in state['calendar_moves'])
     assert allow(group,state).startswith('Ordered rescheduling completed.')
     assert events['ISPM-1']['etag']=='v1'
@@ -412,3 +414,83 @@ def test_late_original_preference_does_not_cause_false_deadline_failure(group):
     assert datetime.fromisoformat(state['calendar_moves'][0]['start']).hour < 19
     assert datetime.fromisoformat(state['calendar_moves'][1]['end']) <= NOW.replace(day=25,hour=17,minute=0)
     assert allow(group,state).startswith('Ordered rescheduling completed.')
+
+
+def test_late_first_chapter_reuses_freed_later_chapter_slot(group):
+    planner,calendar,events,add=group
+    add(1,day=29,hour=13,minutes=120)
+    add(2,day=24,hour=18)
+    add(3,hour=9)
+    add(4,hour=10)
+    add(5,hour=13,minutes=120)
+    planner.ai.parse_sequence_replan.return_value.ordinals=[1,2,3,4,5]
+    # Other commitments leave precisely the old Chapter 5 slot for Chapter 1.
+    occupied=[(NOW.replace(day=25,hour=8,minute=0),NOW.replace(day=25,hour=13,minute=0))]
+    base=calendar.agenda.side_effect
+    async def agenda(start,end):
+        return [*base(start,end),*[{'id':'other','_calendar_id':'primary','start':{'dateTime':a.isoformat()},'end':{'dateTime':b.isoformat()}} for a,b in occupied]]
+    calendar.agenda.side_effect=agenda
+    before=deepcopy(events)
+    result,state=preview(group,'Reschedule ISPM chapters 1–5 in order.')
+    assert isinstance(result,dict),result
+    first=state['calendar_moves'][0]
+    assert first['start']==before['ISPM-5']['start']['dateTime']
+    assert first['end']==before['ISPM-5']['end']['dateTime']
+    assert state['calendar_moves'][-1]['end'] < before['ISPM-1']['start']['dateTime']
+    assert events==before
+    calendar.move_event.assert_not_awaited()
+    assert allow(group,state).startswith('Ordered rescheduling completed.')
+    assert set(events)==set(before)
+
+
+def test_secretary_clarification_uses_readable_times_not_internal_ids(group):
+    planner,calendar,events,add=group
+    for i in range(1,4):add(i)
+    alternate=deepcopy(events['ISPM-1'])
+    alternate.update(id='private-internal-event-identifier')
+    alternate['start']['dateTime']='2026-10-29T05:00:00+00:00'
+    alternate['end']['dateTime']='2026-10-29T07:00:00+00:00'
+    events[alternate['id']]=alternate
+    result,state=preview(group)
+    assert 'I need to confirm one detail first.' in result
+    assert 'Chapter 1 — I found 2 matching events:\n  • ' in result
+    assert '\n  • 2026/10/29 (Thu) 13:00–15:00' in result
+    assert 'Which event should I move?' in result
+    assert 'Your calendar is unchanged.' in result
+    assert 'ref:' not in result and alternate['id'] not in result
+    assert 'T05:00' not in result and '+00:00' not in result
+    assert state['status']=='clarifying' and 'calendar_moves' not in state
+    calendar.move_event.assert_not_awaited()
+    planner.ai.parse_sequence_replan.return_value.choices={'1':alternate['id']}
+    result,state=preview(group,'10/29 13:00',2)
+    assert isinstance(result,dict),result
+    assert state['calendar_moves'][0]['event_id']==alternate['id']
+
+
+def test_identical_candidate_times_keep_only_necessary_disambiguation(group):
+    planner,calendar,events,add=group
+    for i in range(1,4):add(i)
+    events['alternate']={**deepcopy(events['ISPM-1']),'id':'alternate'}
+    result,state=preview(group)
+    assert 'ref:alternate' in result and 'include the displayed ref' in result
+    assert state['status']=='clarifying'
+    calendar.move_event.assert_not_awaited()
+    assert module.looks_choice_answer('ref:alternate')
+    planner.ai.parse_sequence_replan.return_value.choices={'1':'alternate'}
+    result,state=preview(group,'ref:alternate',2)
+    assert isinstance(result,dict),result
+    assert state['calendar_moves'][0]['event_id']=='alternate'
+
+
+def test_review_has_compact_before_after_and_shared_uncertainty_once(group):
+    _,calendar,_,add=group
+    for i in range(1,4):add(i,day=24)
+    result,state=preview(group)
+    text='\n'.join(m['text'] for m in result['messages'])
+    assert text.startswith('<b>Your revised study schedule</b>')
+    assert text.count('From: ')==3 and text.count('To: ')==3
+    assert text.count('completion has not been confirmed')==1
+    assert 'dependency' not in text and '+08:00' not in text
+    assert 'Allow to apply' in text
+    assert result['messages'][-1]['replan_token']==state['token']
+    calendar.move_event.assert_not_awaited()
