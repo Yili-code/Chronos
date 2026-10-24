@@ -113,6 +113,21 @@ class GoogleCalendar:
                     break
         return events
 
+    async def search_events(self, query):
+        """Target the writable calendar, with explicit bounded pagination."""
+        events, page = [], None
+        for _ in range(4):
+            params = {"q": query, "singleEvents": "true", "orderBy": "startTime", "maxResults": 250}
+            if page:
+                params['pageToken'] = page
+            data = await self.request('GET', self.events_path(), params=params)
+            events.extend({**event, '_calendar_id': self.settings.calendar_id}
+                          for event in data.get('items', []) if event.get('status') != 'cancelled')
+            page = data.get('nextPageToken')
+            if not page:
+                return events
+        raise CalendarError('Too many matching Calendar events. Please narrow the group name; nothing changed.')
+
     async def move_event(self, event_id, body, etag):
         if not etag:
             raise CalendarError("Event version is missing. Prepare a new proposal.")

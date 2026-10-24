@@ -136,3 +136,16 @@ A correction such as `ISPM needs at least 120 min per chapter and I did not fini
 The review retains other tracked sessions on that day and their durations, extends affected chapters to at least the requested minimum, and checks deadlines, classes, meal breaks, daily limits and Calendar conflicts. A minimum never shortens an existing longer session. If the whole plan cannot fit, the original plan stays intact and Chronos asks which task may move to another day. It does not silently omit work or infer completion.
 
 Calendar moves require Allow on the review card. New sessions for unfinished tasks then enter the existing booking workflow, which checks availability again and follows the configured booking approval policy. Cancel and expired reviews preserve the original plan. Calendar versions and task snapshots are checked again before writes; uncertain moves use the existing recovery process.
+## Ordered rescheduling of existing study events
+
+Say `Reschedule ISPM chapters 1–5 in order.` or use another subject and range, such as `Reschedule Python lectures 2–4 in order.` No date or duration is needed when the existing events and configured limits provide sufficient information. The planner searches the writable Calendar, verifies exact subject/unit numbers, preserves event IDs, original duration and content, and keeps confirmed completed items unchanged. An elapsed event with unknown progress is not treated as completed.
+
+The whole group is planned in dependency order. A feasible original slot is preferred; otherwise later working periods are searched across days, up to a bounded thirty-day horizon, respecting known task deadlines, classes, meal breaks, daily capacity, pending reservations, other calendars and saved preferences. The plan does not move unrelated events. Missing, ambiguous or non-movable events and impossible deadlines are reported together, without partial application.
+
+Ambiguous candidates are listed with dates/times and short references. One reply such as `10/29 那個` or `use the later one` retains the group and reviewed constraints for ten minutes; the system cannot select a duplicate solely on a model guess. Full-text event search is bounded to 1,000 results and asks for a narrower subject when exceeded.
+
+Review shows before/after times and a short reason for every active item. Only Allow writes; auto-accept does not bypass this group review. Existing events are patched with version checks, never inserted or deleted. If some updates fail or results are unknown, the response lists verified, pending and unverified items separately. Allow reads recovery markers before retrying remaining writes. Edit can start a fresh group review after a verified partial outcome, retaining the prior batch evidence; unknown outcomes require verification first. Original task completion/history evidence is retained.
+
+Verification uses isolated SQLite/Firestore-contract tests and Calendar transport substitutes. Readiness or read-only production discovery does not establish a real Telegram-to-Calendar-write end-to-end result.
+
+If retaining an original slot would make a later chapter miss its deadline, the planner retries the entire ordered group using earliest feasible placement before reporting infeasibility. This is a bounded forward scheduling policy, not a claim of exhaustive global optimization.

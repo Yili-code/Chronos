@@ -16,6 +16,9 @@ def key(chat_id):
 
 
 def card(state):
+    if state.get('ordered_sequence'):
+        from .sequence_replan import card as ordered_card
+        return ordered_card(state)
     lines = ['<b>Your proposed calendar changes, Sir.</b>',
              f"Requested window: {escape(state['start'])} → {escape(state['end'])}"]
     blocked = state.get('blocked_events', [])
@@ -215,6 +218,10 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
 async def callback(planner, chat_id, message_id, token, action, now=None):
     now = now or datetime.now(planner.settings.tz)
     db = planner.db
+    existing = db.get_task_action_state(key(chat_id)) or {}
+    if existing.get('ordered_sequence') and existing.get('token') == token:
+        from .sequence_replan import callback as ordered_callback
+        return await ordered_callback(planner, chat_id, message_id, token, action, now)
     def claim(old):
         if not old or old.get('token') != token or old.get('message_id') != message_id:
             return old
