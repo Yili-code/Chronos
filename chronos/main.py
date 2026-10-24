@@ -38,7 +38,7 @@ from .runtime_health import (
 from .task_actions import UndoConflict
 from .deadline_reminders import send_deadline_reminders
 from .free_time import free_slot_offer
-from .reply_policy import is_no_change_reply
+from .reply_policy import conversational_reply
 from . import reminders
 from . import calendar_replan
 from .backward_planning import BackwardPlanner
@@ -1261,8 +1261,8 @@ async def prepare_message(text: str, *, update_id: int | None = None, chat_id: i
     normalized = text.strip()
     if re.match(r'^/coursehabit(?:@[A-Za-z0-9_]+)?(?:\s|$)', normalized):
         return lambda: course_habits.command(db, normalized)
-    if not create_only and is_no_change_reply(normalized):
-        return lambda: "Understood, Sir."
+    if not create_only and (social_reply := conversational_reply(normalized)) is not None:
+        return lambda: social_reply
     if create_only:
         try:
             parsed = await ai.parse_many(normalized)

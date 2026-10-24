@@ -93,3 +93,8 @@ TronClass 匯入的作業使用可讀的課程英文簡稱：`#DB`（Database Sy
 ### Task list scheduling groups
 
 The task list groups open tasks into **Scheduled** and **Unscheduled**. Confirmed Calendar bookings show their local start and end times alongside any deadline. Pending proposals are not confirmed bookings. Existing planned times also appear in Scheduled. Empty groups are hidden. Numbers retain their original command positions across groups, so `/done N` and `/edit N` still select the displayed task.
+
+
+### Conversational replies
+
+Greetings, thanks, identity questions and explicit no-change acknowledgements receive concise replies without an AI request or task mutation. Chronos identifies itself as an AI assistant when asked. Whole-message matching keeps mixed requests such as “Thanks, remind me tomorrow” in normal intent routing. Social turns preserve pending task clarification; explicit creation still allows a greeting as a task title.
