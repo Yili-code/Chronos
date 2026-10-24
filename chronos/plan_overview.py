@@ -8,7 +8,7 @@ LABELS = {
     "planning": "Preparing a proposal", "queued": "To arrange",
     "proposed": "Awaiting approval", "creating": "Applying approved plan",
     "editing": "Awaiting your direction", "scheduled": "Scheduled",
-    "awaiting_feedback": "Awaiting outcome", "no_slot": "No time block found",
+    "awaiting_feedback": "Awaiting outcome", "awaiting_resolution": "Awaiting recovery decision", "no_slot": "No time block found",
     "needs_replan": "To arrange", "postponed": "Deferred",
     "backward_managed": "Deadline plan", "rejected": "Skipped",
     "cancelled": "Schedule removed", "finished": "Completed",
@@ -26,7 +26,7 @@ def view(planner, section="summary", page=0):
         pending = [(task, state) for task, state in items if state["status"] in PENDING]
         deferred = sum(state["status"] == "postponed" for _, state in items)
         scheduled = sum(state["status"] == "scheduled" for _, state in items)
-        attention = sum(state["status"] in {"proposed", "editing", "awaiting_feedback"}
+        attention = sum(state["status"] in {"proposed", "editing", "awaiting_feedback", "awaiting_resolution"}
                         or state.get("delivery", "").endswith(("_uncertain", "_sending"))
                         for _, state in items)
         if not items:
@@ -57,6 +57,8 @@ def view(planner, section="summary", page=0):
                 start = datetime.fromisoformat(state["start"]).astimezone(planner.settings.tz)
                 end = datetime.fromisoformat(state["end"]).astimezone(planner.settings.tz)
                 lines.append(f"{start:%m/%d %H:%M}–{end:%m/%d %H:%M}")
+            if state['status'] == 'awaiting_resolution':
+                rows.append([{'text': 'Review next step', 'callback_data': f"learn:recover:{task['id']}:{state['token']}"}])
             if state["status"] in PENDING | {"postponed"}:
                 rows.append([{"text": "Arrange: " + short(task["title"], 45),
                               "callback_data": f"task:plan:{task['id']}"}])

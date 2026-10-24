@@ -151,7 +151,8 @@ def test_manual_feedback_verifies_booking_without_waiting_for_tick(setup, case):
     reply = action()
     current = planner.get(task['id'])
     if case == 'ended':
-        assert reply.startswith('Recorded.')
+        assert 'learning_recovery' in reply['messages'][0]
+        assert current['status'] == 'awaiting_resolution'
         assert current['feedback']['outcome'] == 'skipped'
         assert 'already been handled' in action()
     else:
