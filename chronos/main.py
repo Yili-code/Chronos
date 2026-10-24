@@ -783,7 +783,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             await telegram.answer_callback_query(update.callback_query.id)
         return {"ok": True}
     if update.callback_query and (update.callback_query.data or "").startswith("learn:"):
-        matched = re.fullmatch(r"learn:(recover|rbusy|rforgot|rload|rlarge|rirrelevant|rprivate|rwrite|ragain|rshort|rdefer|rstop|rconfirm|rback|day[0-9]{8}|approve|edit|earlier|later|longer|shorter|postpone|more|lots|shuffle|manual|reject|retry|done|partial|skipped):(\d+):([a-f0-9]{32})", update.callback_query.data)
+        matched = re.fullmatch(r"learn:(adjustbooked|recover|rbusy|rforgot|rload|rlarge|rirrelevant|rprivate|rwrite|ragain|rshort|rdefer|rstop|rconfirm|rback|day[0-9]{8}|approve|edit|earlier|later|longer|shorter|postpone|more|lots|shuffle|manual|reject|retry|done|partial|skipped):(\d+):([a-f0-9]{32})", update.callback_query.data)
         if not matched or source_message.message_id is None:
             raise HTTPException(status_code=400, detail="Invalid planning callback")
         receipt = db.get_update(update_id)
@@ -827,7 +827,9 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             elif instruction in {"/cancel", "取消"}:
                 planner = learning_calendar()
                 state = planner.get(study_edit["task_id"])
-                if study_edit.get('mode') == 'recovery':
+                if study_edit.get('mode') == 'booked':
+                    reply = 'The current booking is unchanged.'
+                elif study_edit.get('mode') == 'recovery':
                     from .session_recovery import respond
                     task = tasks.get_open_by_id(study_edit['task_id'])
                     reply = respond(planner, task, study_edit['token'], 'recover', datetime.now(settings.tz)) if task else 'This task is no longer open.'
@@ -848,7 +850,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                 except CalendarError as error:
                     reply = str(error)
                 state = learning_calendar().get(study_edit["task_id"])
-                if (study_edit.get("mode") == "recovery" and (state or {}).get("recovery", {}).get("stage") != "reason") or not state or state.get("token") != study_edit["token"] or state["status"] != ("awaiting_resolution" if study_edit.get("mode") == "recovery" else "awaiting_feedback" if study_edit.get("mode") == "feedback" else "editing"):
+                if study_edit.get("mode") == "booked" or (study_edit.get("mode") == "recovery" and (state or {}).get("recovery", {}).get("stage") != "reason") or not state or state.get("token") != study_edit["token"] or state["status"] != ("awaiting_resolution" if study_edit.get("mode") == "recovery" else "awaiting_feedback" if study_edit.get("mode") == "feedback" else "editing"):
                     db.mutate_task_action_state(pending_key, lambda old: {} if (old or {}).get("token") == study_edit["token"] else old)
                 else:
                     db.mutate_task_action_state(pending_key, lambda old: {**study_edit, "task_id": study_edit["task_id"],

@@ -122,3 +122,11 @@ macOS/Linux 改用 `.venv/bin/python`。測試依模組選跑；外部服務多�
 - Prefer one compact acknowledgement per request. Batch creation groups task details and retains stable-ID edit buttons; individual approvals remain separate. Do not bind a multi-task card to one arbitrary task.
 - Use chronos/reply_voice.py for task acknowledgement presentation; update other owned templates at their source. Never rewrite task titles, quoted mail, study notes or user content to add personality. New user-facing templates must follow this policy, with output-contract tests where relevant.
 - Natural interaction is the goal. Never claim to be a human, conceal assistant identity when asked, or invent emotions, background activity or completed work.
+
+
+## Default planning acceptance (2026-10-24)
+
+- The owner authorizes routine task work-session scheduling without per-session proposals or Accept buttons. Default CHRONOS_LEARNING_AUTO_ACCEPT=true; explicit manual mode remains supported.
+- Verify current task snapshot, Calendar availability, deadline, working hours and daily workload before booking. Reuse deterministic event reconciliation and report only verified bookings.
+- Moving other events or exceeding working hours remains an explicit exception; do not silently change deadlines. No-slot and recovery decisions stay visible.
+- This standing booking authorization does not authorize application deployment or arbitrary external Calendar modifications.

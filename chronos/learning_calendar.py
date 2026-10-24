@@ -242,6 +242,9 @@ class LearningCalendar:
             hour = datetime.now(self.settings.tz).hour
             timing = ("Preparing its execution plan" if immediate or self.settings.learning_start_hour <= hour < self.settings.learning_end_hour
                 else f"Execution planning resumes at {self.settings.learning_start_hour:02d}:00 after quiet hours")
+            if self.settings.learning_auto_accept:
+                duration = f" · {minutes} minutes each" if minutes is not None else ""
+                return (f"Queued {len(task_ids)} task(s){duration}. I’ll arrange available work sessions and report the result; exceptions will need your decision.", True)
             if len(task_ids) == 1:
                 return f"Task #{task_ids[0]} is next. {timing}; Calendar writing requires confirmation.", True
             duration = f" ({minutes} minutes each)" if minutes is not None else ""
@@ -542,7 +545,7 @@ class LearningCalendar:
                 self.update(task["id"], lambda old: {**old, "status": "queued"})
                 return "That time is now busy. A new execution plan will require approval."
             event = await self.calendar.insert({"id": event_id, "summary": task["title"], "colorId": "10",
-                "description": "Chronos execution block. Confirmed by YiLi. Task #" + str(task["id"]),
+                "description": ("Chronos execution block. Scheduled under standing owner authorization. Task #" if state.get("auto_accepted") else "Chronos execution block. Confirmed by YiLi. Task #") + str(task["id"]),
                 "start": {"dateTime": state["start"], "timeZone": self.settings.timezone},
                 "end": {"dateTime": state["end"], "timeZone": self.settings.timezone},
                 "visibility": "private", "transparency": "opaque",
@@ -560,7 +563,8 @@ class LearningCalendar:
             queue = self.db.get_task_action_state("learning:proposal-queue") or {}
             self.db._save_task_action_state(day_key, {**budget, state["token"]: state["minutes"]})
             self.db._save_task_action_state(f"learning:task:{task['id']}", {**current,
-                "status": "scheduled", "event_id": event_id, "event_url": event.get("htmlLink", "")})
+                "status": "scheduled", "event_id": event_id, "event_url": event.get("htmlLink", ""),
+                **({"delivery": "scheduled_pending"} if state.get("auto_accepted") else {})})
             self.db._save_task_action_state("learning:proposal-queue", {**queue,
                 "active_task_id": None if queue.get("active_task_id") == task["id"] else queue.get("active_task_id"),
                 "retire_message_ids": list(dict.fromkeys([*queue.get("retire_message_ids", []),
@@ -586,7 +590,7 @@ class LearningCalendar:
         expected_message = state.get("edit_message_id", state.get("message_id")) if menu_action else state.get("message_id")
         valid_message = (message_id in {state.get("message_id"), state.get("edit_message_id")}
                          if action in {"postpone", "earlier", "later", "longer", "shorter"} else expected_message == message_id)
-        if action == "recover":
+        if action in {"recover", "adjustbooked"}:
             valid_message = True  # Read-only view; mutation buttons bind to its delivered card.
         if state.get("token") != token or not valid_message:
             # Old buttons may request a fresh view, but can never approve or
@@ -635,6 +639,10 @@ class LearningCalendar:
                     f"Use /plan {task_id} when ready. The next task will be planned.")
         if action in {"earlier", "later", "longer", "shorter"}:
             return await self.revise(task_id, token, "more" if action == "longer" else action, now)
+        if action == 'adjustbooked' and state['status'] == 'scheduled':
+            return {'messages': [{'text': 'When would you prefer this work session? Reply with a date/time and optional duration. /cancel keeps the current booking.',
+                'reply_markup': {'force_reply': True},
+                'learning_edit': {'task_id': task_id, 'token': token, 'mode': 'booked'}}]}
         if action == "edit":
             changed = self.update(task_id, lambda old: {**old, "status": "editing"}
                 if old.get("token") == token and old["status"] == "proposed" else old)
@@ -663,7 +671,8 @@ class LearningCalendar:
                 "• Sunday morning — keep the current duration\n"
                 "• <code>10/20 15:00 60</code> — 60 minutes\n\n"
                 "Send your reply here. /cancel returns to the edit menu.\n\n"
-                "Review the revised execution plan, then tap <b>Confirm schedule</b> to book.",
+                + ("Routine changes will be scheduled automatically; exceptions need your decision." if self.settings.learning_auto_accept
+                   else "Review the revised execution plan, then tap <b>Confirm schedule</b> to book."),
                 "parse_mode": "HTML",
                 "reply_markup": {"force_reply": True}, "learning_edit": {"task_id": task_id, "token": token}}]}
         if action == "partial" and state["status"] == "awaiting_feedback":
@@ -843,6 +852,8 @@ class LearningCalendar:
             return True
         if not self.db._run_task_action(save):
             return "Another execution plan or booking changed while editing. Choose the adjustment again."
+        if self.settings.learning_auto_accept:
+            return "Updated. I’ll arrange the work session and report the result; exceptions will need your decision."
         return ("Updated. Review the new execution plan and press Confirm schedule to book it."
                 + (f" {len(displaced)} unapproved plans will be rearranged; they still need confirmation." if displaced else ""))
 
@@ -1177,6 +1188,11 @@ class LearningCalendar:
                 continue
             if state["status"] == "creating":
                 await self.book(task, state, now)
+                from .automatic_planning import receipt
+                await receipt(self, task, self.get(task["id"]))
+            elif state["status"] == "scheduled" and state.get("delivery") == "scheduled_pending":
+                from .automatic_planning import receipt
+                await receipt(self, task, state)
             elif state["status"] == "scheduled" and datetime.fromisoformat(state["end"]) <= now:
                 await self.follow_up(task, state, now)
             elif state["status"] == "awaiting_feedback" and state.get("delivery") == "feedback_pending":
@@ -1232,8 +1248,15 @@ class LearningCalendar:
                 processed += 1
             if not state:
                 continue
-            if state["status"] in {"proposed", "no_slot"} and state.get("delivery") == "proposal_pending":
-                await self.deliver_proposal(task, state)
+            if ((state["status"] == "proposed" and self.settings.learning_auto_accept
+                    and not state.get("delivery", "").endswith(("_uncertain", "_sending")))
+                    or (state["status"] in {"proposed", "no_slot"} and state.get("delivery") == "proposal_pending")):
+                from .automatic_planning import accept
+                if not await accept(self, task, state, now):
+                    await self.deliver_proposal(task, state)
+                state = self.get(task['id'])
+                if state["status"] == "scheduled":
+                    break
             if state["status"] in {"queued", "planning", "proposed", "editing", "no_slot", "creating"}:
                 break
         await self.retire_cards()

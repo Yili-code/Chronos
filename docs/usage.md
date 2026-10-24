@@ -104,6 +104,15 @@ Greetings, thanks, identity questions and explicit no-change acknowledgements re
 
 After a verified work block ends, Chronos asks what happened. No reply means the outcome is unknown, not that the task was skipped or completed. One additional check-in is allowed after 24 hours during working hours; uncertain delivery is not automatically retried.
 
-Choose **Did not start** to record zero work. Chronos asks what prevented the start, shows the unchanged deadline and repeated non-start count, then offers another time, a shorter session when possible, deferral, or stopping further planning. A new proposal uses the existing Calendar conflict, deadline and capacity checks and requires a separate **Confirm schedule** action. Shorter means a shorter first session, not a claim that the entire task needs less work.
+Choose **Did not start** to record zero work. Chronos asks what prevented the start, shows the unchanged deadline and repeated non-start count, then offers another time, a shorter session when possible, deferral, or stopping further planning. A new work session uses the existing Calendar conflict, deadline and capacity checks. Routine sessions are scheduled automatically by default; exceptions require a decision. Shorter means a shorter first session, not a claim that the entire task needs less work.
 
 Stopping planning requires explicit confirmation and retains the open task, deadline and past Calendar event. Deferral also retains the task. Neither means completed. Use `/plan` → **View all plans** → **Review next step** to resume an unresolved decision, or `/plan ID` to explicitly request a fresh proposal.
+
+
+### Automatic planning
+
+Routine task work sessions now use default acceptance: Chronos checks current task data, availability, deadline, working hours and daily workload, books the session, then sends **Scheduled** with an **Adjust time** button. There is no routine proposal card or Accept step. Nightly planning and recovery after a reported non-start use the same booking path. Scheduled-task details also provide **Adjust time**.
+
+A proposal remains necessary when arranging the session would move another event or exceed normal working hours. No available slot produces an explanation and adjustment options. Deadlines are not changed automatically. Planning can be restored to explicit approval with `CHRONOS_LEARNING_AUTO_ACCEPT=false`; automatic planning is the default while the existing learning-calendar activation/authorization requirements remain.
+
+If Calendar creation succeeds but its response is lost, Chronos reconciles the deterministic event before notifying. A rejected notification can be retried; uncertain notification delivery is shown for review instead of automatically resending or creating another booking.

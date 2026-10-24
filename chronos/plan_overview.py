@@ -50,6 +50,8 @@ def view(planner, section="summary", page=0):
         lines.append("<b>Scheduled tasks</b>" if section == "scheduled" else "<b>All task plans</b>")
         for task, state in selected[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]:
             label = LABELS.get(state["status"], "Review required")
+            if planner.settings.learning_auto_accept and state['status'] == 'proposed' and not state.get('calendar_moves'):
+                label = 'Arranging the work session'
             if state.get("delivery", "").endswith(("_uncertain", "_sending")):
                 label += " · delivery needs review"
             lines.extend(["", f"<b>{escape(short(task['title'], 140))}</b>", escape(label)])
@@ -57,6 +59,8 @@ def view(planner, section="summary", page=0):
                 start = datetime.fromisoformat(state["start"]).astimezone(planner.settings.tz)
                 end = datetime.fromisoformat(state["end"]).astimezone(planner.settings.tz)
                 lines.append(f"{start:%m/%d %H:%M}–{end:%m/%d %H:%M}")
+            if state['status'] == 'scheduled' and state.get('token'):
+                rows.append([{'text': 'Adjust time', 'callback_data': f"learn:adjustbooked:{task['id']}:{state['token']}"}])
             if state['status'] == 'awaiting_resolution':
                 rows.append([{'text': 'Review next step', 'callback_data': f"learn:recover:{task['id']}:{state['token']}"}])
             if state["status"] in PENDING | {"postponed"}:
