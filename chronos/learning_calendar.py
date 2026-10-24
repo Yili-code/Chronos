@@ -303,6 +303,7 @@ class LearningCalendar:
                 "duration_estimate": (old or {}).get("duration_estimate"),
                 "progress_note": (old or {}).get("progress_note", ""),
                 "progress": (old or {}).get("progress"),
+                "recovery": (old or {}).get("recovery", {}),
                 "retire_on_send": [*((old or {}).get("retire_on_send", [])),
                     *((old or {}).get(key) for key in ("message_id", "edit_message_id") if (old or {}).get(key))]}
             self.db._save_task_action_state(f"learning:task:{task_id}", state)
@@ -585,6 +586,8 @@ class LearningCalendar:
         expected_message = state.get("edit_message_id", state.get("message_id")) if menu_action else state.get("message_id")
         valid_message = (message_id in {state.get("message_id"), state.get("edit_message_id")}
                          if action in {"postpone", "earlier", "later", "longer", "shorter"} else expected_message == message_id)
+        if action == "recover":
+            valid_message = True  # Read-only view; mutation buttons bind to its delivered card.
         if state.get("token") != token or not valid_message:
             # Old buttons may request a fresh view, but can never approve or
             # apply an obsolete duration/time choice to a replacement proposal.
@@ -601,6 +604,9 @@ class LearningCalendar:
                     "learning_proposal": {"task_id": task_id, "token": state["token"]}}]}
             return "This execution plan has already been handled. Check /plan for its current status."
         now = datetime.now(self.settings.tz)
+        from . import session_recovery
+        if action in session_recovery.ACTIONS:
+            return session_recovery.respond(self, task, token, action, now)
         if action == "postpone":
             def postpone():
                 current = self.get(task_id)
@@ -1035,6 +1041,8 @@ class LearningCalendar:
     def feedback(self, task, token, outcome, actual_minutes, reason="", progress=None, *, verified_booking=None):
         if outcome not in {"done", "partial", "skipped"} or (actual_minutes is not None and not 0 <= actual_minutes <= 720):
             return "Use /taskupdate <task-id> <minutes> done|partial|skipped [reason]."
+        if outcome == "skipped" and actual_minutes != 0:
+            return "For a session you did not start, report 0 minutes. Use partial if some work was done."
         def record():
             state = self.get(task["id"])
             if not state or state.get("token") != token:
@@ -1060,7 +1068,7 @@ class LearningCalendar:
             if outcome == "done":
                 self.db.complete_task(task["id"], datetime.now(self.settings.tz))
             recorded = {**state,
-                "status": "finished" if outcome == "done" else "queued" if outcome == "partial" else "needs_replan",
+                "status": "finished" if outcome == "done" else "queued" if outcome == "partial" else "awaiting_resolution",
                 "feedback": {"outcome": outcome, "actual_minutes": actual_minutes,
                     "reason": reason[:1000], "recorded_at": datetime.now(self.settings.tz).isoformat()}}
             if outcome == "partial":
@@ -1081,9 +1089,17 @@ class LearningCalendar:
                                 ('progress', 'progress_note', 'requested_minutes', 'duration_source') if key in recorded}
                 continuation.update(status='queued', predecessor_task_id=task['id'])
                 self.db._save_task_action_state(f"learning:task:{successor['id']}", continuation)
+            if outcome == "skipped":
+                previous = state.get('recovery') or {}
+                recorded['recovery'] = {'stage': 'decision' if reason.strip() else 'reason',
+                    'reason': reason[:1000], 'missed_count': previous.get('missed_count', 0) + 1,
+                    'reported_at': datetime.now(self.settings.tz).isoformat()}
             self.db._save_task_action_state("learning:profile", profile)
             self.db._save_task_action_state("learning:history:" + token, recorded)
             self.db._save_task_action_state(f"learning:task:{task['id']}", recorded)
+            if outcome == 'skipped':
+                from .session_recovery import card
+                return card(self, live, recorded, datetime.now(self.settings.tz))
             return ("Completed and recorded. Future plans will use your reported time." if outcome == "done"
                     else f"Recorded. Task #{task['id']} completed; remaining work saved as #{successor['id']}." if outcome == "partial"
                     else "Recorded. Use /plan to request another execution plan; writing still requires approval.")
@@ -1102,17 +1118,19 @@ class LearningCalendar:
         if datetime.fromisoformat(end.replace("Z", "+00:00")) > now:
             return
         state = self.update(task["id"], lambda old: {**old, "status": "awaiting_feedback",
-            "delivery": "feedback_pending"} if old["status"] == "scheduled" else old)
+            "delivery": "feedback_pending", "feedback_requested_at": now.isoformat()} if old["status"] == "scheduled" else old)
         await self.deliver_feedback(task, state)
 
     def feedback_content(self, task, state):
-        text = (f"<b>How did the session go, Sir?</b>\n\n{escape(task['title'])}\n"
+        text = (f"<b>Did you get to this, Sir?</b>\n\n{escape(task['title'])}\n"
                 f"{display_time(state['start'], self.settings.tz)} · {state['minutes']} minutes planned\n\n"
                 "What is the outcome? Choose below.\n\n"
                 "Different duration? For 15 minutes completed, send\n"
                 f"<code>/taskupdate {task['id']} 15 done</code>")
+        if state.get("outcome_reminder_count"):
+            text = "The outcome is still unconfirmed; I have not assumed it was missed.\n\n" + text
         return text, self.buttons(task["id"], state,
-            [("done", "Completed"), ("partial", "Partially completed"), ("skipped", "Skipped")])
+            [("done", "Completed"), ("partial", "Partially completed"), ("skipped", "Did not start")])
 
     async def deliver_feedback(self, task, state):
         text, buttons = self.feedback_content(task, state)
@@ -1163,6 +1181,9 @@ class LearningCalendar:
                 await self.follow_up(task, state, now)
             elif state["status"] == "awaiting_feedback" and state.get("delivery") == "feedback_pending":
                 await self.deliver_feedback(task, state)
+            elif state["status"] == "awaiting_feedback":
+                from .session_recovery import unanswered
+                await unanswered(self, task, state, now)
         # The nightly batch may prepare tomorrow's blocks during quiet hours.
         # Approval, Calendar conflict checks and work-hour limits remain unchanged.
         active = self.sync_queue()
@@ -1225,7 +1246,7 @@ class LearningCalendar:
         labels = {"planning": "Scheduling", "queued": "Queued for planning",
             "proposed": "Awaiting approval", "creating": "Applying approved plan",
             "editing": "Awaiting your direction",
-            "scheduled": "Scheduled", "awaiting_feedback": "Awaiting outcome",
+            "scheduled": "Scheduled", "awaiting_feedback": "Awaiting outcome", "awaiting_resolution": "Awaiting recovery decision",
             "no_slot": "No viable time block", "needs_replan": "Needs replanning",
             "postponed": "Deferred",
             "backward_managed": "Backward plan · /backward progress ID",

@@ -292,6 +292,12 @@ async def deliver_learning_reply(chat_id, update_id, receipt):
         bind_free_message(db, chat_id, result["result"]["message_id"], message)
     if result.get("result", {}).get("message_id") is not None:
         calendar_replan.bind(db, chat_id, result["result"]["message_id"], message)
+    if message.get("learning_recovery"):
+        from .session_recovery import bind
+        message_id = result.get("result", {}).get("message_id")
+        if message_id is None:
+            raise HTTPException(status_code=502, detail="Recovery prompt ID missing")
+        bind(learning_calendar(), message_id, message)
     if message.get("learning_edit"):
         message_id = result.get("result", {}).get("message_id")
         if message_id is None:
@@ -777,7 +783,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             await telegram.answer_callback_query(update.callback_query.id)
         return {"ok": True}
     if update.callback_query and (update.callback_query.data or "").startswith("learn:"):
-        matched = re.fullmatch(r"learn:(day[0-9]{8}|approve|edit|earlier|later|longer|shorter|postpone|more|lots|shuffle|manual|reject|retry|done|partial|skipped):(\d+):([a-f0-9]{32})", update.callback_query.data)
+        matched = re.fullmatch(r"learn:(recover|rbusy|rforgot|rload|rlarge|rirrelevant|rprivate|rwrite|ragain|rshort|rdefer|rstop|rconfirm|rback|day[0-9]{8}|approve|edit|earlier|later|longer|shorter|postpone|more|lots|shuffle|manual|reject|retry|done|partial|skipped):(\d+):([a-f0-9]{32})", update.callback_query.data)
         if not matched or source_message.message_id is None:
             raise HTTPException(status_code=400, detail="Invalid planning callback")
         receipt = db.get_update(update_id)
@@ -821,18 +827,28 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             elif instruction in {"/cancel", "取消"}:
                 planner = learning_calendar()
                 state = planner.get(study_edit["task_id"])
-                reply = (await planner.dated_edit_menu(study_edit["task_id"], state) if state and state["status"] == "editing"
+                if study_edit.get('mode') == 'recovery':
+                    from .session_recovery import respond
+                    task = tasks.get_open_by_id(study_edit['task_id'])
+                    reply = respond(planner, task, study_edit['token'], 'recover', datetime.now(settings.tz)) if task else 'This task is no longer open.'
+                else:
+                    reply = (await planner.dated_edit_menu(study_edit["task_id"], state) if state and state["status"] == "editing"
                     and state["token"] == study_edit["token"] else "This manual adjustment has ended. Open Adjust plan on the current execution plan.")
                 db.mutate_task_action_state(pending_key, lambda old: {} if (old or {}).get("token") == study_edit["token"] else old)
             else:
                 try:
-                    reply = (learning_calendar().partial_reply(study_edit["task_id"], study_edit["token"], instruction)
+                    if study_edit.get('mode') == 'recovery':
+                        from .session_recovery import respond
+                        task = tasks.get_open_by_id(study_edit['task_id'])
+                        reply = respond(learning_calendar(), task, study_edit['token'], 'rwrite', datetime.now(settings.tz), reason=instruction) if task else 'This task is no longer open.'
+                    else:
+                        reply = (learning_calendar().partial_reply(study_edit["task_id"], study_edit["token"], instruction)
                         if study_edit.get("mode") == "feedback" else
                         await learning_calendar().revise(study_edit["task_id"], study_edit["token"], instruction))
                 except CalendarError as error:
                     reply = str(error)
                 state = learning_calendar().get(study_edit["task_id"])
-                if not state or state.get("token") != study_edit["token"] or state["status"] != ("awaiting_feedback" if study_edit.get("mode") == "feedback" else "editing"):
+                if (study_edit.get("mode") == "recovery" and (state or {}).get("recovery", {}).get("stage") != "reason") or not state or state.get("token") != study_edit["token"] or state["status"] != ("awaiting_resolution" if study_edit.get("mode") == "recovery" else "awaiting_feedback" if study_edit.get("mode") == "feedback" else "editing"):
                     db.mutate_task_action_state(pending_key, lambda old: {} if (old or {}).get("token") == study_edit["token"] else old)
                 else:
                     db.mutate_task_action_state(pending_key, lambda old: {**study_edit, "task_id": study_edit["task_id"],
@@ -1071,7 +1087,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         else:
             db.mark_update_delivered(update_id)
     elif not receipt["delivered"] and any(
-        any(message.get(key) for key in ("backward_plan", "learning_edit", "learning_menu", "learning_proposal"))
+        any(message.get(key) for key in ("backward_plan", "learning_edit", "learning_menu", "learning_proposal", "learning_recovery"))
         for message in receipt.get("messages", [])
     ):
         await deliver_learning_reply(chat_id, update_id, receipt)

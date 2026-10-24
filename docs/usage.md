@@ -98,3 +98,12 @@ The task list groups open tasks into **Scheduled** and **Unscheduled**. Confirme
 ### Conversational replies
 
 Greetings, thanks, identity questions and explicit no-change acknowledgements receive concise replies without an AI request or task mutation. Chronos identifies itself as an AI assistant when asked. Whole-message matching keeps mixed requests such as “Thanks, remind me tomorrow” in normal intent routing. Social turns preserve pending task clarification; explicit creation still allows a greeting as a task title.
+
+
+### Follow up on a scheduled work session
+
+After a verified work block ends, Chronos asks what happened. No reply means the outcome is unknown, not that the task was skipped or completed. One additional check-in is allowed after 24 hours during working hours; uncertain delivery is not automatically retried.
+
+Choose **Did not start** to record zero work. Chronos asks what prevented the start, shows the unchanged deadline and repeated non-start count, then offers another time, a shorter session when possible, deferral, or stopping further planning. A new proposal uses the existing Calendar conflict, deadline and capacity checks and requires a separate **Confirm schedule** action. Shorter means a shorter first session, not a claim that the entire task needs less work.
+
+Stopping planning requires explicit confirmation and retains the open task, deadline and past Calendar event. Deferral also retains the task. Neither means completed. Use `/plan` → **View all plans** → **Review next step** to resume an unresolved decision, or `/plan ID` to explicitly request a fresh proposal.
