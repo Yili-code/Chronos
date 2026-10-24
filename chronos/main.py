@@ -262,6 +262,16 @@ def learning_calendar():
 async def deliver_learning_reply(chat_id, update_id, receipt):
     if receipt["delivered"]:
         return
+    if any(m.get('replan_token') or m.get('replan_preview_token') for m in receipt.get('messages', [])):
+        for count, part in enumerate(receipt['messages'][receipt.get('delivered_count', 0):], receipt.get('delivered_count', 0)+1):
+            result = await telegram.send_message(chat_id, part['text'],
+                **{k: part[k] for k in ('parse_mode', 'reply_markup') if k in part})
+            if not result.get('ok') or result.get('result', {}).get('message_id') is None:
+                raise HTTPException(status_code=502, detail='Calendar preview delivery pending')
+            calendar_replan.bind(db, chat_id, result['result']['message_id'], part)
+            db.mark_update_message_delivered(update_id, count)
+        db.mark_update_delivered(update_id)
+        return
     if any(m.get('task_review') for m in receipt.get('messages', [])):
         messages = receipt['messages']
         for count, part in enumerate(messages[receipt.get('delivered_count', 0):], receipt.get('delivered_count', 0) + 1):
@@ -755,8 +765,19 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                 reply = "Calendar could not confirm the arrangement. Nothing further was changed. If you pressed Allow, tap it again to recover its result."
             except (AIError, ValueError):
                 reply = "The scheduling request could not be parsed. No new Calendar changes were made; please retry."
+            cancelled = db.get_task_action_state(calendar_replan.key(chat_id)) or {}
+            cancel_token = (replan_callback[2] if replan_callback and replan_callback[1] == 'cancel' else
+                            replan_session.get('token') if replan_edit and source_message.text in {'/cancel', '取消'} else None)
+            cancel_message_id = source_message.message_id if replan_callback else (replan_session or {}).get('message_id')
+            if (cancel_token and cancelled.get('token') == cancel_token and cancelled.get('status') == 'cancelled'
+                    and cancelled.get('message_id') == cancel_message_id):
+                reply = {'messages': [{'text': reply, 'cancelled_preview_ids': list(dict.fromkeys([
+                    *cancelled.get('preview_message_ids', []), cancel_message_id]))}]}
             receipt = db.process_update(update_id, lambda: reply)
         await deliver_learning_reply(chat_id, update_id, receipt)
+        for message in receipt.get('messages', []):
+            if message.get('cancelled_preview_ids'):
+                await delete_telegram_messages(chat_id, *message['cancelled_preview_ids'])
         if update.callback_query:
             await telegram.answer_callback_query(update.callback_query.id)
         return {"ok": True}
