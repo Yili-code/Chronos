@@ -51,8 +51,18 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
     tasks = {t['id']: t for t in db.list_open_tasks()}
     states = {i: planner.get(i) for i in tasks}
     context = recent_context(db, now)
-    if old_review and old_review.get('study_revision') and old_review.get('status') == 'editing':
+    if (old_review and old_review.get('study_revision') and old_review.get('status') == 'editing'
+            and old_review.get('expires_at', '') > now.isoformat()):
         context = {'day': old_review['start'][:10], 'previous_sessions': [*old_review['calendar_moves'], *old_review['revision_additions']]}
+    explicit_day = re.search(
+        r'\d{4}-\d{1,2}-\d{1,2}|\b\d{1,2}/\d{1,2}\b|'
+        r'\b(?:today|tomorrow|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b|'
+        r'今天|明天|後天|后天|今晚|(?:星期|週|周)[一二三四五六日天]|\d{1,2}月\d{1,2}[日號号]', instruction, re.I)
+    if not explicit_day and not context:
+        return 'Which study day should I revise? Please give a date. Nothing changed.'
+    stated = re.search(r'(?:at\s+least|至少)\s*(?:各|each\s*)?(\d+)\s*(?:min(?:ute)?s?|分鐘|分钟)', instruction, re.I)
+    if stated and not 10 <= int(stated[1]) <= 180:
+        return 'Each chapter session supports 10 to 180 minutes. Please specify a duration within that limit. Nothing changed.'
     output = StudyRevisionOutput.model_validate(await planner.ai.parse_study_revision(
         instruction, [{'id': i, **task_fields(t)} for i, t in tasks.items()], context, now))
     if not output.actionable or not output.day or not output.items:
@@ -66,7 +76,6 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
     minimums = {i.task_id: i.minimum_minutes for i in output.items}
     if len(minimums) != len(output.items) or any(i not in tasks for i in minimums):
         return 'The requested chapters could not be matched uniquely. Nothing changed.'
-    stated = re.search(r'(?:at\s+least|至少)\s*(\d+)\s*(?:min(?:ute)?s?|分鐘|分钟)', instruction, re.I)
     if stated and any(m < int(stated[1]) for m in minimums.values()):
         return 'The parsed duration is below your stated minimum. Please restate the chapter duration. Nothing changed.'
     scope, named = chapter_scope(instruction, tasks)
@@ -83,6 +92,10 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
     begin, end = day_bounds(day, cfg)
     await planner.calendar.verify_owner()
     events = await planner.calendar.agenda(min(now, begin), end)
+    keep_others = bool(re.search(
+        r'其他.{0,12}(?:照舊|照旧|不動|不动|不改|維持|维持)|'
+        r'(?:keep|leave).{0,30}(?:other|rest).{0,35}(?:unchanged|as is)|'
+        r'(?:other|rest).{0,20}(?:unchanged|as is)', instruction, re.I))
     selected, fixed, additions = {}, [], []
     for event in events:
         if event.get('status') == 'cancelled':
@@ -94,7 +107,7 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
                        and event.get('_calendar_id', '').casefold() in {cfg.calendar_id.casefold(), cfg.calendar_account.casefold(), 'primary'}), None)
         state = states.get(linked) or {}
         # Retain all other tracked sessions on the revised day, without changing their duration.
-        relevant = linked is not None and a.date() == day and b > now
+        relevant = linked is not None and a.date() == day and b > now and (not keep_others or linked in minimums)
         if relevant:
             if (state.get('status') != 'scheduled' or not movable(event, cfg, now)
                     or (a.isoformat(), b.isoformat()) != (state.get('start'), state.get('end'))):

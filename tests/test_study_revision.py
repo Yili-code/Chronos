@@ -51,7 +51,7 @@ def initialize(setup, *, booked=True, minimum=120):
 
 
 def preview(planner, update=1):
-    result = asyncio.run(revision.preview(planner, 123, 'ISPM need at least 120 min per chapter and i did not finish ch1, ch2. replan', update, NOW))
+    result = asyncio.run(revision.preview(planner, 123, '2026-10-25 ISPM need at least 120 min per chapter and i did not finish ch1, ch2. replan', update, NOW))
     if isinstance(result, dict):
         calendar_replan.bind(planner.db, 123, 50, result['messages'][0])
     return result
@@ -136,7 +136,7 @@ def test_replan_classifier_fallback_uses_study_revision(store, monkeypatch):
     monkeypatch.setattr(revision, 'preview', mock)
     wrong = AsyncMock(side_effect=AssertionError('Free-window route must not run'))
     monkeypatch.setattr(calendar_replan, 'preview', wrong)
-    result = run('ISPM need at least 120 min per chapter and i did not finish ch1, ch2. replan')
+    result = run('2026-10-25 ISPM need at least 120 min per chapter and i did not finish ch1, ch2. replan')
     assert result['reply'] == 'Study revision review'
     mock.assert_awaited_once()
     wrong.assert_not_awaited()
