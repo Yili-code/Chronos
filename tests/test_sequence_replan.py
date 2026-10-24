@@ -156,7 +156,7 @@ def test_group_problems_are_collected_without_any_writes(group,case):
     before=deepcopy(events)
     result,state=preview(group)
     assert isinstance(result,str),result
-    assert state is None or (case=='ambiguous' and state['status']=='clarifying' and 'calendar_moves' not in state)
+    assert state is None or (case in {'ambiguous','missing','shared'} and state['status']=='clarifying' and 'calendar_moves' not in state)
     if case=='missing':assert 'Chapter 1' in result and 'Chapter 3' in result
     if case=='ambiguous':assert '2 matching events' in result
     if case=='deadline':assert 'deadline' in result
@@ -494,3 +494,112 @@ def test_review_has_compact_before_after_and_shared_uncertainty_once(group):
     assert 'Allow to apply' in text
     assert result['messages'][-1]['replan_token']==state['token']
     calendar.move_event.assert_not_awaited()
+
+
+def test_delayed_choice_routes_with_group_and_refreshes_all_events(group,monkeypatch):
+    from chronos import intents
+    planner,calendar,events,add=group
+    for i in range(1,4):add(i,hour=13)
+    alternate=deepcopy(events['ISPM-1']);alternate['id']='alternate'
+    alternate['start']['dateTime']='2026-10-29T13:00:00+08:00'
+    alternate['end']['dateTime']='2026-10-29T14:00:00+08:00'
+    events['alternate']=alternate
+    _,pending=preview(group)
+    assert pending['status']=='clarifying'
+    later=NOW+timedelta(minutes=18)
+    assert pending['expires_at'] < later.isoformat()
+    planner.ai.parse_sequence_replan.return_value.choices={'1':'alternate'}
+    calendar.search_events.reset_mock()
+    class Clock(datetime):
+        @classmethod
+        def now(cls,tz=None):return later.astimezone(tz)
+    for mod in (main,intents,module):monkeypatch.setattr(mod,'datetime',Clock)
+    for name,value in {'settings':planner.settings,'db':planner.db,'tasks':TaskService(planner.db,planner.settings.tz),
+        'ai':planner.ai,'google_calendar':calendar,'learning_calendar':lambda:planner}.items():monkeypatch.setattr(main,name,value)
+    action=asyncio.run(main.prepare_message('10/29 13:00–14:00 那筆，請依序重新安排',update_id=599,chat_id=123))
+    result=planner.db.process_update(599,action)
+    state=planner.db.get_task_action_state(calendar_replan.key(123))
+    assert state['status']=='pending',result
+    assert [m['ordinal'] for m in state['calendar_moves']]==[1,2,3]
+    assert state['calendar_moves'][0]['event_id']=='alternate'
+    assert planner.ai.parse_sequence_replan.await_count==1
+    calendar.search_events.assert_awaited_once()
+    planner.ai.classify_intent.assert_not_awaited()
+    calendar.move_event.assert_not_awaited()
+
+
+def test_only_current_usable_booking_is_proposed_without_dead_end_question(group):
+    planner,calendar,events,add=group
+    old=add(1,day=24,hour=14,linked=True)
+    current=deepcopy(old);current['id']='current'
+    current['start']['dateTime']='2026-10-29T13:00:00+08:00'
+    current['end']['dateTime']='2026-10-29T14:00:00+08:00'
+    events['current']=current
+    tid=int(old['extendedProperties']['private']['chronosTask'])
+    planner.update(tid,lambda s:{**s,'event_id':'current','start':current['start']['dateTime'],'end':current['end']['dateTime']})
+    add(2);add(3)
+    before=deepcopy(events)
+    result,state=preview(group)
+    assert isinstance(result,dict),result
+    assert state['calendar_moves'][0]['event_id']=='current'
+    assert state['selection_notes']
+    assert events==before
+    calendar.move_event.assert_not_awaited()
+
+
+def test_explicit_old_booking_is_not_silently_replaced_and_group_is_retained(group):
+    planner,calendar,events,add=group
+    first=add(1,day=24,hour=14)
+    alternate=deepcopy(first);alternate['id']='current'
+    alternate['start']['dateTime']='2026-10-29T13:00:00+08:00'
+    alternate['end']['dateTime']='2026-10-29T14:00:00+08:00'
+    events['current']=alternate
+    add(2);add(3)
+    _,state=preview(group)
+    assert state['status']=='clarifying'
+    # Simulate evidence becoming available after the original question.
+    task=planner.db.create_task('Study ISPM Chapter 1',None,'ISPM',NOW,{})
+    for event in (first,alternate):
+        event['extendedProperties']['private'].update(chronosTask=str(task['id']),chronosToken='current-token')
+    planner.update(task['id'],lambda old:{'status':'scheduled','token':'current-token','event_id':'current',
+        'start':alternate['start']['dateTime'],'end':alternate['end']['dateTime'],'minutes':60,'snapshot':task_fields(task)})
+    result,state=preview(group,'10/24 14:00',2)
+    assert isinstance(result,str) and 'older task booking' in result
+    assert '/plan' not in result and '2026/10/29' in result
+    assert state['status']=='clarifying' and state['parsed']['ordinals']==[1,2,3]
+    calendar.move_event.assert_not_awaited()
+    result=asyncio.run(module.preview(planner,123,'10/29 13:00',3,NOW+timedelta(minutes=18)))
+    assert isinstance(result,dict),result
+    assert planner.db.get_task_action_state(calendar_replan.key(123))['calendar_moves'][0]['event_id']=='current'
+
+
+def test_multiple_choices_retain_prior_verified_selection(group):
+    planner,calendar,events,add=group
+    for i in range(1,4):add(i)
+    for number,day in ((1,29),(2,30)):
+        alternate=deepcopy(events[f'ISPM-{number}']);alternate['id']=f'alternate-{number}'
+        alternate['start']['dateTime']=f'2026-10-{day}T13:00:00+08:00'
+        alternate['end']['dateTime']=f'2026-10-{day}T14:00:00+08:00'
+        events[alternate['id']]=alternate
+    _,state=preview(group)
+    assert state['status']=='clarifying'
+    result,state=preview(group,'10/29',2)
+    assert isinstance(result,str) and state['confirmed_choices']=={'1':'alternate-1'}
+    result,state=preview(group,'10/30',3)
+    assert isinstance(result,dict),result
+    assert [m['event_id'] for m in state['calendar_moves']]==['alternate-1','alternate-2','ISPM-3']
+    calendar.move_event.assert_not_awaited()
+
+
+@pytest.mark.parametrize('text',['Add task 10/29 call Alex','Meeting 10/29 13:00','Cancel the meeting on 10/29'])
+def test_unrelated_dated_request_is_not_a_choice(text):
+    assert not module.looks_choice_answer(text)
+
+
+def test_choice_respects_explicit_year_and_complete_time_range():
+    event={'id':'one','start':{'dateTime':'2026-10-29T13:00:00+08:00'},'end':{'dateTime':'2026-10-29T15:00:00+08:00'}}
+    assert module.choice_evidence('2026/10/29 13:00–15:00',event,[event])
+    assert not module.choice_evidence('2027/10/29 13:00–15:00',event,[event])
+    assert not module.choice_evidence('10/29 11:00–13:00',event,[event])
+    other={**event,'id':'other','end':{'dateTime':'2026-10-29T14:00:00+08:00'}}
+    assert not module.choice_evidence('10/29 13:00–15:00',other,[event,other])

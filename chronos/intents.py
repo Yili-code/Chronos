@@ -123,7 +123,7 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
                            if entry.get('task_id') in by_id]
     from . import sequence_replan
     ordered_pending = app.db.get_task_action_state(app.calendar_replan.key(chat_id)) if persistent else None
-    if ordered_pending and ordered_pending.get('ordered_sequence') and ordered_pending.get('status') == 'clarifying' and ordered_pending.get('expires_at','') > now.isoformat():
+    if sequence_replan.has_clarification(ordered_pending):
         context['ordered_sequence_question'] = {k:ordered_pending.get(k) for k in ('parsed','question','candidates')}
     else:
         ordered_pending = None
