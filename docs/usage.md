@@ -127,3 +127,12 @@ If Calendar creation succeeds but its response is lost, Chronos reconciles the d
 ### Natural-language changes to booked work sessions
 
 Name the task and ask for an exact time, a relative shift, a changed duration, or an available morning/afternoon window. Today-only earliest availability stays within today. Explicit starts such as 14:10 are preserved rather than rounded to quarter-hour boundaries. Ambiguous targets/times ask for clarification; occupied or policy-incompatible times leave the original event unchanged. See the [ten-case synthetic audit](audits/natural-schedule-edits-10.md) for examples and verification limits.
+
+
+## Revising a study agenda
+
+A correction such as `ISPM needs at least 120 min per chapter and I did not finish ch1, ch2. Replan` revises the study plan rather than freeing a Calendar window. Chronos uses the successfully delivered tomorrow agenda to resolve an omitted date, or asks for the date when that context is unavailable. Named unfinished chapters must match existing open tasks; missing or ambiguous chapters need clarification.
+
+The review retains other tracked sessions on that day and their durations, extends affected chapters to at least the requested minimum, and checks deadlines, classes, meal breaks, daily limits and Calendar conflicts. A minimum never shortens an existing longer session. If the whole plan cannot fit, the original plan stays intact and Chronos asks which task may move to another day. It does not silently omit work or infer completion.
+
+Calendar moves require Allow on the review card. New sessions for unfinished tasks then enter the existing booking workflow, which checks availability again and follows the configured booking approval policy. Cancel and expired reviews preserve the original plan. Calendar versions and task snapshots are checked again before writes; uncertain moves use the existing recovery process.

@@ -29,6 +29,11 @@ def card(state):
         lines += ['', '<b>' + escape(move['title']) + '</b>',
                   f"{move['old_start'][:16].replace('T', ' ')}–{move['old_end'][11:16]}",
                   f"→ {move['start'][:16].replace('T', ' ')}–{move['end'][11:16]}"]
+    for item in state.get('revision_additions', []):
+        lines += ['', '<b>' + escape(item['title']) + '</b>',
+                  f"New session: {item['start'][:16].replace('T', ' ')}–{item['end'][11:16]} · {item['minutes']} minutes"]
+    if state.get('revision_additions'):
+        lines += ['', 'Unfinished chapters remain open. New sessions enter the existing booking workflow after Allow.']
     lines += ['', 'Nothing changes until Allow.']
     token = state['token']
     return {'messages': [{'text': '\n'.join(lines), 'parse_mode': 'HTML', 'replan_token': token,
@@ -225,7 +230,7 @@ async def callback(planner, chat_id, message_id, token, action, now=None):
     if not state or state.get('token') != token or state.get('message_id') != message_id:
         return 'This proposal is no longer active. Use /replan.'
     if state['status'] == 'editing':
-        return 'Enter revised constraints, e.g. "move to tomorrow or later". Use /cancel to cancel or /replan to choose another window.'
+        return 'Use a fresh study-plan correction to revise this proposal.' if state.get('study_revision') else 'Enter revised constraints, e.g. "move to tomorrow or later". Use /cancel to cancel or /replan to choose another window.'
     if state['status'] == 'cancelled':
         return 'Cancelled. Original calendar events kept.'
     if state['status'] == 'expired':
@@ -237,6 +242,9 @@ async def callback(planner, chat_id, message_id, token, action, now=None):
     await planner.calendar.verify_owner()
     try:
         await apply(planner, {}, state, now)
+        if state.get('study_revision'):
+            from .study_revision import finish
+            finish(planner, state)
     except ReflowReviewError:
         if not state.get('recovering'):
             db.mutate_task_action_state(key(chat_id), lambda old: {**old, 'status': 'pending'}
@@ -248,4 +256,9 @@ async def callback(planner, chat_id, message_id, token, action, now=None):
         await reconcile(planner, state)
         return 'Calendar changes paused. Some moves may already have succeeded. Tap Allow to recover; check Calendar if an activity changed externally.'
     db.mutate_task_action_state(key(chat_id), lambda old: {**old, 'status': 'done'} if old.get('token') == token else old)
+    if state.get('study_revision'):
+        lines = ['Calendar updated.' if state['calendar_moves'] else 'Study plan reviewed.']
+        lines += [f"{m['title']}: {m['start'][11:16]}–{m['end'][11:16]} · {m['minutes']} minutes" for m in state['calendar_moves']]
+        lines += [f"Queued unfinished task: {m['title']} · {m['minutes']} minutes. Booking will be checked again." for m in state['revision_additions']]
+        return '\n'.join(lines)
     return 'Calendar updated.\n' + '\n'.join(f"{m['title']}: {m['old_start'][:16]} → {m['start'][:16]}" for m in state['calendar_moves'])

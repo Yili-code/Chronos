@@ -743,7 +743,10 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                                                            replan_session["token"], "cancel")
                 else:
                     instruction = replan_command[1] if replan_command else source_message.text
-                    reply = (await calendar_replan.preview(learning_calendar(), chat_id, instruction, update_id)
+                    from . import study_revision
+                    study_edit = bool(replan_edit and replan_session.get('study_revision'))
+                    previewer = study_revision.preview if study_edit or study_revision.is_correction(instruction or '') else calendar_replan.preview
+                    reply = (await previewer(learning_calendar(), chat_id, instruction, update_id)
                              if instruction else "Use /replan 清空今天現在到下午兩點的行程")
             except CalendarError:
                 reply = "Calendar could not confirm the arrangement. Nothing further was changed. If you pressed Allow, tap it again to recover its result."
