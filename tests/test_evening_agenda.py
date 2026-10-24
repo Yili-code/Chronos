@@ -130,7 +130,9 @@ def test_today_command(system, monkeypatch):
          "extendedProperties": {"private": {"chronosTask": "<invalid>"}}},
     ]
     monkeypatch.setattr(main, "google_calendar", calendar)
+    before = datetime.now(main.settings.tz)
     output = asyncio.run(main.prepare_message("/TODAY@ChronosBot"))()
+    after = datetime.now(main.settings.tz)
     assert "Today" in output["messages"][0]["text"]
     text = output["messages"][0]["text"]
     assert "90 minutes(123)\nStudy graphs" in text
@@ -139,7 +141,8 @@ def test_today_command(system, monkeypatch):
     assert "<invalid>" not in text
     start, end = calendar.agenda.await_args.args
     assert start.date() == datetime.now(main.settings.tz).date()
-    assert start.hour == 0 and end-start == timedelta(days=1)
+    assert before <= start <= after
+    assert end == datetime.combine(start.date() + timedelta(days=1), datetime.min.time(), main.settings.tz)
     main.ai.parse.assert_not_awaited()
 
 
@@ -198,3 +201,38 @@ def test_completed_task_preserves_prior_session_outcome_and_token_boundary(store
         lambda old: {'feedback': {'outcome': 'partial', 'actual_minutes': 135}})
     text = '\n'.join(render_agenda([item], now.date(), NOW.tzinfo, db=store, now=now))
     assert 'Incomplete' in text and 'Finished' not in text
+
+
+@pytest.mark.parametrize("clock", ["2026-10-24T14:30:00+08:00", "2026-10-24T15:59:59+00:00", "2026-10-23T16:00:00+00:00"])
+def test_today_reads_only_remaining_local_day(clock):
+    from chronos.evening_agenda import tomorrow_agenda
+
+    config = Settings(_env_file=None)
+    now = datetime.fromisoformat(clock)
+    local_now = now.astimezone(config.tz)
+    calendar = GoogleCalendar(config)
+    calendar.verify_owner = AsyncMock()
+    calendar.request = AsyncMock(return_value={"items": [
+        {"id": "ongoing", "summary": "Ongoing", "start": {"dateTime": (local_now - timedelta(hours=1)).isoformat()},
+         "end": {"dateTime": (local_now + timedelta(minutes=1)).isoformat()}},
+        {"id": "all-day", "summary": "All-day item", "start": {"date": local_now.date().isoformat()},
+         "end": {"date": (local_now.date() + timedelta(days=1)).isoformat()}},
+    ]})
+    text = "\n".join(asyncio.run(tomorrow_agenda(calendar, config, now, day_offset=0)))
+    params = calendar.request.await_args.kwargs["params"]
+    assert params["timeMin"] == local_now.isoformat()
+    midnight = datetime.combine(local_now.date() + timedelta(days=1), datetime.min.time(), config.tz)
+    assert params["timeMax"] == midnight.isoformat()
+    assert "Ongoing" in text and "All day · All-day item" in text
+    calendar.verify_owner.assert_awaited_once()
+
+
+def test_today_remaining_day_can_be_empty():
+    from chronos.evening_agenda import tomorrow_agenda
+
+    config = Settings(_env_file=None)
+    calendar = AsyncMock()
+    calendar.agenda.return_value = []
+    text = "\n".join(asyncio.run(tomorrow_agenda(calendar, config, NOW, day_offset=0)))
+    assert "Today" in text and "No events scheduled." in text
+    assert calendar.agenda.await_args.args == (NOW, NOW.replace(hour=0) + timedelta(days=1))
