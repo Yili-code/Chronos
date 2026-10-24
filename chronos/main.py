@@ -1396,7 +1396,7 @@ async def prepare_message(text: str, *, update_id: int | None = None, chat_id: i
         except (AIError, ValueError) as error:
             return lambda reply=str(error): reply
         return save_classday_action(db, record)
-    if command in {"start", "info"}:
+    if command == "info":
         return lambda: message_bundle({
             "text": HELP_TEXT,
             "parse_mode": "HTML",
@@ -1438,7 +1438,7 @@ async def prepare_message(text: str, *, update_id: int | None = None, chat_id: i
         return usage_report
     if command == 'reviewtasks':
         return await task_review.prepare(db, tasks, ai, settings, chat_id)
-    if command in {"task", "tasks"}:
+    if command in {"start", "task", "tasks"}:
         def list_tasks() -> dict:
             items = tasks.list_open()
             return message_bundle({"text": task_list_text(items), "parse_mode": "HTML",
