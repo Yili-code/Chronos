@@ -88,13 +88,15 @@ def explicit_event_minutes(text):
     return total if total == int(total) else -1
 
 
-async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None):
+async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None, agenda_context=None):
     """Run external interpretation before the caller's task/receipt transaction."""
     now = datetime.now(app.settings.tz)
     key = f"intent:clarify:{chat_id}"
     persistent = chat_id is not None and update_id is not None
     pending = app.db.get_task_action_state(key) if persistent else None
     if pending and pending.get("expires_at", "") <= now.isoformat():
+        pending = None
+    if agenda_context is not None and pending and pending.get('agenda_context') != agenda_context:
         pending = None
     items = app.tasks.list_open()
     by_id = {item["id"]: item for item in items}
@@ -104,15 +106,22 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
     saved_preferences = preferences.read(app.db, chat_id) if persistent else {}
     context = {"bound_task_id": bound_task_id, "clarification": pending,
                "preferences": saved_preferences}
+    if agenda_context is not None:
+        context['today_agenda'] = agenda_context
+    interpret_items = [
+        {"id": item["id"], "position": position, **task_fields(item)}
+        for position, item in enumerate(items, 1)
+    ]
+    if agenda_context is not None:
+        interpret_items = [{"id": entry['task_id'], "position": position, **task_fields(by_id[entry['task_id']])}
+                           for position, entry in enumerate(agenda_context['entries'], 1)
+                           if entry.get('task_id') in by_id]
     reminder_items = list((app.db.get_task_action_state(app.reminders.KEY) or {}).values()) if persistent else []
     reminder_items = [item for item in reminder_items if item.get("chat_id") == chat_id
                       and item.get("status") in {"active", "pending"}]
     bulletins = app.db.list_announcements() if persistent else []
     try:
-        intent = await app.ai.classify_intent(text, [
-            {"id": item["id"], "position": position, **task_fields(item)}
-            for position, item in enumerate(items, 1)
-        ], now, context=context,
+        intent = await app.ai.classify_intent(text, interpret_items, now, context=context,
             reminders=[{k: item.get(k) for k in ("token", "title", "start")} for item in reminder_items],
             announcements=[{"id": token, "title": record["announcement"]["title"]}
                            for token, record in bulletins])
@@ -120,6 +129,11 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
         intent = Intent.model_validate(intent)
     except (AIError, ValueError) as error:
         return lambda reply=str(error): "目前無法理解這個要求，沒有變更任何內容。\n" + escape(reply)
+
+    if agenda_context is not None:
+        from . import agenda_context as agendas
+        if not agendas.current(app.db, agenda_context):
+            return lambda: agendas.STALE
 
     if intent.action == "acknowledge":
         return lambda: "Understood, Sir."
@@ -140,6 +154,8 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
         intent.edit_field = "content"
         instruction += "\nOnly change content; preserve title."
     ids = list(dict.fromkeys(intent.task_ids))
+    if agenda_context is not None and any(i not in {entry.get('task_id') for entry in agenda_context['entries']} for i in ids):
+        return lambda: '指定項目不在這份行程中，請重新指定名稱。沒有變更。'
     if bound_task_id is not None and intent.action in TARGET_ACTIONS:
         if ids and ids != [bound_task_id]:
             return lambda: "回覆的任務與指定目標不同，請重新選擇任務。沒有變更。"
@@ -153,6 +169,8 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
                  "parsed_intent": intent.model_dump(mode="json"), "action": intent.action, "edit_field": intent.edit_field, "candidate_ids": candidates,
                  "snapshots": {str(i): task_fields(by_id[i]) for i in candidates if i in by_id},
                  "expires_at": (now + timedelta(minutes=10)).isoformat(), "token": uuid4().hex}
+        if agenda_context is not None:
+            state['agenda_context'] = agenda_context
         def save():
             if persistent:
                 app.db.mutate_task_action_state(key, lambda old: state)
@@ -164,7 +182,7 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
     batch_plan = (intent.action == "plan_request" and intent.target_selection == "all"
                   and 1 <= len(ids) <= 20 and explicit_plan_batch(text, items, ids))
     if intent.action in TARGET_ACTIONS and (intent.target_selection == "ambiguous" or (len(ids) != 1 and not batch_plan)):
-        return clarify("要操作哪一項任務？", ids or list(by_id))
+        return clarify("要操作哪一項任務？", ids or [item['id'] for item in interpret_items])
     if intent.action == "clarify" or intent.question:
         return clarify(intent.question or "請補充要處理的事項。", ids)
     if intent.action == "unsupported":
@@ -341,6 +359,10 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
 
     def execute():
         def transaction():
+            # Booked edits already validate and apply their ETag-protected move
+            # during preparation; their own new state is not a stale-list race.
+            if agenda_context is not None and intent.action != 'plan_edit' and not agendas.current(app.db, agenda_context):
+                return agendas.STALE
             saved = app.db.get_task_action_state(key) if persistent else None
             # Recheck the task after external work; list positions never become mutation IDs.
             if selected and intent.action in {"task_edit", "task_complete", "plan_request"}:
