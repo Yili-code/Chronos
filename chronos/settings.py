@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     enable_study_tracking: bool = False
     enable_gmail: bool = False
     enable_learning_calendar: bool = False
+    learning_auto_accept: bool = True
     calendar_client_id: str = Field(default="", repr=False)
     calendar_client_secret: str = Field(default="", repr=False)
     calendar_refresh_token: str = Field(default="", repr=False)

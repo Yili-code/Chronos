@@ -19,7 +19,7 @@ from chronos.telegram import TelegramClient, TelegramError
 
 @pytest.fixture
 def system(tmp_path, monkeypatch):
-    config = Settings(_env_file=None, database_path=tmp_path / 'test.db',
+    config = Settings(_env_file=None, database_path=tmp_path / 'test.db', learning_auto_accept=False,
                       telegram_chat_id=123,
                       telegram_webhook_secret='test-hook', scheduler_secret='test-scheduler')
     db = Database(config.database_path)

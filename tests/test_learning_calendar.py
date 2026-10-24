@@ -113,7 +113,7 @@ def setup(request, tmp_path, monkeypatch):
     monkeypatch.setattr(module, "datetime", Clock)
     db = firestore_database(monkeypatch) if request.param == "firestore" else Database(tmp_path / "plans.db")
     db.initialize()
-    config = Settings(_env_file=None, enable_learning_calendar=True, learning_enabled_since=NOW.isoformat(),
+    config = Settings(_env_file=None, enable_learning_calendar=True, learning_auto_accept=False, learning_enabled_since=NOW.isoformat(),
         telegram_chat_id=123, calendar_account="owner@example.com")
     calendar = AsyncMock()
     calendar.configured = lambda: True

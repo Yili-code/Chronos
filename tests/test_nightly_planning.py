@@ -344,3 +344,13 @@ def test_replacement_calendar_read_failure_never_becomes_no_capacity(setup):
     assert planner.get(task['id'])['status'] == 'queued'
     bot.send_message.assert_not_awaited()
     calendar.insert.assert_not_awaited()
+
+
+def test_default_auto_accept_books_nightly_session_without_preview(setup):
+    planner, task, calendar, bot = setup
+    planner.settings.learning_auto_accept = True
+    asyncio.run(planner.nightly_proposals(NIGHT))
+    assert planner.get(task['id'])['status'] == 'scheduled'
+    calendar.insert.assert_awaited_once()
+    assert 'Scheduled, Sir' in bot.send_message.await_args.args[1]
+    assert 'Confirm schedule' not in str(bot.send_message.await_args.kwargs)

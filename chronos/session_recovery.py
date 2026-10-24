@@ -36,7 +36,9 @@ def card(planner, task, state, now=None):
             lines.append("A shorter first session may be more realistic. It will not reduce the recorded task scope.")
         elif recovery.get('reason') == 'No longer needed':
             lines.append("If this is no longer useful, consider stopping further planning rather than moving it again.")
-        lines.append("Choose another time, a shorter first work session, or pause. A new Calendar block requires a separate confirmation.")
+        lines.append("Choose another time, a shorter first work session, or pause. " +
+            ("I’ll arrange the session and report the result; exceptions will need your decision." if planner.settings.learning_auto_accept
+             else "A new Calendar block requires a separate confirmation."))
         values = [("ragain", "Find another time")]
         if state.get('minutes', 30) > 15:
             values.append(("rshort", "Try a shorter session"))
