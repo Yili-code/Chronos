@@ -5,13 +5,16 @@ import re
 from uuid import uuid4
 
 from .task_timing import display_date
+from .tasks import project_display_name
 
 
-def render_agenda(events, day, tz, label="Tomorrow", db=None, now=None, show_task_ids=False, *, heading=None, compact=False, event_groups=None):
+def render_agenda(events, day, tz, label="Tomorrow", db=None, now=None, show_task_ids=False, *, heading=None,
+                  compact=False, show_project_tags=False, event_groups=None):
     if heading is None:
         date = display_date(day.isoformat())
         heading = f"<b>{date if compact else label + ' · ' + date}</b>"
     now = now or datetime.now(tz)
+    project_aliases = None
     rows = []
     for event in events:
         title = escape((event.get("summary") or "Untitled event")[:500])
@@ -52,7 +55,18 @@ def render_agenda(events, day, tz, label="Tomorrow", db=None, now=None, show_tas
             task_suffix = f"({task_id})" if show_task_ids and re.fullmatch(r"[1-9][0-9]*", task_id) else ""
             begin = start.strftime("%H:%M") if start.date() == day else start.strftime("%m/%d %H:%M")
             stop = end.strftime("%H:%M") if end.date() == day else end.strftime("%m/%d %H:%M")
-            row = f"{begin}–{stop} · {title}" if compact else f"{begin}–{stop} · {duration} minutes{task_suffix}\n{title}"
+            if show_project_tags:
+                hashtag = ""
+                if db is not None and re.fullmatch(r"[1-9][0-9]*", task_id):
+                    task = db.get_task(int(task_id))
+                    if task and task.get("project"):
+                        if project_aliases is None:
+                            project_aliases = db.list_tag_aliases()
+                        project = project_display_name(str(task["project"]), project_aliases)
+                        hashtag = f" · #{escape(project)}"
+                row = f"{begin}–{stop}{hashtag}\n{title}"
+            else:
+                row = f"{begin}–{stop} · {title}" if compact else f"{begin}–{stop} · {duration} minutes{task_suffix}\n{title}"
             rows.append((start.isoformat(), row, event))
     parts, text = [], heading
     first_row = True
@@ -95,7 +109,8 @@ async def agenda_messages(calendar, settings, now=None, *, day_offset=1, db=None
     await calendar.verify_owner()
     events = await calendar.agenda(start, end)
     groups = []
-    parts = render_agenda(events, day, settings.tz, "Today" if day_offset == 0 else "Tomorrow", db=db, now=now, compact=day_offset == 0, event_groups=groups)
+    parts = render_agenda(events, day, settings.tz, "Today" if day_offset == 0 else "Tomorrow", db=db, now=now,
+                          show_project_tags=day_offset == 0, event_groups=groups)
     messages = [{'text': part, 'parse_mode': 'HTML'} for part in parts]
     if day_offset == 0 and db is not None:
         from .agenda_context import snapshot
