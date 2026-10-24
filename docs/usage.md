@@ -116,3 +116,8 @@ Routine task work sessions now use default acceptance: Chronos checks current ta
 A proposal remains necessary when arranging the session would move another event or exceed normal working hours. No available slot produces an explanation and adjustment options. Deadlines are not changed automatically. Planning can be restored to explicit approval with `CHRONOS_LEARNING_AUTO_ACCEPT=false`; automatic planning is the default while the existing learning-calendar activation/authorization requirements remain.
 
 If Calendar creation succeeds but its response is lost, Chronos reconciles the deterministic event before notifying. A rejected notification can be retried; uncertain notification delivery is shown for review instead of automatically resending or creating another booking.
+
+
+### Natural-language changes to booked work sessions
+
+Name the task and ask for an exact time, a relative shift, a changed duration, or an available morning/afternoon window. Today-only earliest availability stays within today. Explicit starts such as 14:10 are preserved rather than rounded to quarter-hour boundaries. Ambiguous targets/times ask for clarification; occupied or policy-incompatible times leave the original event unchanged. See the [ten-case synthetic audit](audits/natural-schedule-edits-10.md) for examples and verification limits.
