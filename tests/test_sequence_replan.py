@@ -329,6 +329,7 @@ def test_ambiguous_date_answer_keeps_group_and_constraints(group):
     alternate['end']['dateTime']='2026-10-29T14:00:00+08:00'
     events['alternate']=alternate
     planner.ai.parse_sequence_replan.return_value.start_hour=13
+    planner.db.mutate_task_action_state('owner:preferences:123',lambda old:{'study':'Start no earlier than 13:00'})
     result,state=preview(group)
     assert isinstance(result,str) and state['status']=='clarifying'
     assert '2026/10/29 (Thu) 13:00–14:00' in result and 'ref:' not in result
@@ -522,7 +523,7 @@ def test_delayed_choice_routes_with_group_and_refreshes_all_events(group,monkeyp
     assert state['status']=='pending',result
     assert [m['ordinal'] for m in state['calendar_moves']]==[1,2,3]
     assert state['calendar_moves'][0]['event_id']=='alternate'
-    assert planner.ai.parse_sequence_replan.await_count==1
+    planner.ai.parse_sequence_replan.assert_not_awaited()
     calendar.search_events.assert_awaited_once()
     planner.ai.classify_intent.assert_not_awaited()
     calendar.move_event.assert_not_awaited()
@@ -603,3 +604,120 @@ def test_choice_respects_explicit_year_and_complete_time_range():
     assert not module.choice_evidence('10/29 11:00–13:00',event,[event])
     other={**event,'id':'other','end':{'dateTime':'2026-10-29T14:00:00+08:00'}}
     assert not module.choice_evidence('10/29 13:00–15:00',other,[event,other])
+
+
+def test_fresh_full_request_cannot_short_circuit_on_old_duplicate_question(group):
+    planner,calendar,events,add=group
+    for i in range(1,4):add(i)
+    planner.db.mutate_task_action_state(calendar_replan.key(123),lambda old:{
+        'ordered_sequence':True,'status':'clarifying','token':'old-question',
+        'parsed':SequenceReplanOutput(actionable=True,scope='ISPM',ordinals=[1,2,3]).model_dump(mode='json'),
+        'candidates':{'1':[{'id':'old'}]},'question':'Which event?',
+        'expires_at':(NOW+timedelta(minutes=10)).isoformat()})
+    planner.ai.parse_sequence_replan.return_value=SequenceReplanOutput(actionable=False,
+        question='I found multiple events for ISPM Chapter 1. Which one should I use?')
+    result,state=preview(group)
+    assert isinstance(result,dict),result
+    assert state['status']=='pending' and state['token']!='old-question'
+    calendar.search_events.assert_awaited_once_with('ISPM')
+    calendar.move_event.assert_not_awaited()
+
+
+def test_fresh_full_request_discards_old_group_but_retains_saved_preferences(group):
+    planner,calendar,events,add=group
+    for i in range(1,4):add(i)
+    planner.db.mutate_task_action_state('owner:preferences:123',lambda old:{'study':'Afternoons from 13:00 to 17:00'})
+    planner.db.mutate_task_action_state(calendar_replan.key(123),lambda old:{
+        'ordered_sequence':True,'status':'clarifying','token':'old-group',
+        'parsed':SequenceReplanOutput(actionable=True,scope='Python',ordinals=[7,8],latest_end=NOW+timedelta(days=1)).model_dump(mode='json'),
+        'candidates':{'7':[{'id':'old'}]},'question':'Choose Python 7',
+        'expires_at':(NOW+timedelta(minutes=10)).isoformat()})
+    async def parse(text,now,prefs,previous):
+        if previous:
+            return SequenceReplanOutput(actionable=False,question='Which old event?')
+        assert prefs['study']=='Afternoons from 13:00 to 17:00'
+        return SequenceReplanOutput(actionable=True,scope='ISPM',ordinals=[1,2,3],start_hour=13,end_hour=17)
+    planner.ai.parse_sequence_replan.side_effect=parse
+    result,state=preview(group)
+    assert isinstance(result,dict),result
+    assert state['parsed']['scope']=='ISPM' and state['parsed']['ordinals']==[1,2,3]
+    assert state['parsed']['latest_end'] is None
+    assert all(13 <= datetime.fromisoformat(m['start']).hour < 17 for m in state['calendar_moves'])
+    assert planner.ai.parse_sequence_replan.await_args.args[3] is None
+    calendar.move_event.assert_not_awaited()
+
+
+@pytest.mark.parametrize('text,scope,unit,numbers',[
+    ('Reschedule ISPM chapters 1–5 in order.','ISPM','chapter',[1,2,3,4,5]),
+    ('Replan Software Engineering lectures 2 to 4 in sequence.','Software Engineering','lecture',[2,3,4]),
+    ('Reorder Python units 8-10 in order','Python','unit',[8,9,10]),
+    ('Reschedule Calculus sessions 1 through 2 in order','Calculus','session',[1,2]),
+])
+def test_explicit_group_is_generic(text,scope,unit,numbers):
+    parsed=module.explicit_group(text)
+    assert parsed.scope==scope and parsed.unit==unit and parsed.ordinals==numbers
+    assert parsed.not_before is None and parsed.latest_end is None
+
+
+@pytest.mark.parametrize('text',[
+    'Reschedule ISPM chapters 1–5 in order after 10/29',
+    'Reschedule Python chapters 1–30 in order.',
+    'Reschedule Python chapters 5–1 in order.',
+    'Reschedule Python chapters 0–1 in order.',
+])
+def test_explicit_group_does_not_drop_constraints_or_expand_invalid_ranges(text):
+    assert module.explicit_group(text) is None
+
+
+def test_unknown_feedback_delivery_does_not_block_known_calendar_rescheduling(group):
+    planner,calendar,events,add=group
+    first=add(1,day=24,linked=True)
+    add(2);add(3)
+    tid=int(first['extendedProperties']['private']['chronosTask'])
+    planner.update(tid,lambda old:{**old,'status':'awaiting_feedback','delivery':'feedback_uncertain','message_id':99})
+    before=deepcopy(events)
+    result,state=preview(group)
+    assert isinstance(result,dict),result
+    assert state['calendar_moves'][0]['outcome_unknown'] is True
+    assert events==before
+    assert allow(group,state).startswith('Ordered rescheduling completed.')
+    current=planner.get(tid)
+    assert current['status']=='scheduled' and 'delivery' not in current and 'message_id' not in current
+    assert planner.db.get_task(tid)['status']=='open'
+    planner.telegram.send_message.assert_not_awaited()
+    asyncio.run(planner.callback('done',tid,first['extendedProperties']['private']['chronosToken'],99))
+    assert planner.db.get_task(tid)['status']=='open'
+
+
+@pytest.mark.parametrize('status,delivery',[
+    ('awaiting_feedback','feedback_sending'),('creating','feedback_uncertain'),
+    ('planning','feedback_uncertain'),('scheduled','scheduled_uncertain'),
+])
+def test_in_flight_and_booking_uncertainty_still_block_rescheduling(group,status,delivery):
+    planner,calendar,events,add=group
+    first=add(1,day=24,linked=True)
+    add(2);add(3)
+    tid=int(first['extendedProperties']['private']['chronosTask'])
+    planner.update(tid,lambda old:{**old,'status':status,'delivery':delivery})
+    result,state=preview(group)
+    assert isinstance(result,str) and 'still being checked' in result
+    assert state['status']=='clarifying' and 'calendar_moves' not in state
+    calendar.move_event.assert_not_awaited()
+
+
+def test_shorthand_retains_group_without_passing_cached_event_candidates(group):
+    planner,calendar,events,add=group
+    for i in range(1,4):add(i)
+    parsed=SequenceReplanOutput(actionable=True,scope='ISPM',ordinals=[1,2,3])
+    planner.db.mutate_task_action_state(calendar_replan.key(123),lambda old:{
+        'ordered_sequence':True,'status':'clarifying','token':'old-question','parsed':parsed.model_dump(mode='json'),
+        'candidates':{'1':[{'id':'stale-candidate'}]},'question':'Old question'})
+    async def parse(text,now,prefs,previous):
+        assert previous['scope']=='ISPM' and previous['ordinals']==[1,2,3]
+        assert previous['candidates']=={}
+        return parsed
+    planner.ai.parse_sequence_replan.side_effect=parse
+    result,state=preview(group,'Reschedule those chapters in order.')
+    assert isinstance(result,dict),result
+    assert state['parsed']['scope']=='ISPM'
+    calendar.move_event.assert_not_awaited()

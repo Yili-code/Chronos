@@ -538,6 +538,8 @@ class ExternalAI:
             "Return a literal scope name from the owner's instruction (e.g. ISPM, Python), unit, "
             "and ascending ordinals. Chapters 1–5 means [1,2,3,4,5]; support other ranges and subjects. "
             "Never create events, infer completion, alter duration/content or grant permission. "
+            "No Calendar search has happened in this extraction step. Never claim to have found duplicate events "
+            "or ask which event to use; the application resolves event identity after extracting the group. "
             "No date is required: default not_before/latest_end null; the application examines the existing events. "
             "For all chapters use empty ordinals; the owner must actually say all. "
             "Only extract explicit date constraints as timezone-aware ISO times. "
