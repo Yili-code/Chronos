@@ -12,6 +12,7 @@
 6. [Calendar 活動分類與任務內容](event-and-content.md)
 7. [100 種自然語言要求、能力與驗證結果](audits/natural-language-100.md)
 8. [重建全部未完成 study 行程與十種輸入範例](study-reset.md)
+9. [依活動類型重建行程](event-reset.md)
 
 - [Reply style and presentation coverage](reply-style.md)
 

@@ -147,10 +147,20 @@ class GoogleCalendar:
 
     async def task_events(self, task_id):
         """Find every managed session, including historical and distant bookings."""
+        return await self.property_events('chronosTask', str(task_id))
+
+    async def category_events(self, category, *, start=None, end=None):
+        return await self.property_events('chronosEventCategory', category, start=start, end=end)
+
+    async def property_events(self, name, value, *, start=None, end=None):
         events, page = [], None
         for _ in range(4):
-            params = {'privateExtendedProperty': 'chronosTask=' + str(task_id),
+            params = {'privateExtendedProperty': name + '=' + value,
                       'singleEvents': 'true', 'maxResults': 250}
+            if start:
+                params['timeMin'] = start.isoformat()
+            if end:
+                params['timeMax'] = end.isoformat()
             if page:
                 params['pageToken'] = page
             data = await self.request('GET', self.events_path(), params=params)
