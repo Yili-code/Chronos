@@ -56,6 +56,13 @@ def explicit_deadline(text, now):
     # Only the immediately adjacent HH:MM supplies an exact deadline time.
     clock = re.match(r'\s*(\d{1,2}):(\d{2})(?!\d)', text[match.end():])
     if clock:
+        # This shortcut only resolves unqualified local 24-hour clocks. Keep
+        # the structured parser's result when meridiem or zone conversion is
+        # needed, rather than silently treating 5 PM or 17:00 UTC as Taipei.
+        suffix = text[match.end() + clock.end():]
+        if (re.search(r'(?<![a-z])(?:[ap]\.?m\.?|utc|gmt|[ecmp][sd]t|[a-z_]+/[a-z_]+)(?![a-z])', text, re.I)
+                or re.match(r'\s*[+-]\d{1,2}(?::?\d{2})?(?!\d)', suffix)):
+            return None
         return datetime.combine(day, time(int(clock[1]), int(clock[2])), TZ).isoformat()
     if re.search(r'\d{1,2}:\d{2}|\d+\s*點|上午|下午|晚上|AM|PM', text, re.I):
         return None
