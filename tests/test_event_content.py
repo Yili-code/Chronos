@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from chronos import main
+from chronos import main, intents
 from chronos.ai import AIError, ExternalAI, FieldEdit, TaskEditOutput
 from chronos.free_booking import EVENT_COLORS, bind_free_message, free_booking_callback
 from chronos.intents import explicit_event_minutes
@@ -14,7 +14,14 @@ from test_intents import store, run, classify
 
 
 def test_event_preview_preserves_three_hours_without_task(store, monkeypatch):
-    now = datetime.now(main.settings.tz)
+    # Keep the literal 10/24 input and availability independent of host date.
+    now = datetime(2026, 10, 21, 12, tzinfo=main.settings.tz)
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now.astimezone(tz) if tz else now
+    for module in (main, intents):
+        monkeypatch.setattr(module, 'datetime', Clock)
     start = (now + timedelta(days=3)).replace(hour=20, minute=0, second=0, microsecond=0)
     classify(monkeypatch, action='event_create', title='AtCoder contest', start=start,
              minutes=180, event_category='contest', content='Estimated duration: 3h')
