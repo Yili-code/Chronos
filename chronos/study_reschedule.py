@@ -9,17 +9,18 @@ from .google_calendar import CalendarError
 from .study_reflow import bounds
 from .task_actions import task_fields
 from .temporal_constraints import literal_weekday_conflict
+from .calendar_ownership import owned_single_event
 
 
-def verified_move(event, event_id, task_id, token, pending, tz):
+def verified_move(event, event_id, task_id, token, pending, cfg):
     props = (event or {}).get('extendedProperties', {}).get('private', {})
     try:
         clocks = [datetime.fromisoformat(event[k]['dateTime'].replace('Z', '+00:00')) for k in ('start', 'end')]
-        return bool(event.get('id') == event_id and event.get('status') != 'cancelled'
+        return bool(event.get('id') == event_id and owned_single_event(event, cfg)
                     and all(value.utcoffset() is not None for value in clocks)
                     and props.get('chronosTask') == str(task_id) and props.get('chronosToken') == token
                     and props.get('chronosReschedule') == pending['marker']
-                    and tuple(value.astimezone(tz) for value in clocks) == tuple(datetime.fromisoformat(pending[k]) for k in ('start', 'end')))
+                    and tuple(value.astimezone(cfg.tz) for value in clocks) == tuple(datetime.fromisoformat(pending[k]) for k in ('start', 'end')))
     except (KeyError, ValueError, TypeError):
         return False
 
@@ -43,12 +44,12 @@ async def reschedule(planner, task_id, token, instruction, now, *, update_id=Non
     event = await planner.calendar.event(state['event_id'])
     props = (event or {}).get('extendedProperties', {}).get('private', {})
     if (not event or event.get('status') == 'cancelled' or props.get('chronosTask') != str(task_id)
-            or props.get('chronosToken') != token or not event.get('etag')):
-        raise CalendarError('The booked event is missing or its ownership cannot be verified. Nothing changed.')
+            or props.get('chronosToken') != token or not owned_single_event(event, planner.settings)):
+        raise CalendarError('The booked event is missing or no longer a verified owner-only single event. Check Calendar before retrying.')
     pending = state.get('pending_reschedule')
     if pending:
         if props.get('chronosReschedule') == pending['marker']:
-            if not verified_move(event, state['event_id'], task_id, token, pending, planner.settings.tz):
+            if not verified_move(event, state['event_id'], task_id, token, pending, planner.settings):
                 raise CalendarError('The moved event changed again. Check Calendar before retrying.')
             reply = 'Previous calendar change recovered. Review /plan, then send any further edit again.'
             record(planner, task_id, token, pending, update_id=update_id, reply=reply)
@@ -141,7 +142,7 @@ async def reschedule(planner, task_id, token, instruction, now, *, update_id=Non
         'extendedProperties': {**event.get('extendedProperties', {}),
                                'private': {**props, 'chronosReschedule': pending['marker']}}}, pending['etag'])
     verified = await planner.calendar.event(state['event_id'])
-    if not verified_move(verified, state['event_id'], task_id, token, pending, planner.settings.tz):
+    if not verified_move(verified, state['event_id'], task_id, token, pending, planner.settings):
         raise CalendarError('The calendar change could not be verified. Check /plan and retry to reconcile; no success is recorded.')
     reply = success_reply(pending)
     record(planner, task_id, token, pending, update_id=update_id, reply=reply)

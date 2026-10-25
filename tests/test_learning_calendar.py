@@ -1495,6 +1495,7 @@ def test_booked_edit_bypasses_other_proposal_and_preserves_progress(setup):
     other = planner.db.create_task('Other proposal', None, None, NOW)
     planner.update(other['id'], lambda old: {'status': 'proposed', 'token': 'other'})
     event = {'id': 'existing', 'etag': 'v1', '_calendar_id': planner.settings.calendar_id,
+             'creator': {'email': planner.settings.calendar_account}, 'organizer': {'self': True},
              'start': {'dateTime': state['start']}, 'end': {'dateTime': state['end']},
              'extendedProperties': {'private': {'chronosTask': str(task['id']), 'chronosToken': 'booked'}}}
     calendar.event.return_value = event
@@ -1535,6 +1536,7 @@ def test_booked_edit_recovers_uncertain_calendar_write(setup):
              'minutes': 60, 'snapshot': task_fields(task)}
     planner.update(task['id'], lambda old: state)
     event = {'id': 'existing', 'etag': 'v1', '_calendar_id': planner.settings.calendar_id,
+             'creator': {'email': planner.settings.calendar_account}, 'organizer': {'self': True},
              'start': {'dateTime': state['start']}, 'end': {'dateTime': state['end']},
              'extendedProperties': {'private': {'chronosTask': str(task['id']), 'chronosToken': 'booked'}}}
     calendar.event.return_value = event

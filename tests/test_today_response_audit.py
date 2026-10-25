@@ -66,6 +66,7 @@ def today_system(request, tmp_path, monkeypatch):
     planner.update(task['id'], lambda old: state)
     db.mutate_task_action_state('learning:day:2026-10-24', lambda old: {state['token']: 60})
     event = {'id': 'owned', 'summary': task['title'], 'etag': 'old', '_calendar_id': 'primary',
+             'creator': {'email': cfg.calendar_account}, 'organizer': {'self': True},
              'start': {'dateTime': state['start']}, 'end': {'dateTime': state['end']},
              'extendedProperties': {'private': {'chronosTask': str(task['id']), 'chronosToken': state['token']}}}
     external = {'id': 'personal', 'summary': 'Codeforces Round 1129', '_calendar_id': 'primary',

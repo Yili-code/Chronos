@@ -21,6 +21,7 @@ def booked(setup):
     planner.update(task['id'], lambda old: state)
     planner.db.mutate_task_action_state('learning:day:2026-10-19', lambda old: {'booked': 60})
     event = {'id': 'existing', 'etag': 'v1', '_calendar_id': planner.settings.calendar_id,
+             'creator': {'email': planner.settings.calendar_account}, 'organizer': {'self': True},
              'start': {'dateTime': state['start']}, 'end': {'dateTime': state['end']},
              'extendedProperties': {'private': {'chronosTask': str(task['id']), 'chronosToken': 'booked'}}}
     calendar.event.side_effect = lambda _: deepcopy(event)
@@ -176,3 +177,32 @@ def test_legacy_pending_edit_can_be_explicitly_retried(setup):
     assert 'updated' in reply
     assert event['start']['dateTime'] == '2026-10-19T14:30:00+08:00'
     assert 'pending_reschedule' not in planner.get(task['id'])
+
+@pytest.mark.parametrize('change', ['shared','recurring','instance','foreign_creator','unknown_owner','foreign_organizer','special'])
+@pytest.mark.parametrize('when', ['before','after'])
+def test_booked_edit_protects_shared_recurring_and_unowned_events(setup, change, when):
+    planner, task, calendar, event, original = booked(setup)
+    def change_ownership():
+        if change == 'shared': event['attendees'] = [{'email':'participant@example.com'}]
+        if change == 'recurring': event['recurrence'] = ['RRULE:FREQ=WEEKLY']
+        if change == 'instance': event['recurringEventId'] = 'parent-series'
+        if change == 'foreign_creator': event['creator'] = {'email':'another-owner@example.com'}
+        if change == 'unknown_owner': event.pop('creator',None)
+        if change == 'foreign_organizer': event['organizer'] = {'email':'another-owner@example.com'}
+        if change == 'special': event['eventType'] = 'focusTime'
+    move = calendar.move_event.side_effect
+    if when == 'before': change_ownership()
+    else:
+        async def changed_after_write(*args):
+            result = await move(*args)
+            change_ownership()
+            return result
+        calendar.move_event.side_effect = changed_after_write
+    with pytest.raises(CalendarError):
+        asyncio.run(planner.revise(task['id'],'booked','10/19 14:30 30',NOW))
+    assert planner.get(task['id'])['start'] == original['start']
+    assert planner.db.get_task_action_state('learning:day:2026-10-19') == {'booked':60}
+    if when == 'before': calendar.move_event.assert_not_awaited()
+    else:
+        calendar.move_event.assert_awaited_once()
+        assert planner.get(task['id']).get('pending_reschedule')

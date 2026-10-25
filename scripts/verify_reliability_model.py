@@ -60,6 +60,8 @@ async def verify(args):
             "id": "synthetic-event",
             "etag": "v1",
             "_calendar_id": "primary",
+            "creator": {"email": cfg.calendar_account},
+            "organizer": {"self": True},
             "start": {"dateTime": state["start"]},
             "end": {"dateTime": state["end"]},
             "extendedProperties": {
