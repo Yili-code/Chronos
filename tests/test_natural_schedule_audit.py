@@ -29,6 +29,7 @@ def audit(request, tmp_path, monkeypatch):
         @classmethod
         def now(cls,tz=None): return NOW.astimezone(tz)
     monkeypatch.setattr(learning_calendar,'datetime',Clock)
+    monkeypatch.setattr(main,'datetime',Clock)
     cfg=Settings(_env_file=None,enable_learning_calendar=True,learning_auto_accept=True,
         learning_enabled_since=NOW.isoformat(),enable_internal_scheduler=False,
         telegram_chat_id=123,telegram_webhook_secret='test-hook',calendar_account='owner@example.com')
@@ -236,7 +237,7 @@ def test_edit_checkpoint_failure_rolls_back_local_receipt_and_recovers_without_p
     interrupted = False
     def fail_checkpoint_once(key, value):
         nonlocal interrupted
-        if key == 'learning:edit-receipt:88004' and not interrupted:
+        if key == 'learning:edit-receipt:88004' and value.get('reply') and not interrupted:
             interrupted = True
             raise RuntimeError('Checkpoint persistence failed')
         return save(key, value)
@@ -248,7 +249,7 @@ def test_edit_checkpoint_failure_rolls_back_local_receipt_and_recovers_without_p
     assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 500
     saved = planner.get(task['id'])
     assert saved['start'] == original['start'] and saved.get('pending_reschedule')
-    assert db.get_task_action_state('learning:edit-receipt:88004') is None
+    assert db.get_task_action_state('learning:edit-receipt:88004') == {'task_id':task['id'],'token':original['token']}
     assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 200
     calendar.move_event.assert_awaited_once()
     assert planner.get(task['id'])['start'] == '2026-10-31T14:30:00+08:00'
@@ -290,3 +291,59 @@ def test_recovery_reply_checkpoint_cannot_turn_into_a_new_move_after_restart(aud
     assert 'recovered' in db.get_update(88006)['reply']
     assert planner.get(task['id'])['start'] == '2026-10-31T14:30:00+08:00'
     calendar.move_event.assert_awaited_once()
+
+
+@pytest.mark.parametrize('after_write',[False,True])
+@pytest.mark.parametrize('busy_on_replay',[False,True])
+def test_interrupted_edit_replay_cannot_reclassify_to_another_task(audit, monkeypatch, after_write, busy_on_replay):
+    import asyncio
+    from copy import deepcopy
+    from datetime import timedelta
+    from unittest.mock import AsyncMock
+    from fastapi.testclient import TestClient
+    from chronos import main
+    from chronos.intents import Intent
+    db, task, other, planner, calendar, bot = audit
+    original_state=deepcopy(planner.get(task['id']))
+    other_state={**deepcopy(original_state),'token':'b'*32,'event_id':'other-event','snapshot':task_fields(other)}
+    planner.update(other['id'],lambda old:other_state)
+    first=deepcopy(calendar.event.return_value)
+    second=deepcopy(first)
+    second.update(id='other-event',start={'dateTime':'2026-10-25T13:00:00+08:00'},end={'dateTime':'2026-10-25T14:00:00+08:00'})
+    second['extendedProperties']['private'].update(chronosTask=str(other['id']),chronosToken='b'*32)
+    events={'owned':first,'other-event':second}
+    other_before=deepcopy(second)
+    calendar.event.side_effect=lambda i:deepcopy(events.get(i))
+    calendar.agenda.side_effect=lambda *args:list(deepcopy(events).values())
+    calls=0
+    async def move(i,body,etag):
+        nonlocal calls
+        calls+=1
+        if calls==1 and not after_write: raise RuntimeError('Process stopped before PATCH effect')
+        events[i].update(deepcopy(body));events[i]['etag']='new'
+        if calls==1: raise RuntimeError('Process stopped after PATCH effect')
+        return deepcopy(events[i])
+    calendar.move_event.side_effect=move
+    classifier=AsyncMock(side_effect=[Intent(action='plan_edit',task_ids=[task['id']],instruction='10/31 14:30 30'),
+                                      Intent(action='plan_edit',task_ids=[other['id']],instruction='10/31 14:30 30')])
+    monkeypatch.setattr(main.ai,'classify_intent',classifier)
+    client=TestClient(main.app,raise_server_exceptions=False)
+    payload={'update_id':88007,'message':{'message_id':120,'chat':{'id':123},'text':'把資料庫報告改到 10/31 下午兩點半，半小時'}}
+    headers={'X-Telegram-Bot-Api-Secret-Token':'test-hook'}
+    assert client.post('/telegram/webhook',headers=headers,json=payload).status_code==500
+    assert planner.get(task['id']).get('pending_reschedule')
+    assert db.get_update(88007) is None
+    if busy_on_replay:
+        db.mutate_task_action_state('learning:tick',lambda old:{'claim':'active-writer',
+            'until':(NOW+timedelta(minutes=10)).isoformat()})
+        assert client.post('/telegram/webhook',headers=headers,json=payload).status_code==503
+        assert db.get_update(88007) is None
+        classifier.assert_awaited_once()
+        assert calendar.move_event.await_count==1
+        db.mutate_task_action_state('learning:tick',lambda old:{**old,'until':NOW.isoformat()})
+    assert client.post('/telegram/webhook',headers=headers,json=payload).status_code==200
+    assert events['other-event']==other_before
+    assert planner.get(task['id'])['start']=='2026-10-31T14:30:00+08:00'
+    assert planner.get(other['id'])==other_state
+    classifier.assert_awaited_once()
+    assert calendar.move_event.await_count==(1 if after_write else 2)

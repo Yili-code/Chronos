@@ -665,7 +665,20 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         from .study_reschedule import receipt_key
         applied_edit = db.get_task_action_state(receipt_key(update_id))
         if applied_edit and db.get_update(update_id) is None:
-            db.process_update(update_id, lambda: applied_edit['reply'])
+            if 'reply' in applied_edit:
+                reply = applied_edit['reply']
+            else:
+                # Binding was saved before PATCH. Resume its original target,
+                # never rerun a model against a potentially different task list.
+                try:
+                    reply = await learning_calendar().revise(applied_edit['task_id'], applied_edit['token'],
+                                                            'retry', update_id=update_id)
+                except CalendarError as error:
+                    reply = str(error)
+                lease = db.get_task_action_state('learning:tick') or {}
+                if lease.get('until', '') > datetime.now(settings.tz).isoformat():
+                    raise HTTPException(status_code=503, detail='The original edit is still running; retry this update later')
+            db.process_update(update_id, lambda: reply)
     from . import study_reset, event_reset
     reset_state = db.get_task_action_state(study_reset.KEY)
     event_command = event_reset.command_args(source_message.text or '') is not None

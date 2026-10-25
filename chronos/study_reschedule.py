@@ -129,10 +129,14 @@ async def reschedule(planner, task_id, token, instruction, now, *, update_id=Non
     def reserve():
         current_task = planner.db.get_task(task_id)
         current = planner.get(task_id)
+        request = planner.db.get_task_action_state(receipt_key(update_id)) if update_id is not None else None
         if (not current_task or current_task['status'] != 'open'
-                or task_fields(current_task) != pending['snapshot'] or current != state):
+                or task_fields(current_task) != pending['snapshot'] or current != state
+                or (request and (request.get('task_id') != task_id or request.get('token') != token))):
             return False
         planner.db._save_task_action_state(f'learning:task:{task_id}', {**current, 'pending_reschedule': pending})
+        if update_id is not None:
+            planner.db._save_task_action_state(receipt_key(update_id), {'task_id': task_id, 'token': token})
         return True
     if not planner.db._run_task_action(reserve):
         return 'The booking changed. Try again from /plan.'
