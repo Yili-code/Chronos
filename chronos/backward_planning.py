@@ -83,6 +83,16 @@ def ordered_steps(steps):
     return ordered
 
 
+def verified_event(event, event_id, state, slot):
+    title = ('Buffer · ' + state['goal']) if slot['step'] == -1 else state['steps'][slot['step']]['title']
+    return bool(event and event.get('id') == event_id and event.get('status') != 'cancelled'
+                and event.get('extendedProperties', {}).get('private', {}).get('chronosBackward') == state['token']
+                and event.get('summary') == title
+                and event.get('start', {}).get('dateTime') and event.get('end', {}).get('dateTime')
+                and datetime.fromisoformat(event['start']['dateTime']) == datetime.fromisoformat(slot['start'])
+                and datetime.fromisoformat(event['end']['dateTime']) == datetime.fromisoformat(slot['end']))
+
+
 def allocate(steps, now, boundary, busy, settings, policy, budgets, daily_cap):
     """Latest-first serial topological schedule in 15-minute working units.
 
@@ -379,11 +389,10 @@ class BackwardPlanner:
         for i, slot in enumerate(state['slots']):
             event_id = sha256(f'chronos-backward:{token}:{i}'.encode()).hexdigest()
             event = await self.calendar.event(event_id)
+            if event is None and str(i) in state.get('events', {}):
+                raise CalendarError('A previously verified event was removed. Inspect Calendar before recovery; it will not be recreated automatically.')
             if event:
-                if (event.get('status') == 'cancelled' or event.get('extendedProperties', {}).get('private', {}).get('chronosBackward') != token
-                        or not event.get('start', {}).get('dateTime') or not event.get('end', {}).get('dateTime')
-                        or datetime.fromisoformat(event['start']['dateTime']) != datetime.fromisoformat(slot['start'])
-                        or datetime.fromisoformat(event['end']['dateTime']) != datetime.fromisoformat(slot['end'])):
+                if not verified_event(event, event_id, state, slot):
                     raise CalendarError('An approved event changed. Inspect Calendar before recovery.')
                 known[str(i)] = event_id
         boundary = deadline_boundary(state['deadline'])
@@ -490,14 +499,15 @@ class BackwardPlanner:
                 start, end = (datetime.fromisoformat(slot[k]) for k in ('start', 'end'))
                 if overlaps(start, end, await self.calendar.busy(start, end)):
                     raise CalendarError('New conflict during creation.')
-                event = await self.calendar.insert({'id': event_id, 'summary': ('Buffer · '+state['goal']) if slot['step'] == -1 else state['steps'][slot['step']]['title'],
+                await self.calendar.insert({'id': event_id, 'summary': ('Buffer · '+state['goal']) if slot['step'] == -1 else state['steps'][slot['step']]['title'],
                     'description': f"Chronos backward plan · Goal #{state['parent_id']} · " +
                         ('Reserved contingency buffer' if slot['step'] == -1 else f"Task #{state['children'][str(slot['step'])]}: " + state['steps'][slot['step']]['output']),
                     'colorId': '10', 'visibility': 'private', 'transparency': 'opaque',
                     'start': {'dateTime': slot['start'], 'timeZone': 'Asia/Taipei'},
                     'end': {'dateTime': slot['end'], 'timeZone': 'Asia/Taipei'},
                     'extendedProperties': {'private': {'chronosBackward': token}}})
-                if event.get('id') != event_id or event.get('extendedProperties', {}).get('private', {}).get('chronosBackward') != token:
+                event = await self.calendar.event(event_id)
+                if not verified_event(event, event_id, state, slot):
                     raise CalendarError('Calendar insertion needs reconciliation.')
             self.db.mutate_task_action_state(key(token), lambda old, i=i, event_id=event_id:
                 {**old, 'events': {**old['events'], str(i): event_id}})
