@@ -77,7 +77,7 @@ HELP_TEXT = (
 )
 HELP_SECTIONS = {
     "tasks": "<b>任務</b>\n直接說「新增買牛奶」「報告做完了」，或回覆任務卡說「延到明天」。",
-    "study": "<b>計畫</b>\n直接說「幫我安排報告的時間」「今晚幫我空出來」。一般行程調整會先供你確認。\n/studyreset 依單位順序重建全部未完成 study；範圍明確時直接執行。",
+    "study": "<b>計畫</b>\n/eventreset &lt;type&gt; 重建指定類型，例如 study、meeting。範圍明確時直接執行；/studyreset 仍可用。",
     "backward": "<b>期限規劃</b>\n直接說「幫我拆解下週五要交的報告，每天最多90分鐘」。確認後才建立任務與行程。",
     "assignments": "<b>作業</b>\n已追蹤作業會出現在 /task。不代寫或提交作業。",
 }
@@ -261,6 +261,15 @@ def learning_calendar():
 
 async def deliver_learning_reply(chat_id, update_id, receipt):
     if receipt["delivered"]:
+        return
+    if any(m.get('event_reset_result') for m in receipt.get('messages',[])):
+        for count,part in enumerate(receipt['messages'][receipt.get('delivered_count',0):],receipt.get('delivered_count',0)+1):
+            result = await telegram.send_message(chat_id,part['text'],
+                **{k:part[k] for k in ('parse_mode','reply_markup') if k in part})
+            if not result.get('ok'):
+                raise HTTPException(status_code=502,detail='Event rebuild receipt delivery pending')
+            db.mark_update_message_delivered(update_id,count)
+        db.mark_update_delivered(update_id)
         return
     if any(m.get('replan_token') or m.get('replan_preview_token') for m in receipt.get('messages', [])):
         for count, part in enumerate(receipt['messages'][receipt.get('delivered_count', 0):], receipt.get('delivered_count', 0)+1):
@@ -650,13 +659,15 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
     if settings.telegram_chat_id and chat_id != settings.telegram_chat_id:
         raise HTTPException(status_code=403, detail="Unauthorized chat")
     update_id = update.update_id
-    from . import study_reset
+    from . import study_reset, event_reset
     reset_state = db.get_task_action_state(study_reset.KEY)
-    reset_command = study_reset.command_args(source_message.text or '') is not None
+    event_command = event_reset.command_args(source_message.text or '') is not None
+    reset_command = event_command or study_reset.command_args(source_message.text or '') is not None
     if update.message and reset_command:
         receipt = db.get_update(update_id)
         if receipt is None:
-            reply = (await study_reset.command(learning_calendar(), chat_id, source_message.text, update_id)
+            command_handler = event_reset.command if event_command else study_reset.command
+            reply = (await command_handler(learning_calendar(), chat_id, source_message.text, update_id)
                      if settings.enable_learning_calendar else 'Learning Calendar is not enabled. Nothing changed.')
             receipt = db.process_update(update_id, lambda: reply)
         await deliver_learning_reply(chat_id, update_id, receipt)
@@ -666,7 +677,8 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
              study_reset.pending_reply(reset_state, source_message.text or ''))):
         receipt = db.get_update(update_id)
         if receipt is None:
-            reply = await study_reset.run(learning_calendar(), chat_id, source_message.text, update_id)
+            handler = event_reset.resume if study_reset.pending_reply(reset_state,source_message.text or '') else study_reset.run
+            reply = await handler(learning_calendar(), chat_id, source_message.text, update_id)
             receipt = db.process_update(update_id, lambda: reply)
         await deliver_learning_reply(chat_id, update_id, receipt)
         return {'ok': True}
@@ -1354,13 +1366,15 @@ async def prepare_message(text: str, *, update_id: int | None = None, chat_id: i
         parsed = task_review.defer_inferred_course_tags(parsed, normalized)
         return prepare_created_tasks(parsed, chat_id=chat_id)
     normalized = re.sub(r"^(/[A-Za-z_]+)@[A-Za-z0-9_]+(?=\s|$)", r"\1", normalized)
-    from . import study_reset
-    if study_reset.command_args(normalized) is not None:
+    from . import study_reset, event_reset
+    generic_command = event_reset.command_args(normalized) is not None
+    if generic_command or study_reset.command_args(normalized) is not None:
         if chat_id is None or update_id is None:
-            return lambda: '請在已連接的 Telegram 對話使用 /studyreset。'
+            return lambda: '請在已連接的 Telegram 對話使用活動重建指令。'
         if not settings.enable_learning_calendar:
             return lambda: 'Learning Calendar is not enabled. Nothing changed.'
-        reply = await study_reset.command(learning_calendar(), chat_id, normalized, update_id)
+        command_handler = event_reset.command if generic_command else study_reset.command
+        reply = await command_handler(learning_calendar(), chat_id, normalized, update_id)
         return lambda: reply
     assignment_query = re.fullmatch(r'/assignments(?:\s+([a-z-]+))?(?:\s+([1-9][0-9]{0,5}))?', normalized)
     if assignment_query:

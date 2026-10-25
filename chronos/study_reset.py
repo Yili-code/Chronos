@@ -226,16 +226,22 @@ def save(planner, state):
 
 
 def result(state):
+    label = 'Study' if state.get('event_type', 'study') == 'study' else escape(state['event_type'])
     if state.get('status') == 'completed':
-        lines = ['Study 行程已全部重建，順序與固定考試時間已保留。']
+        lines = [label + ' 行程已全部重建，前置順序與其他類型活動已保留。']
         if state['factor'] < 1:
             lines.append('已壓縮準備時間（每項至少 10 分鐘）；下列列出原預估與排定時長。')
-        lines += [f"{escape(s['title'])}：{s['start'][:16].replace('T', ' ')}–{s['end'][11:16]}（{s['minutes']} 分鐘；任務原估 {s['original_minutes']} 分鐘）" for s in state['sessions']]
+        lines += [f"{escape(s['title'][:200])}{'…' if len(s['title'])>200 else ''}：{s['start'][:16].replace('T', ' ')}–{s['end'][11:16]}（{s['minutes']} 分鐘；原估 {s['original_minutes']} 分鐘）" for s in state['sessions']]
         from .sequence_replan import question_reply
-        return question_reply('\n'.join(lines))
-    return ('Study 重建暫停；已確認刪除 ' + str(len(state.get('deleted', []))) +
+        reply = question_reply('\n'.join(lines))
+        if isinstance(reply,dict):
+            for message in reply['messages']:
+                message['event_reset_result'] = True
+        return reply
+    retry = '/studyreset' if state.get('event_type', 'study') == 'study' else '/eventreset ' + state['event_type']
+    return (label + ' 重建暫停；已確認刪除 ' + str(len(state.get('deleted', []))) +
             ' 個舊行程、建立 ' + str(len(state.get('inserted', []))) +
-            ' 個新時段。請輸入「重新安排所有 study 行程」恢復核對。\n' + escape(state.get('error', '')))
+            ' 個新時段。請輸入 ' + escape(retry) + ' 恢復核對。\n' + escape(state.get('error', '')))
 
 
 async def run(planner, chat_id, instruction, update_id, now=None):
@@ -246,6 +252,8 @@ async def run(planner, chat_id, instruction, update_id, now=None):
     if review.get('status') == 'creating':
         return '先完成現有 Calendar 操作的恢復核對，再重建 study；本次尚未變更行程。'
     prior = db.get_task_action_state(KEY)
+    if prior and prior.get('status') in ACTIVE and prior.get('event_type', 'study') != 'study':
+        return '另一類型的重建尚未結束，請先使用 /eventreset ' + escape(prior['event_type']) + ' 恢復核對。'
     token = sha256(f'study-reset:{chat_id}:{update_id}'.encode()).hexdigest()[:32]
     if prior and prior.get('chat_id') != chat_id and prior.get('status') in ACTIVE | {'question'}:
         return 'Another study rebuild needs resolution first.'
@@ -265,7 +273,7 @@ async def run(planner, chat_id, instruction, update_id, now=None):
         if prior and prior.get('status') in {'applying', 'partial'}:
             state = prior
         else:
-            state = {'status': 'planning', 'token': token, 'chat_id': chat_id, 'instruction': instruction,
+            state = {'status': 'planning', 'token': token, 'chat_id': chat_id, 'instruction': instruction, 'event_type': 'study',
                      'updated_at': now.isoformat()}
             db.mutate_task_action_state(KEY, lambda old: state)
             tasks = {t['id']: t for t in db.list_open_tasks()}
@@ -274,7 +282,7 @@ async def run(planner, chat_id, instruction, update_id, now=None):
             await planner.calendar.verify_owner()
             horizon = now + timedelta(days=30)
             agenda = await planner.calendar.agenda(now, horizon)
-            context = prior if prior and prior.get('status') == 'question' else None
+            context = prior if prior and prior.get('status') == 'question' and prior.get('event_type','study') == 'study' else None
             output = ResetOutput.model_validate(await planner.ai.parse_study_reset(instruction,
                 [{'id': i, **task_fields(t), 'effort': {k: (planner.get(i) or {}).get(k)
                     for k in ('minutes', 'requested_minutes', 'duration_estimate', 'progress_note')}} for i, t in tasks.items()],
@@ -404,14 +412,19 @@ async def execute(planner, state, now, lease, deadline):
         if tick.get('claim') != lease or clock.monotonic() >= deadline:
             raise CalendarError('The rebuild lease changed or expired; stop and reconcile.')
         if constraints(planner) != state['constraints']:
-            raise CalendarError('Study hours, capacity or preferences changed; inspect the saved rebuild.')
+            raise CalendarError('Scheduling hours, capacity or preferences changed; inspect the saved rebuild.')
         for i, original in state['snapshots'].items():
+            if original.get('event'):
+                booking = original.get('booking')
+                if booking and db.get_task_action_state('free:booking:' + booking['token']) != booking:
+                    raise CalendarError('Another operation changed an event booking; rebuilding paused.')
+                continue
             task = db.get_task(int(i))
             if not task or task.get('status') != 'open' or task_fields(task) != original['task']:
-                raise CalendarError('A study task changed during rebuilding; inspect the saved plan.')
+                raise CalendarError('A selected task changed during rebuilding; inspect the saved plan.')
             saved = planner.get(int(i))
             if saved != original['state'] and not (saved and saved.get('reset_token') == state['token']):
-                raise CalendarError('Another operation changed a study plan; rebuilding paused.')
+                raise CalendarError('Another operation changed a selected plan; rebuilding paused.')
 
     current()
     from .learning_calendar import overlaps
@@ -429,22 +442,24 @@ async def execute(planner, state, now, lease, deadline):
     if any(overlaps(datetime.fromisoformat(s['start']), datetime.fromisoformat(s['end']), busy) for s in sessions):
         raise CalendarError('A replacement slot became busy. Rebuilding paused before further changes.')
     for exam in state['exams']:
-        actual = next((e for e in agenda if e['id'] == exam['id'] and e.get('_calendar_id') == exam.get('_calendar_id')), None)
-        if actual != exam:
-            raise CalendarError('A fixed exam changed. Inspect its deadline before rebuilding.')
+        actual = next((e for e in agenda if e['id'] == exam['id'] and
+            (e.get('_calendar_id') == exam.get('_calendar_id') or writable(e,cfg) and writable(exam,cfg))), None)
+        if not actual or {k:v for k,v in actual.items() if k!='_calendar_id'} != {k:v for k,v in exam.items() if k!='_calendar_id'}:
+            raise CalendarError('A fixed event changed. Inspect its timing before rebuilding.')
     for session in sessions:
         actual = await planner.calendar.event(session['event_id'])
         if actual is not None and not matches_session(actual, session, state, cfg):
             raise CalendarError('A replacement event changed or has a conflicting identity. Rebuilding paused.')
     from .learning_calendar import class_windows
-    days = {s['start'][:10] for s in sessions}
+    days = {s['start'][:10] for s in sessions if not state['snapshots'][str(s['task_id'])].get('event')}
     for day in days:
         bucket = dict(db.get_task_action_state('learning:day:' + day) or {})
         for event in state['removed']:
-            bucket.pop(event['extendedProperties']['private']['chronosToken'], None)
+            bucket.pop(event.get('extendedProperties', {}).get('private', {}).get('chronosToken'), None)
         for s in sessions:
             bucket.pop(s['token'], None)
-        load = sum(bucket.values()) + sum(s['minutes'] for s in sessions if s['start'][:10] == day)
+        load = sum(bucket.values()) + sum(s['minutes'] for s in sessions if s['start'][:10] == day
+            and not state['snapshots'][str(s['task_id'])].get('event'))
         load += sum((b-a).total_seconds()/60 for a,b in class_windows(datetime.fromisoformat(day).date(), cfg.tz,
             state['constraints']['course_policy']))
         load += sum((b-a).total_seconds()/60 for a,b in reserved_windows(db) if a.date().isoformat() == day)
@@ -454,12 +469,12 @@ async def execute(planner, state, now, lease, deadline):
                 if saved.get('start', '')[:10] == day and saved.get('end'):
                     load += (datetime.fromisoformat(saved['end']) - datetime.fromisoformat(saved['start'])).total_seconds()/60
         if load > cfg.learning_daily_minutes:
-            raise CalendarError('The daily study capacity changed. Rebuilding paused before further changes.')
+            raise CalendarError('The daily task capacity changed. Rebuilding paused before further changes.')
     # Check the complete old set before the first deletion, including versions.
     for event in state['removed']:
         actual = await planner.calendar.event(event['id'])
         if actual and actual.get('status') != 'cancelled' and actual.get('etag') != event['etag']:
-            raise CalendarError('An old study event changed. Deletion paused.')
+            raise CalendarError('An old selected event changed. Deletion paused.')
     for event in state['removed']:
         if event['id'] in state['deleted']:
             continue
@@ -467,7 +482,7 @@ async def execute(planner, state, now, lease, deadline):
         actual = await planner.calendar.event(event['id'])
         if actual and actual.get('status') != 'cancelled':
             if actual.get('etag') != event['etag']:
-                raise CalendarError('An old study event changed. Deletion paused.')
+                raise CalendarError('An old selected event changed. Deletion paused.')
             await planner.calendar.delete_event(event['id'], event['etag'])
             actual = await planner.calendar.event(event['id'])
             if actual and actual.get('status') != 'cancelled':
@@ -485,13 +500,29 @@ async def execute(planner, state, now, lease, deadline):
                 raise CalendarError('A replacement slot has passed. Inspect the saved rebuild before continuing.')
             if overlaps(a, b, [*await planner.calendar.busy(a, b), *reserved_windows(db)]):
                 raise CalendarError('A replacement slot is now busy. Existing progress was retained.')
-            await planner.calendar.insert({'id': session['event_id'], 'summary': session['title'], 'colorId': '10',
+            body = {'id': session['event_id'], 'summary': session['title'], 'colorId': '10',
                 'start': {'dateTime': session['start'], 'timeZone': cfg.timezone},
                 'end': {'dateTime': session['end'], 'timeZone': cfg.timezone},
-                'description': 'Chronos study rebuild under owner authorization.',
+                'description': 'Chronos ' + state.get('event_type','study') + ' rebuild under owner authorization.',
                 'visibility': 'private', 'transparency': 'opaque',
                 'extendedProperties': {'private': {'chronosTask': str(session['task_id']),
-                    'chronosToken': session['token'], 'chronosReset': state['token']}}})
+                    'chronosToken': session['token'], 'chronosReset': state['token']}}}
+            original = state['snapshots'][str(session['task_id'])]
+            if original.get('event') or session.get('template'):
+                source = original.get('event') or session['template']
+                body = {**{k: source[k] for k in ('summary','description','location','colorId','visibility','transparency','reminders','extendedProperties') if k in source},
+                        **{k: body[k] for k in ('id','start','end')}}
+                body['summary'] = session['title']
+                props = dict(source.get('extendedProperties', {}).get('private', {}))
+                props.update(chronosReset=state['token'], chronosEventCategory=state['event_type'])
+                if not original.get('event'):
+                    props.update(chronosTask=str(session['task_id']),chronosToken=session['token'])
+                body['extendedProperties'] = {**source.get('extendedProperties', {}), 'private': props}
+            elif state.get('event_type', 'study') != 'study':
+                from .free_booking import EVENT_COLORS
+                body['colorId'] = EVENT_COLORS.get(state['event_type'],'8')
+                body['extendedProperties']['private']['chronosEventCategory'] = state['event_type']
+            await planner.calendar.insert(body)
             actual = await planner.calendar.event(session['event_id'])
         if not matches_session(actual, session, state, cfg):
             raise CalendarError('A replacement event could not be verified; rebuilding paused.')
@@ -507,11 +538,18 @@ async def execute(planner, state, now, lease, deadline):
             return buckets[day]
         for event in state['removed']:
             bucket(bounds(event, cfg.tz)[0].date().isoformat()).pop(
-                event['extendedProperties']['private']['chronosToken'], None)
+                event.get('extendedProperties', {}).get('private', {}).get('chronosToken'), None)
         queue = db.get_task_action_state('learning:proposal-queue') or {}
+        booking_updates = {}
         for i, original in state['snapshots'].items():
             sessions = [s for s in state['sessions'] if str(s['task_id']) == i]
             first, *later = sessions
+            if original.get('event'):
+                booking = original.get('booking')
+                if booking:
+                    booking_updates[booking['token']] = {**booking, 'event_id': first['event_id'],
+                        'start': first['start'], 'end': first['end'], 'reset_token': state['token']}
+                continue
             old = original['state'] or {}
             replacement = {**first, 'status': 'scheduled', 'snapshot': original['task'],
                 'reset_token': state['token'], 'reset_remaining_sessions': later,
@@ -529,6 +567,11 @@ async def execute(planner, state, now, lease, deadline):
         for i, replacement in replacements.items():
             db._save_task_action_state('study-reset:history:' + state['token'] + ':' + i, state['snapshots'][i])
             db._save_task_action_state('learning:task:' + i, replacement)
+        for i, original in state['snapshots'].items():
+            if original.get('event'):
+                db._save_task_action_state('event-reset:history:' + state['token'] + ':' + i, original)
+        for token, booking in booking_updates.items():
+            db._save_task_action_state('free:booking:' + token, booking)
         for day, values in buckets.items():
             db._save_task_action_state('learning:day:' + day, values)
         db._save_task_action_state('learning:proposal-queue', queue)
@@ -539,6 +582,20 @@ async def execute(planner, state, now, lease, deadline):
 
 def matches_session(actual, session, state, cfg):
     props = (actual or {}).get('extendedProperties', {}).get('private', {})
+    original = state.get('snapshots', {}).get(str(session['task_id']), {})
+    if original.get('event') or session.get('template'):
+        source = original.get('event') or session['template']
+        kept = {k: source[k] for k in ('description','location','colorId','visibility','transparency','reminders') if k in source}
+        expected = dict(source.get('extendedProperties',{}).get('private',{}))
+        expected.update(chronosReset=state['token'],chronosEventCategory=state['event_type'])
+        if not original.get('event'):
+            expected.update(chronosTask=str(session['task_id']),chronosToken=session['token'])
+        return bool(actual and actual.get('status') != 'cancelled' and props.get('chronosReset') == state['token']
+            and props.get('chronosEventCategory') == state['event_type'] and actual.get('summary') == session['title']
+            and all(actual.get(k) == v for k,v in kept.items())
+            and all(props.get(k) == v for k,v in expected.items())
+            and actual.get('extendedProperties',{}).get('shared') == source.get('extendedProperties',{}).get('shared')
+            and tuple(v.isoformat() for v in bounds(actual, cfg.tz)) == (session['start'], session['end']))
     return bool(actual and actual.get('status') != 'cancelled' and props.get('chronosReset') == state['token']
         and props.get('chronosTask') == str(session['task_id']) and props.get('chronosToken') == session['token']
         and actual.get('summary') == session['title']
