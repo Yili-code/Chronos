@@ -69,7 +69,7 @@ def rebuild(planner,category='meeting',text='',update=1):
 def test_variable_category_rebuilds_only_selected_standalone_events_and_preserves_details(setup,category):
     planner,events,controls=initialize(setup,category)
     other=deepcopy(events['old2'])
-    assert '已全部重建' in rebuild(planner,category)
+    assert '已重新安排好' in rebuild(planner,category)
     assert 'old0' not in events and 'old1' not in events and events['old2']==other
     state=planner.db.get_task_action_state(core.KEY)
     assert state['event_type']==category and state['status']=='completed'
@@ -86,7 +86,7 @@ def test_variable_category_rebuilds_only_selected_standalone_events_and_preserve
         assert 'chronosTask' not in event['extendedProperties']['private']
     assert len(planner.db.list_open_tasks())==1  # No fake tasks created for standalone events.
     before=deepcopy(events)
-    assert '已全部重建' in rebuild(planner,category)
+    assert '已重新安排好' in rebuild(planner,category)
     assert events==before and planner.calendar.insert.await_count==2
 
 
@@ -104,7 +104,7 @@ def test_invalid_or_unsafe_category_plan_never_deletes_originals(setup,failure):
     else:
         controls['end']=(NOW+timedelta(minutes=11)).isoformat()
     before=deepcopy(events)
-    assert '尚未' in rebuild(planner)
+    assert '行程沒有變動' in rebuild(planner)
     assert events==before
     planner.calendar.insert.assert_not_awaited()
     planner.calendar.delete_event.assert_not_awaited()
@@ -115,7 +115,7 @@ def test_historical_question_keeps_category_and_short_answer_rebuilds_that_type(
     controls['include_past']=None
     assert '是否包含' in rebuild(planner,'workout')
     controls['include_past']=True
-    assert '已全部重建' in asyncio.run(reset.resume(planner,123,'包含',2,NOW))
+    assert '已重新安排好' in asyncio.run(reset.resume(planner,123,'包含',2,NOW))
     assert planner.db.get_task_action_state(core.KEY)['event_type']=='workout'
     context=planner.ai.parse_event_reset.call_args.args[3]
     assert context['clarification']['event_type']=='workout'
@@ -130,10 +130,10 @@ def test_category_unknown_outcome_recovers_without_duplicate_events(setup,lost):
         await original(*args)
         raise CalendarError('response lost')
     method.side_effect=interrupted
-    assert '重建暫停' in rebuild(planner)
+    assert '重排暫停' in rebuild(planner)
     assert asyncio.run(planner._tick(NOW))=={'waiting_for':'study rebuild reconciliation'}
     method.side_effect=original
-    assert '已全部重建' in rebuild(planner,update=2)
+    assert '已重新安排好' in rebuild(planner,update=2)
     assert len(events)==3 and planner.calendar.insert.await_count==2
 
 
@@ -143,7 +143,7 @@ def test_standalone_booking_ledger_follows_new_event_id(setup):
     source['extendedProperties']['private']['chronosFreeToken']='booking1'
     planner.db.mutate_task_action_state('free:booking:booking1',lambda old:{'status':'booked','token':'booking1',
         'event_id':'old0','start':source['start']['dateTime'],'end':source['end']['dateTime']})
-    assert '已全部重建' in rebuild(planner)
+    assert '已重新安排好' in rebuild(planner)
     saved=planner.db.get_task_action_state('free:booking:booking1')
     assert saved['event_id']!='old0' and saved['event_id'] in events
     assert events[saved['event_id']]['extendedProperties']['private']['chronosFreeToken']=='booking1'
@@ -152,7 +152,7 @@ def test_standalone_booking_ledger_follows_new_event_id(setup):
 def test_generic_rebuild_includes_unbooked_tasks_without_touching_study(setup):
     planner,events,controls=initialize(setup,'work')
     task=planner.db.create_task('Target write client proposal',None,'work',NOW,{'estimated_minutes':90})
-    assert '已全部重建' in rebuild(planner,'work')
+    assert '已重新安排好' in rebuild(planner,'work')
     saved=planner.get(task['id'])
     assert saved['status']=='scheduled' and saved['minutes']==90
     assert events[saved['event_id']]['extendedProperties']['private']['chronosEventCategory']=='work'
@@ -194,14 +194,14 @@ def test_primary_email_alias_does_not_duplicate_sources(setup):
     planner.settings.calendar_id=planner.settings.calendar_account
     original=planner.calendar.category_events.side_effect
     planner.calendar.category_events.side_effect=lambda t,**kw:[{**e,'_calendar_id':planner.settings.calendar_account} for e in original(t,**kw)]
-    assert '已全部重建' in rebuild(planner)
+    assert '已重新安排好' in rebuild(planner)
     assert len(events)==3 and planner.calendar.insert.await_count==2
 
 
 def test_future_only_preserves_historical_event_and_bounds_discovery(setup):
     planner,events,controls=initialize(setup,past=True)
     before=deepcopy(events['old0'])
-    assert '已全部重建' in rebuild(planner,text='只排未來')
+    assert '已重新安排好' in rebuild(planner,text='只排未來')
     assert events['old0']==before
     assert planner.calendar.category_events.call_args.kwargs=={'start':NOW,'end':NOW+timedelta(days=30)}
 
@@ -216,7 +216,7 @@ def test_booked_task_preserves_segment_details_and_adds_explicit_remaining_effor
     events['task-event']=source
     planner.update(task['id'],lambda old:{'status':'scheduled','event_id':'task-event','token':'old-task-token',
         'start':source['start']['dateTime'],'end':source['end']['dateTime'],'minutes':60,'snapshot':task_fields(task)})
-    assert '已全部重建' in rebuild(planner,'work')
+    assert '已重新安排好' in rebuild(planner,'work')
     saved=planner.get(task['id'])
     assert saved['minutes']==60
     assert sum(s['minutes'] for s in [saved,*saved['reset_remaining_sessions']])==180
@@ -239,7 +239,7 @@ def test_unselected_event_can_anchor_dependency_without_moving_it(setup,directio
         return output
     planner.ai.parse_event_reset.side_effect=anchored
     fixed=deepcopy(events['old2'])
-    assert '已全部重建' in rebuild(planner)
+    assert '已重新安排好' in rebuild(planner)
     state=planner.db.get_task_action_state(core.KEY)
     session=state['sessions'][0]
     if direction=='before':
@@ -322,7 +322,7 @@ def test_shared_operation_cannot_resume_under_another_type(setup):
     rebuild(planner)
     before=deepcopy(events)
     assert '另一類型' in rebuild(planner,'social',update=2)
-    assert '另一類型' in asyncio.run(core.run(planner,123,'all study reset',3,NOW))
+    assert '上一次的會議重排還沒完成' in asyncio.run(core.run(planner,123,'all study reset',3,NOW))
     assert events==before
 
 

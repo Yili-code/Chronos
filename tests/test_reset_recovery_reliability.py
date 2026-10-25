@@ -12,7 +12,7 @@ def test_rebuild_recovery_stops_if_a_verified_replacement_was_removed(setup):
         if events: raise CalendarError('Second insertion unavailable')
         return await insert(body)
     planner.calendar.insert.side_effect = fail_second
-    assert '重建暫停' in rebuild(planner)
+    assert '重排暫停' in rebuild(planner)
     state = planner.db.get_task_action_state(reset.KEY)
     assert len(state['inserted']) == 1
     removed = state['inserted'][0]
@@ -20,7 +20,7 @@ def test_rebuild_recovery_stops_if_a_verified_replacement_was_removed(setup):
     calls = planner.calendar.insert.await_count
     planner.calendar.insert.side_effect = insert
     reply = rebuild(planner, update=2)
-    assert '已全部重建' not in reply
+    assert '已重新安排好' not in reply
     assert removed not in events
     assert planner.calendar.insert.await_count == calls
     assert planner.db.get_task_action_state(reset.KEY)['status'] == 'partial'

@@ -611,7 +611,8 @@ class ExternalAI:
             "This operation has standing owner authorization to execute without another approval and compress time "
             "if needed. Never invent task completion, change task deadlines or move exams. "
             "Negated, quoted, hypothetical, question-only and unrelated requests are not actionable. "
-            "When actionable true, question must be null; otherwise ask the minimum necessary combined question.",
+            "When actionable true, question must be null; otherwise ask one concise, natural Traditional Chinese "
+            "question. Never expose internal field names or system labels in the question.",
             json.dumps({'instruction': instruction, 'tasks': tasks, 'events': events, 'previous': context,
                         'now': now.isoformat(), 'timezone': self.settings.timezone}, ensure_ascii=False),
             reset_response_schema(ResetOutput), ResetOutput, 'study reset')
@@ -640,7 +641,8 @@ class ExternalAI:
             "Apply explicit/saved hours and weekdays via start_hour/end_hour/weekdays, defaults null/null/[0,1,2,3,4,5,6]. "
             "Nonselected events remain fixed. Never invent tasks or events. Negated, quoted or explanation-only "
             "requests are not actionable. Ask one necessary combined question with actionable false if unclear; "
-            "otherwise actionable true and question null.",
+            "otherwise actionable true and question null. Questions must use concise, natural Traditional Chinese, "
+            "without internal field names or system labels.",
             json.dumps({'target_category':event_type,'instruction':instruction,'items':items,'context':context,
                         'now':now.isoformat(),'timezone':self.settings.timezone},ensure_ascii=False),
             reset_response_schema(ResetOutput),ResetOutput,'event reset')

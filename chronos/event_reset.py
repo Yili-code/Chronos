@@ -157,10 +157,12 @@ async def run(planner, chat_id, event_type, instruction, update_id, now=None):
         return '請先完成目前 Calendar 操作的恢復核對。'
     lease=uuid4().hex
     deadline=clock.monotonic()+540
-    tick=db.mutate_task_action_state('learning:tick',lambda old:{'claim':lease,'until':(now+timedelta(minutes=10)).isoformat()}
+    tick=db.mutate_task_action_state('learning:tick',lambda old:{'claim':lease,'reset_token':token,'until':(now+timedelta(minutes=10)).isoformat()}
         if not old or old['until']<=now.isoformat() else old)
     if tick['claim']!=lease:
-        return '排程正在處理其他操作，請稍後再試。'
+        if tick.get('reset_token')==token or (prior.get('token')==token and prior.get('status') in core.ACTIVE):
+            raise core.replies.ResetInProgress()
+        return core.replies.BUSY
     try:
         if prior.get('status') in {'applying','partial'}:
             state=prior
@@ -306,7 +308,7 @@ async def run(planner, chat_id, event_type, instruction, update_id, now=None):
             state={**state,'status':'partial','error':str(error)}
             core.save(planner,state)
             return core.result(state)
-        core.save(planner,{**state,'status':'question','question':str(error)})
-        return escape(str(error))+'\n尚未刪除或建立行程。'
+        core.save(planner,{**state,'status':'question','question':core.replies.question(error)})
+        return core.replies.unchanged(error)
     finally:
         db.mutate_task_action_state('learning:tick',lambda old:{**old,'until':now.isoformat()} if old and old.get('claim')==lease else old)
