@@ -1196,6 +1196,10 @@ class LearningCalendar:
             state = self.get(task["id"])
             if not state:
                 continue
+            if state.get('pending_reschedule'):
+                # Preserve the scheduled recovery entry point until the owner
+                # reconciles the uncertain Calendar mutation explicitly.
+                continue
             if state.get('reset_remaining_sessions'):
                 from .study_reset import advance_sessions
                 while state.get('reset_remaining_sessions') and state.get('status') == 'scheduled' and state['end'] <= now.isoformat():

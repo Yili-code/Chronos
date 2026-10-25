@@ -206,3 +206,19 @@ def test_booked_edit_protects_shared_recurring_and_unowned_events(setup, change,
     else:
         calendar.move_event.assert_awaited_once()
         assert planner.get(task['id']).get('pending_reschedule')
+
+
+def test_scheduler_waits_for_uncertain_booked_edit_before_checking_in(setup):
+    planner, task, calendar, event, original = booked(setup)
+    calendar.move_event.side_effect = CalendarError('Uncertain PATCH')
+    with pytest.raises(CalendarError):
+        asyncio.run(planner.revise(task['id'],'booked','10/19 14:30 30',NOW))
+    saved = deepcopy(planner.get(task['id']))
+    bot = planner.telegram
+    bot.send_message.reset_mock()
+    calendar.event.reset_mock()
+    asyncio.run(planner.tick(NOW + timedelta(hours=10)))
+    assert planner.get(task['id']) == saved
+    assert planner.db.get_task(task['id'])['status'] == 'open'
+    bot.send_message.assert_not_awaited()
+    calendar.event.assert_not_awaited()
