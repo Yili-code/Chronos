@@ -1502,6 +1502,12 @@ def test_booked_edit_bypasses_other_proposal_and_preserves_progress(setup):
     planner.ai = SimpleNamespace(parse_schedule_edit=AsyncMock(return_value=SimpleNamespace(
         actionable=True, timing='exact', start='2026-10-19T14:30:00+08:00', minutes=30,
         progress_note='Partly completed')))
+    async def move(event_id, body, etag):
+        assert event_id == event['id'] and etag == event['etag']
+        event.update(body)
+        event['etag'] = 'v2'
+        return event
+    calendar.move_event.side_effect = move
     reply = asyncio.run(planner.revise(task['id'], 'booked', '今天兩點半 已完成部分', NOW))
     assert 'updated' in reply
     assert planner.get(task['id'])['progress_note'] == 'Partly completed'
