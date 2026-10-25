@@ -109,7 +109,7 @@ def test_today_response(today_system, monkeypatch, case):
         assert response.status_code == 200, response.text
 
     post(80000, '/today')
-    assert '18:00–19:00 · Study ISPM Chapter 2' in bot.send_message.await_args.args[1]
+    assert '18:00–19:00\nStudy ISPM Chapter 2' in bot.send_message.await_args.args[1]
     if expected == 'expired':
         clock.current = NOW + timedelta(days=1)
     if expected == 'stale':

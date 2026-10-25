@@ -122,9 +122,11 @@ def test_tomorrow_command_reports_calendar_failure_without_false_empty_day(syste
 def test_today_command(system, monkeypatch):
     from chronos import main
     from datetime import datetime
+    _, tasks, _, _ = system
+    linked = tasks.create("Study graphs", project="資訊安全實務與管理")
     calendar = AsyncMock()
     calendar.agenda.return_value = [
-        {**event(), "extendedProperties": {"private": {"chronosTask": "123"}}},
+        {**event(), "extendedProperties": {"private": {"chronosTask": str(linked["id"])}}},
         {**event("Personal event"), "id": "personal"},
         {**event("Invalid task reference"), "id": "invalid",
          "extendedProperties": {"private": {"chronosTask": "<invalid>"}}},
@@ -133,14 +135,13 @@ def test_today_command(system, monkeypatch):
     before = datetime.now(main.settings.tz)
     output = asyncio.run(main.prepare_message("/TODAY@ChronosBot"))()
     after = datetime.now(main.settings.tz)
-    assert output["messages"][0]["text"].startswith("<b>")
-    assert "Today" not in output["messages"][0]["text"]
+    assert output["messages"][0]["text"].startswith("<b>Today · ")
     text = output["messages"][0]["text"]
-    assert "10/20 17:00–10/20 18:30 · Study graphs" in text
-    assert "10/20 17:00–10/20 18:30 · Personal event" in text
-    assert "10/20 17:00–10/20 18:30 · Invalid task reference" in text
+    assert "10/20 17:00–10/20 18:30 · #ISPM\nStudy graphs" in text
+    assert "10/20 17:00–10/20 18:30\nPersonal event" in text
+    assert "10/20 17:00–10/20 18:30\nInvalid task reference" in text
     assert "<invalid>" not in text
-    assert "minutes" not in text and "(123)" not in text
+    assert "minutes" not in text and f"({linked['id']})" not in text
     start, end = calendar.agenda.await_args.args
     assert start.date() == datetime.now(main.settings.tz).date()
     assert before <= start <= after
@@ -236,24 +237,31 @@ def test_today_remaining_day_can_be_empty():
     calendar = AsyncMock()
     calendar.agenda.return_value = []
     text = "\n".join(asyncio.run(tomorrow_agenda(calendar, config, NOW, day_offset=0)))
-    assert "Today" not in text and "No events scheduled." in text
+    assert "Today" in text and "No events scheduled." in text
     assert calendar.agenda.await_args.args == (NOW, NOW.replace(hour=0) + timedelta(days=1))
 
 
-def test_today_compact_format_matches_requested_layout():
+def test_today_two_line_format_shows_only_available_hashtags(store):
     from chronos.evening_agenda import tomorrow_agenda
 
     config = Settings(_env_file=None)
+    tagged = store.create_task("Study ISPM Chapter 2", None, "database", NOW)
+    untagged = store.create_task("Codeforces Round 1129", None, None, NOW)
+    store.save_tag_alias("database", "DB & Core")
     calendar = AsyncMock()
     calendar.agenda.return_value = [
         {"summary": "Codeforces Round 1129", "start": {"dateTime": "2026-10-24T19:05:00+08:00"},
-         "end": {"dateTime": "2026-10-24T21:05:00+08:00"}},
+         "end": {"dateTime": "2026-10-24T21:05:00+08:00"},
+         "extendedProperties": {"private": {"chronosTask": str(untagged["id"])}}},
         {"summary": "Study ISPM Chapter 2", "start": {"dateTime": "2026-10-24T18:00:00+08:00"},
          "end": {"dateTime": "2026-10-24T19:00:00+08:00"},
-         "extendedProperties": {"private": {"chronosTask": "207"}}},
+         "extendedProperties": {"private": {"chronosTask": str(tagged["id"])}}},
     ]
-    parts = asyncio.run(tomorrow_agenda(calendar, config, datetime.fromisoformat("2026-10-24T17:33:00+08:00"), day_offset=0))
-    assert parts == ["<b>10/24 (Sat)</b>\n\n18:00–19:00 · Study ISPM Chapter 2\n19:05–21:05 · Codeforces Round 1129"]
+    parts = asyncio.run(tomorrow_agenda(calendar, config, datetime.fromisoformat("2026-10-24T17:33:00+08:00"),
+                                        day_offset=0, db=store))
+    assert parts == ["<b>Today · 10/24 (Sat)</b>\n\n"
+                     "18:00–19:00 · #DB &amp; Core\nStudy ISPM Chapter 2\n\n"
+                     "19:05–21:05\nCodeforces Round 1129"]
 
 
 def test_compact_agenda_escapes_titles_and_keeps_continuations_compact():
