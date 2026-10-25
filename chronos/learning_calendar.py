@@ -87,6 +87,9 @@ def class_windows(day, tz, policy=None):
 
 def find_slot(task, now, busy, reservations, config, minutes, booked_minutes=None, course_policy=None, randomize=False, window=None, align_minutes=True):
     """Search 15-minute boundaries by default; class plus study load never exceeds the cap."""
+    now = now.astimezone(config.tz)
+    if window:
+        window = tuple(value.astimezone(config.tz) for value in window)
     due = task.get("due_at") or (task.get("timing") or {}).get("due_date")
     deadline = (datetime.fromisoformat(due).astimezone(config.tz) if due and len(due) > 10 else
                 datetime.combine(datetime.fromisoformat(due).date(), time.max, config.tz) if due else
@@ -105,6 +108,8 @@ def find_slot(task, now, busy, reservations, config, minutes, booked_minutes=Non
         if window:
             start = max(start, window[0])
         if align_minutes:
+            if start.second or start.microsecond:
+                start += timedelta(minutes=1)
             start = start.replace(second=0, microsecond=0)
             start += timedelta(minutes=(-start.minute) % 15)
         stop = min(horizon, datetime.combine(day, time(config.learning_end_hour % 24), config.tz)
