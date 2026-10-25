@@ -865,6 +865,8 @@ class ExternalAI:
             "schedule edit": "No execution plan was changed",
             "calendar replan": "No Calendar arrangement was changed",
             "study revision": "No study arrangement was changed",
+            "study reset": "No study arrangement was changed",
+            "event reset": "No Calendar arrangement was changed",
             "sequence replan": "No ordered arrangement was changed",
             "calendar event title": "No Calendar event was created",
             "backward_plan": "No backward plan was created",
@@ -873,7 +875,7 @@ class ExternalAI:
             "mail summary": "No mail summary was created",
             "task metadata review": "No task or tag was changed",
             "nightly planning": "No nightly execution plan was created",
-        }[subject]
+        }.get(subject, "Nothing was changed")
         if not configured_keys(config):
             raise AIError("The AI service is not configured. Contact the service owner.")
         url = f"{config.gemini_api_base.rstrip('/')}/models/{config.gemini_model}:generateContent"
