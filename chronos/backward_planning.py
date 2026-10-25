@@ -16,6 +16,7 @@ from .google_calendar import CalendarError
 from .learning_calendar import class_windows, short_task_windows, overlaps
 from .task_actions import task_fields
 from .task_timing import display_time
+from .temporal_constraints import literal_weekday_conflict
 
 TZ = ZoneInfo("Asia/Taipei")
 INDEX = "backward:reservations"
@@ -174,6 +175,8 @@ class BackwardPlanner:
 
     async def preview(self, chat, instruction, update_id, now=None):
         now = (now or datetime.now(TZ)).astimezone(TZ)
+        current_instruction = instruction
+        date_conflict = literal_weekday_conflict(current_instruction, now)
         if not self.settings.enable_learning_calendar:
             return 'Task planning is unavailable. Enable the existing learning Calendar connection first.'
         session = self.session(chat)
@@ -226,7 +229,7 @@ class BackwardPlanner:
                 return 'This goal already has scheduled work. Review /plan first; existing bookings will not be replaced.'
         deadline = output.deadline
         if not existing:
-            deadline = explicit_deadline(instruction, now) or deadline
+            deadline = explicit_deadline(current_instruction, now) or deadline
         if existing and reference and not instruction[reference.end():].strip():
             deadline = existing.get('due_at') or (existing.get('timing') or {}).get('due_date')
         steps = [s.model_dump() for s in output.steps]
@@ -236,7 +239,7 @@ class BackwardPlanner:
                  'assumptions': output.assumptions, 'progress': output.progress, 'status': 'draft',
                  'daily_cap': min(output.daily_minutes or self.settings.learning_daily_minutes, self.settings.learning_daily_minutes),
                  'expires_at': (now+timedelta(hours=2)).isoformat(), 'children': {}, 'events': {}}
-        question = output.question or ('What is the deadline (date or exact time)?' if not deadline else None)
+        question = date_conflict or output.question or ('What is the deadline (date or exact time)?' if not deadline else None)
         if not steps and not question:
             question = 'What result do you need to deliver?'
         if question:

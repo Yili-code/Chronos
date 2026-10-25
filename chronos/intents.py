@@ -311,6 +311,10 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
                         return reply[0]
                     return app.message_bundle({"text": reply[0], "planning_requested": True})
             elif intent.action == "plan_edit":
+                from .temporal_constraints import literal_weekday_conflict
+                conflict = literal_weekday_conflict(text, now)
+                if conflict:
+                    return clarify(conflict, ids)
                 # Booked edits perform Calendar writes during preparation. A
                 # classifier result must still refer to the task it observed.
                 if app.edit_conflict(app.tasks.list_open(), selected):

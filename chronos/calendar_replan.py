@@ -9,6 +9,7 @@ from .google_calendar import CalendarError
 from .learning_calendar import find_slot, overlaps
 from .study_reflow import bounds, movable, apply, reconcile, ReflowReviewError
 from .task_actions import task_fields
+from .temporal_constraints import literal_weekday_conflict
 
 
 def key(chat_id):
@@ -119,6 +120,9 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
         return card(previous)
     if not revoke_pending(db, chat_id, previous):
         return 'The previous review changed. Check its current result before requesting a replacement.'
+    conflict = literal_weekday_conflict(instruction, now.astimezone(config.tz))
+    if conflict:
+        return conflict
     try:
         output = explicit_window(instruction, now) or await planner.ai.parse_replan(instruction, now,
             {k: previous[k] for k in ('start', 'end', 'destination_start')} if previous and previous.get('status') == 'editing' else None)

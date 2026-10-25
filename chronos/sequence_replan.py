@@ -12,6 +12,7 @@ from .nightly_planning import deadline, state_window
 from .preferences import read as read_preferences
 from .study_reflow import bounds
 from .task_actions import task_fields
+from .temporal_constraints import literal_weekday_conflict
 
 UNITS = {'chapter': r'chapters?|ch\.?|章', 'lecture': r'lectures?|講',
          'part': r'parts?|部分', 'unit': r'units?|單元', 'session': r'sessions?|節'}
@@ -270,6 +271,9 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
         return question_reply(old['question']) if old.get('status') == 'clarifying' else card(old)
     if not revoke_pending(planner.db, chat_id, old):
         return 'The previous review changed. Check its current result before requesting a replacement.'
+    conflict = literal_weekday_conflict(instruction, now.astimezone(planner.settings.tz))
+    if conflict:
+        return question_reply(conflict)
     prefs = read_preferences(planner.db, chat_id)
     previous = ({**old['parsed'], 'candidates': old.get('candidates',{}), 'original_instruction': old.get('original_instruction','')}
         if explicit_group(instruction,prefix=True) is None and (has_clarification(old) or

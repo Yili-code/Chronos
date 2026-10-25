@@ -8,6 +8,7 @@ from .ai import AIError
 from .google_calendar import CalendarError
 from .study_reflow import bounds
 from .task_actions import task_fields
+from .temporal_constraints import literal_weekday_conflict
 
 
 def verified_move(event, event_id, task_id, token, pending, tz):
@@ -61,6 +62,9 @@ async def reschedule(planner, task_id, token, instruction, now, *, update_id=Non
         raise CalendarError('The event was edited outside Chronos. Check Calendar before changing it here.')
     window = None
     if not pending:
+        conflict = literal_weekday_conflict(instruction, now.astimezone(planner.settings.tz))
+        if conflict:
+            return conflict
         note = state.get('progress_note', '')
         match = re.fullmatch(r'\s*(\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2})\s+(\d{1,2}:\d{2})(?:\s+(\d{1,3}))?\s*', instruction)
         try:

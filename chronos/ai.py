@@ -523,6 +523,8 @@ class ExternalAI:
             "not an unsupported request and not an unrestricted seven-day search. For this request window_end MUST be next-day 00:00, not null. The application finds actual availability. "
             "keep if no new start is requested; "
             "exact only for an explicit, unambiguous date and time, returned as timezone-aware ISO start. "
+            "If adjacent date and weekday assertions conflict, set actionable false rather than choosing one. "
+            "A later explicit correction replaces earlier constraints; preserve all constraints not corrected. "
             "For a clear morning use timing window 06:00–12:00; afternoon 12:00–18:00; "
             "resolve today/tomorrow on the local date and supply BOTH timezone-aware start and window_end. "
             "For timing window, window_end MUST NOT be null: morning ends at 12:00, afternoon at 18:00, evening at 21:00. "
