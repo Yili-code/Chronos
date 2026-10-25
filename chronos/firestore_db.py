@@ -7,6 +7,7 @@ from contextvars import ContextVar
 from datetime import datetime
 from dataclasses import replace
 from typing import Callable
+from zoneinfo import ZoneInfo
 
 from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
@@ -25,9 +26,10 @@ from .assignment_bridge import TRACKED_COURSES
 class FirestoreDatabase(TaskActions):
     """Firestore-backed task and Telegram receipt repository for Cloud Run."""
 
-    def __init__(self, project_id: str | None, database_id: str, collection_prefix: str, *, credentials=None):
+    def __init__(self, project_id: str | None, database_id: str, collection_prefix: str, *, credentials=None, tz=None):
         if not re.fullmatch(r"[A-Za-z0-9_-]+", collection_prefix):
             raise ValueError("CHRONOS_FIRESTORE_COLLECTION_PREFIX may contain only letters, digits, underscores, and hyphens")
+        self.tz = tz or ZoneInfo('Asia/Taipei')
         options = {"credentials": credentials} if credentials is not None else {}
         self.client = firestore.Client(project=project_id, database=database_id, **options)
         self.tasks = self.client.collection(f"{collection_prefix}_tasks")
@@ -201,7 +203,7 @@ class FirestoreDatabase(TaskActions):
         assignments = self.assignments.stream(transaction=active) if active is not None else self.assignments.stream()
         excluded = {data['task_id'] for snapshot in assignments
                     if (data := snapshot.to_dict())['record'].get('course_id') not in TRACKED_COURSES}
-        return sorted((task for task in result if task['id'] not in excluded), key=task_sort_key)
+        return sorted((task for task in result if task['id'] not in excluded), key=lambda task: task_sort_key(task, self.tz))
 
     def create_assignment(self, assignment: Assignment) -> dict:
         def create(transaction):

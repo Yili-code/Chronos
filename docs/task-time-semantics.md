@@ -17,6 +17,11 @@ Deadline ordering includes date-only deadlines; course/event dates do not affect
 deadline ordering. Existing stored timestamps remain unchanged because the system
 cannot know which old timestamps were explicitly supplied.
 
+Timed deadlines sort by their actual instants across UTC offsets. Date-only
+deadlines precede timed deadlines on the same day in the configured timezone;
+equal instants use stable task IDs. This ordering convention does not assign a
+submission time to a date-only deadline or rewrite stored timestamps.
+
 The original time instruction is retained in `timing.source_text`. AI output is
 validated before writing. Editing uses explicit `keep`, `clear`, and `set`
 operations, preserving fields the instruction does not change. A simultaneous edit

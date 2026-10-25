@@ -1,5 +1,6 @@
 """Task time roles. Date-only values never imply a time of day."""
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -35,9 +36,19 @@ def normalize_timing(value: dict | None, due_at=None) -> dict:
     return timing
 
 
-def task_sort_key(task: dict) -> tuple:
+def task_sort_key(task: dict, tz=None) -> tuple:
     deadline = task.get("due_at") or task.get("timing", {}).get("due_date")
-    return deadline is None, deadline or "", task["id"]
+    if not deadline:
+        return True, '', 0, 0, task['id']
+    if len(deadline) == 10:
+        # Date-only priority precedes timed deadlines on that local day. This
+        # is a sorting convention, not an invented submission time.
+        return False, deadline, 0, 0, task['id']
+    tz = tz or ZoneInfo('Asia/Taipei')
+    instant = datetime.fromisoformat(deadline)
+    if instant.tzinfo is None:
+        instant = instant.replace(tzinfo=tz)
+    return False, instant.astimezone(tz).date().isoformat(), 1, instant.timestamp(), task['id']
 
 
 def display_date(value: str) -> str:
