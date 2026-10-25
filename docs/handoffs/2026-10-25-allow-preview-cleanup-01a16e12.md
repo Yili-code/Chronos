@@ -1,0 +1,12 @@
+# Clean up completed Allow previews
+
+- Updated: 2026-10-25 (Asia/Taipei).
+- Base: 30d92c69a6fd5bdfe5d745cd6680cf22664efb2e; branch codex/allow-preview-cleanup; isolated .worktrees/allow-preview-cleanup.
+- User request: successful Allow removes the upper preview and buttons, retaining the verified result. Scope includes all bound pages; partial/unknown/in-progress outcomes remain actionable for recovery.
+- Findings: preview IDs and durable cleanup receipts already exist for Cancel. Extend the same mechanism using terminal persisted status done and exact token/message binding, retaining legacy cancellation receipt decoding and deletion retries without reapplying Calendar writes.
+- Validation/publication/deployment pending. Owner screenshot shows a production successful ordered Allow result; this task does not independently re-read those events or perform Calendar writes. Live Telegram cleanup remains unverified.
+- Reproduced before change: successful Allow cases did not attempt cleanup; both ordered and ordinary review tests failed the expected deletion-failure/retry flow. Existing Cancel cases remained passing.
+- Implemented: persisted terminal done after Allow or cancelled after Cancel, plus exact token/message binding, produces a generic resolved_preview_ids receipt. Retain legacy cancelled_preview_ids decoding. Delete every bound page only after result delivery; partial/unknown/in-progress/expired and mismatched cards remain intact. Receipt retries never re-run the Calendar callback or target a newer review.
+- Focused pre-final suite: 171 passed. Added actual completed-callback tests for legacy single-card Allow in both review types, checking no Calendar move call. Full final suite running. Extension 21 passed; docs 91 links / 107 Markdown files, zero missing; compile/diff passed.
+- Owner screenshot supplies receiving-side evidence of previous production ordered Allow reporting all five updates verified. This cleanup task performs no real event writes/deletes or Telegram deletion during automated validation; actual cleanup remains to be observed.
+- Final-tree validation complete: 1,955 Python tests passed in 128.62 seconds; one existing Starlette deprecation warning. Extension 21 passed; docs/compile/diff passed. Eleven added webhook regressions cover Allow cleanup/retry, all unresolved states, wrong binding, legacy cancellation receipts and completed legacy cards with no Calendar writes. Ready for PR/required CI and authorized deployment; real Telegram deletion remains unverified.

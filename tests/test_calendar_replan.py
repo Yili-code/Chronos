@@ -219,7 +219,8 @@ def test_webhook_routes_preview_edit_cancel_and_deduplicates(system, monkeypatch
 
 
 @pytest.mark.parametrize('ordered', [False, True])
-def test_cancel_deletes_only_bound_preview_pages_and_retries_cleanup(system, ordered):
+@pytest.mark.parametrize('action',['cancel','allow'])
+def test_resolved_review_deletes_only_bound_pages_and_retries_cleanup(system,monkeypatch,ordered,action):
     from chronos import main
     client, tasks, bot, config = system
     config.enable_learning_calendar = True
@@ -227,14 +228,21 @@ def test_cancel_deletes_only_bound_preview_pages_and_retries_cleanup(system, ord
              'preview_message_ids':[40,50], 'ordered_sequence':ordered,
              'expires_at':(module.datetime.now(config.tz)+timedelta(hours=2)).isoformat()}
     main.db.mutate_task_action_state(module.key(123),lambda old:state)
+    callback=None
+    if action=='allow':
+        async def complete(*args):
+            main.db.mutate_task_action_state(module.key(123),lambda old:{**old,'status':'done'})
+            return 'Calendar changes completed and verified.'
+        callback=AsyncMock(side_effect=complete)
+        monkeypatch.setattr(module,'callback',callback)
     bot.send_message.return_value={'ok':True,'result':{'message_id':60}}
     bot.request.side_effect=[{'ok':True}, {'ok':False,'error_code':500},
                              {'ok':False,'error_code':400,'description':'Bad Request: message to delete not found'}, {'ok':True}]
-    payload={'update_id':90600,'callback_query':{'id':'cancel','data':'replan:cancel:'+'b'*32,
+    payload={'update_id':90600,'callback_query':{'id':action,'data':'replan:'+action+':'+'b'*32,
              'message':{'message_id':50,'chat':{'id':123},'text':'Review'}}}
     headers={'X-Telegram-Bot-Api-Secret-Token':'test-hook'}
     assert client.post('/telegram/webhook',headers=headers,json=payload).status_code==502
-    assert main.db.get_task_action_state(module.key(123))['status']=='cancelled'
+    assert main.db.get_task_action_state(module.key(123))['status']==('done' if action=='allow' else 'cancelled')
     # A newer review must not change the cleanup targets saved for this update.
     main.db.mutate_task_action_state(module.key(123),lambda old:{**old,'token':'c'*32,'status':'pending','message_id':70})
     assert client.post('/telegram/webhook',headers=headers,json=payload).status_code==200
@@ -242,6 +250,70 @@ def test_cancel_deletes_only_bound_preview_pages_and_retries_cleanup(system, ord
     assert [call.args[1]['message_id'] for call in bot.request.await_args_list]==[40,50,40,50]
     assert all(call.args[0]=='deleteMessage' for call in bot.request.await_args_list)
     assert main.db.get_task_action_state(module.key(123))['status']=='pending'
+    if callback:
+        callback.assert_awaited_once()
+
+
+@pytest.mark.parametrize('status',['paused','creating','pending','expired'])
+def test_allow_keeps_unfinished_preview_for_recovery(system,monkeypatch,status):
+    from chronos import main
+    client,tasks,bot,config=system
+    config.enable_learning_calendar=True
+    state={'token':'f'*32,'status':status,'chat_id':123,'message_id':50,'preview_message_ids':[40,50]}
+    main.db.mutate_task_action_state(module.key(123),lambda old:state)
+    monkeypatch.setattr(module,'callback',AsyncMock(return_value='The full group has not been verified.'))
+    bot.send_message.return_value={'ok':True,'result':{'message_id':60}}
+    payload={'update_id':90700,'callback_query':{'id':'allow','data':'replan:allow:'+'f'*32,
+        'message':{'message_id':50,'chat':{'id':123},'text':'Review'}}}
+    assert client.post('/telegram/webhook',headers={'X-Telegram-Bot-Api-Secret-Token':'test-hook'},json=payload).status_code==200
+    bot.request.assert_not_awaited()
+
+
+@pytest.mark.parametrize('mismatch',['token','message'])
+def test_allow_does_not_remove_a_different_completed_preview(system,mismatch):
+    from chronos import main
+    client,tasks,bot,config=system
+    config.enable_learning_calendar=True
+    main.db.mutate_task_action_state(module.key(123),lambda old:{'token':'f'*32,'status':'done','chat_id':123,'message_id':50})
+    bot.send_message.return_value={'ok':True,'result':{'message_id':60}}
+    payload={'update_id':90701,'callback_query':{'id':'allow','data':'replan:allow:'+('e'*32 if mismatch=='token' else 'f'*32),
+        'message':{'message_id':51 if mismatch=='message' else 50,'chat':{'id':123},'text':'Review'}}}
+    assert client.post('/telegram/webhook',headers={'X-Telegram-Bot-Api-Secret-Token':'test-hook'},json=payload).status_code==200
+    bot.request.assert_not_awaited()
+
+
+def test_legacy_cancellation_cleanup_receipt_is_still_replayed(system):
+    from chronos import main
+    client,tasks,bot,config=system
+    config.enable_learning_calendar=True
+    main.db.process_update(90702,lambda:{'messages':[{'text':'Cancelled.','cancelled_preview_ids':[50]}]})
+    bot.send_message.return_value={'ok':True,'result':{'message_id':60}}
+    bot.request.return_value={'ok':True}
+    payload={'update_id':90702,'callback_query':{'id':'cancel','data':'replan:cancel:'+'f'*32,
+        'message':{'message_id':50,'chat':{'id':123},'text':'Review'}}}
+    assert client.post('/telegram/webhook',headers={'X-Telegram-Bot-Api-Secret-Token':'test-hook'},json=payload).status_code==200
+    bot.request.assert_awaited_once_with('deleteMessage',{'chat_id':123,'message_id':50})
+
+
+@pytest.mark.parametrize('ordered',[False,True])
+def test_already_completed_allow_cleans_legacy_card_without_calendar_writes(system,monkeypatch,ordered):
+    from chronos import main
+    client,tasks,bot,config=system
+    config.enable_learning_calendar=True
+    state={'token':'f'*32,'status':'done','chat_id':123,'message_id':50,'ordered_sequence':ordered,
+        'calendar_moves':[{'event_id':'one','ordinal':1,'start':'2026-10-29T13:00:00+08:00','end':'2026-10-29T15:00:00+08:00'}],
+        'applied_event_ids':['one'],'completed_events':[],'parsed':{'unit':'chapter'}}
+    main.db.mutate_task_action_state(module.key(123),lambda old:state)
+    move=AsyncMock()
+    monkeypatch.setattr(main.google_calendar,'move_event',move)
+    bot.send_message.return_value={'ok':True,'result':{'message_id':60}}
+    bot.request.return_value={'ok':True}
+    payload={'update_id':90703,'callback_query':{'id':'allow','data':'replan:allow:'+'f'*32,
+        'message':{'message_id':50,'chat':{'id':123},'text':'Old completed preview'}}}
+    assert client.post('/telegram/webhook',headers={'X-Telegram-Bot-Api-Secret-Token':'test-hook'},json=payload).status_code==200
+    bot.request.assert_awaited_once_with('deleteMessage',{'chat_id':123,'message_id':50})
+    assert 'already been applied' in bot.send_message.await_args.args[1]
+    move.assert_not_awaited()
 
 
 @pytest.mark.parametrize('mismatch',['token','message','in_progress'])

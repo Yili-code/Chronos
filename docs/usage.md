@@ -157,3 +157,5 @@ Verification uses isolated SQLite/Firestore-contract tests and Calendar transpor
 Original times are retained when they already match the earliest suitable placement. This is a bounded forward scheduling policy, not a claim of exhaustive global optimization.
 
 Cancel removes that review's Telegram preview, including all pages of a split review, while retaining a brief cancellation acknowledgement. Calendar events stay unchanged. Cleanup retries target only the cancelled review; stale buttons and unresolved in-progress changes do not delete an active review.
+
+Allow also removes all preview pages once the review reaches its completed state, retaining the execution result. Partial, uncertain and in-progress results keep the preview for inspection and recovery. Message deletion retries use saved targets and never reapply Calendar changes or remove a newer review. Reopening Allow on a still-current completed legacy card reports the existing result and cleans up that card without reapplying changes.
