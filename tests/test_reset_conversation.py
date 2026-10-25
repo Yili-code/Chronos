@@ -92,6 +92,7 @@ def test_background_worker_releases_only_abandoned_preflight(setup):
 
 @pytest.mark.parametrize('text',['study reset','重排所有會議'])
 def test_actual_webhook_acknowledges_old_retry_without_running_rebuild(setup,monkeypatch,text):
+    from chronos.intents import Intent
     planner,*_=setup
     class Clock(flow.datetime):
         @classmethod
@@ -100,6 +101,10 @@ def test_actual_webhook_acknowledges_old_retry_without_running_rebuild(setup,mon
     monkeypatch.setattr(flow,'datetime',Clock)
     monkeypatch.setattr(main,'settings',planner.settings)
     monkeypatch.setattr(main,'db',planner.db)
+    monkeypatch.setattr(main,'tasks',TaskService(planner.db,planner.settings.tz))
+    classifier=AsyncMock()
+    classifier.classify_intent.return_value=Intent(action='event_reset',reset_type='meeting')
+    monkeypatch.setattr(main,'ai',classifier)
     monkeypatch.setattr(main,'learning_calendar',lambda:planner)
     monkeypatch.setattr(main,'telegram',planner.telegram)
     execute=AsyncMock()
@@ -161,3 +166,25 @@ def test_provider_transport_is_exercised_by_real_study_reply_webhook(setup,monke
     assert planner.db.get_task_action_state(core.KEY)['status']=='question'
     planner.calendar.delete_event.assert_not_awaited()
     planner.calendar.insert.assert_not_awaited()
+
+
+def test_old_ordinary_task_with_reset_word_is_not_dropped(store,monkeypatch):
+    from test_intents import classify
+    monkeypatch.setattr(main.settings,'enable_learning_calendar',True)
+    classify(monkeypatch,action='task_create')
+    old=int((flow.datetime.now(main.settings.tz)-timedelta(minutes=20)).timestamp())
+    action=asyncio.run(main.prepare_message('Add a task to reset my password',update_id=200,chat_id=123,request_date=old))
+    store.process_update(200,action)
+    assert len(store.list_open_tasks())==1
+
+
+def test_classified_old_generic_reset_is_still_expired(store,monkeypatch):
+    from test_intents import classify
+    monkeypatch.setattr(main.settings,'enable_learning_calendar',True)
+    classify(monkeypatch,action='event_reset',reset_type='workout')
+    execute=AsyncMock()
+    monkeypatch.setattr(event_reset,'run',execute)
+    old=int((flow.datetime.now(main.settings.tz)-timedelta(minutes=20)).timestamp())
+    action=asyncio.run(main.prepare_message('把所有健身活動重新安排',update_id=201,chat_id=123,request_date=old))
+    assert store.process_update(201,action)['reply']==flow.EXPIRED
+    execute.assert_not_awaited()

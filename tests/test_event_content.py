@@ -14,7 +14,14 @@ from test_intents import store, run, classify
 
 
 def test_event_preview_preserves_three_hours_without_task(store, monkeypatch):
-    now = datetime.now(main.settings.tz)
+    from chronos import intents
+    now = datetime.fromisoformat('2026-10-21T12:00:00+08:00')
+    class Clock(datetime):
+        @classmethod
+        def now(cls,tz=None):
+            return now.astimezone(tz)
+    monkeypatch.setattr(main,'datetime',Clock)
+    monkeypatch.setattr(intents,'datetime',Clock)
     start = (now + timedelta(days=3)).replace(hour=20, minute=0, second=0, microsecond=0)
     classify(monkeypatch, action='event_create', title='AtCoder contest', start=start,
              minutes=180, event_category='contest', content='Estimated duration: 3h')

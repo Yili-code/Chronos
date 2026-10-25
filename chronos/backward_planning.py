@@ -16,6 +16,7 @@ from .google_calendar import CalendarError
 from .learning_calendar import class_windows, short_task_windows, overlaps
 from .task_actions import task_fields
 from .task_timing import display_time
+from .temporal_constraints import literal_weekday_conflict
 
 TZ = ZoneInfo("Asia/Taipei")
 INDEX = "backward:reservations"
@@ -56,6 +57,13 @@ def explicit_deadline(text, now):
     # Only the immediately adjacent HH:MM supplies an exact deadline time.
     clock = re.match(r'\s*(\d{1,2}):(\d{2})(?!\d)', text[match.end():])
     if clock:
+        # This shortcut only resolves unqualified local 24-hour clocks. Keep
+        # the structured parser's result when meridiem or zone conversion is
+        # needed, rather than silently treating 5 PM or 17:00 UTC as Taipei.
+        suffix = text[match.end() + clock.end():]
+        if (re.search(r'(?<![a-z])(?:[ap]\.?m\.?|utc|gmt|[ecmp][sd]t|[a-z_]+/[a-z_]+)(?![a-z])', text, re.I)
+                or re.match(r'\s*[+-]\d{1,2}(?::?\d{2})?(?!\d)', suffix)):
+            return None
         return datetime.combine(day, time(int(clock[1]), int(clock[2])), TZ).isoformat()
     if re.search(r'\d{1,2}:\d{2}|\d+\s*點|上午|下午|晚上|AM|PM', text, re.I):
         return None
@@ -74,6 +82,16 @@ def ordered_steps(steps):
             ordered.append(i)
             remaining.remove(i)
     return ordered
+
+
+def verified_event(event, event_id, state, slot):
+    title = ('Buffer · ' + state['goal']) if slot['step'] == -1 else state['steps'][slot['step']]['title']
+    return bool(event and event.get('id') == event_id and event.get('status') != 'cancelled'
+                and event.get('extendedProperties', {}).get('private', {}).get('chronosBackward') == state['token']
+                and event.get('summary') == title
+                and event.get('start', {}).get('dateTime') and event.get('end', {}).get('dateTime')
+                and datetime.fromisoformat(event['start']['dateTime']) == datetime.fromisoformat(slot['start'])
+                and datetime.fromisoformat(event['end']['dateTime']) == datetime.fromisoformat(slot['end']))
 
 
 def allocate(steps, now, boundary, busy, settings, policy, budgets, daily_cap):
@@ -157,6 +175,8 @@ class BackwardPlanner:
 
     async def preview(self, chat, instruction, update_id, now=None):
         now = (now or datetime.now(TZ)).astimezone(TZ)
+        current_instruction = instruction
+        date_conflict = literal_weekday_conflict(current_instruction, now)
         if not self.settings.enable_learning_calendar:
             return 'Task planning is unavailable. Enable the existing learning Calendar connection first.'
         session = self.session(chat)
@@ -209,7 +229,7 @@ class BackwardPlanner:
                 return 'This goal already has scheduled work. Review /plan first; existing bookings will not be replaced.'
         deadline = output.deadline
         if not existing:
-            deadline = explicit_deadline(instruction, now) or deadline
+            deadline = explicit_deadline(current_instruction, now) or deadline
         if existing and reference and not instruction[reference.end():].strip():
             deadline = existing.get('due_at') or (existing.get('timing') or {}).get('due_date')
         steps = [s.model_dump() for s in output.steps]
@@ -219,7 +239,7 @@ class BackwardPlanner:
                  'assumptions': output.assumptions, 'progress': output.progress, 'status': 'draft',
                  'daily_cap': min(output.daily_minutes or self.settings.learning_daily_minutes, self.settings.learning_daily_minutes),
                  'expires_at': (now+timedelta(hours=2)).isoformat(), 'children': {}, 'events': {}}
-        question = output.question or ('What is the deadline (date or exact time)?' if not deadline else None)
+        question = date_conflict or output.question or ('What is the deadline (date or exact time)?' if not deadline else None)
         if not steps and not question:
             question = 'What result do you need to deliver?'
         if question:
@@ -372,11 +392,10 @@ class BackwardPlanner:
         for i, slot in enumerate(state['slots']):
             event_id = sha256(f'chronos-backward:{token}:{i}'.encode()).hexdigest()
             event = await self.calendar.event(event_id)
+            if event is None and str(i) in state.get('events', {}):
+                raise CalendarError('A previously verified event was removed. Inspect Calendar before recovery; it will not be recreated automatically.')
             if event:
-                if (event.get('status') == 'cancelled' or event.get('extendedProperties', {}).get('private', {}).get('chronosBackward') != token
-                        or not event.get('start', {}).get('dateTime') or not event.get('end', {}).get('dateTime')
-                        or datetime.fromisoformat(event['start']['dateTime']) != datetime.fromisoformat(slot['start'])
-                        or datetime.fromisoformat(event['end']['dateTime']) != datetime.fromisoformat(slot['end'])):
+                if not verified_event(event, event_id, state, slot):
                     raise CalendarError('An approved event changed. Inspect Calendar before recovery.')
                 known[str(i)] = event_id
         boundary = deadline_boundary(state['deadline'])
@@ -483,14 +502,15 @@ class BackwardPlanner:
                 start, end = (datetime.fromisoformat(slot[k]) for k in ('start', 'end'))
                 if overlaps(start, end, await self.calendar.busy(start, end)):
                     raise CalendarError('New conflict during creation.')
-                event = await self.calendar.insert({'id': event_id, 'summary': ('Buffer · '+state['goal']) if slot['step'] == -1 else state['steps'][slot['step']]['title'],
+                await self.calendar.insert({'id': event_id, 'summary': ('Buffer · '+state['goal']) if slot['step'] == -1 else state['steps'][slot['step']]['title'],
                     'description': f"Chronos backward plan · Goal #{state['parent_id']} · " +
                         ('Reserved contingency buffer' if slot['step'] == -1 else f"Task #{state['children'][str(slot['step'])]}: " + state['steps'][slot['step']]['output']),
                     'colorId': '10', 'visibility': 'private', 'transparency': 'opaque',
                     'start': {'dateTime': slot['start'], 'timeZone': 'Asia/Taipei'},
                     'end': {'dateTime': slot['end'], 'timeZone': 'Asia/Taipei'},
                     'extendedProperties': {'private': {'chronosBackward': token}}})
-                if event.get('id') != event_id or event.get('extendedProperties', {}).get('private', {}).get('chronosBackward') != token:
+                event = await self.calendar.event(event_id)
+                if not verified_event(event, event_id, state, slot):
                     raise CalendarError('Calendar insertion needs reconciliation.')
             self.db.mutate_task_action_state(key(token), lambda old, i=i, event_id=event_id:
                 {**old, 'events': {**old['events'], str(i): event_id}})

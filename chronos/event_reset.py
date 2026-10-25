@@ -209,7 +209,7 @@ async def run(planner, chat_id, event_type, instruction, update_id, now=None):
             removed,snapshots,past=[],{},False
             for i,item in items.items():
                 old=planner.get(i) or {} if i>0 else {}
-                if old.get('status') in {'creating','backward_managed','reset_pending'} or str(old.get('delivery','')).endswith(('_uncertain','_sending')):
+                if old.get('pending_reschedule') or old.get('status') in {'creating','backward_managed','reset_pending'} or str(old.get('delivery','')).endswith(('_uncertain','_sending')):
                     raise ValueError('選取項目有尚待恢復的操作，請先完成核對。')
                 source=[item['_event']] if i<0 else await planner.calendar.task_events(i)
                 selected=[]

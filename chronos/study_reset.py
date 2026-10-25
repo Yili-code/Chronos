@@ -314,7 +314,7 @@ async def run(planner, chat_id, instruction, update_id, now=None):
             removed, historical = [], False
             for i in tasks:
                 old = planner.get(i) or {}
-                if old.get('status') in {'creating', 'backward_managed', 'reset_pending'} or str(old.get('delivery', '')).endswith(('_uncertain', '_sending')):
+                if old.get('pending_reschedule') or old.get('status') in {'creating', 'backward_managed', 'reset_pending'} or str(old.get('delivery', '')).endswith(('_uncertain', '_sending')):
                     raise ValueError('A selected task has an unresolved Calendar operation. Resolve it before rebuilding.')
                 events = await planner.calendar.task_events(i)
                 if old.get('event_id') and old.get('status') in {'scheduled', 'awaiting_feedback'} and old['event_id'] not in {e['id'] for e in events}:
@@ -448,6 +448,8 @@ async def execute(planner, state, now, lease, deadline):
             raise CalendarError('A fixed event changed. Inspect its timing before rebuilding.')
     for session in sessions:
         actual = await planner.calendar.event(session['event_id'])
+        if actual is None and session['event_id'] in state['inserted']:
+            raise CalendarError('A previously verified replacement event was removed. Inspect Calendar before continuing the saved rebuild.')
         if actual is not None and not matches_session(actual, session, state, cfg):
             raise CalendarError('A replacement event changed or has a conflicting identity. Rebuilding paused.')
     from .learning_calendar import class_windows

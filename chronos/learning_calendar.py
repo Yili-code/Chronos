@@ -87,6 +87,9 @@ def class_windows(day, tz, policy=None):
 
 def find_slot(task, now, busy, reservations, config, minutes, booked_minutes=None, course_policy=None, randomize=False, window=None, align_minutes=True):
     """Search 15-minute boundaries by default; class plus study load never exceeds the cap."""
+    now = now.astimezone(config.tz)
+    if window:
+        window = tuple(value.astimezone(config.tz) for value in window)
     due = task.get("due_at") or (task.get("timing") or {}).get("due_date")
     deadline = (datetime.fromisoformat(due).astimezone(config.tz) if due and len(due) > 10 else
                 datetime.combine(datetime.fromisoformat(due).date(), time.max, config.tz) if due else
@@ -105,6 +108,8 @@ def find_slot(task, now, busy, reservations, config, minutes, booked_minutes=Non
         if window:
             start = max(start, window[0])
         if align_minutes:
+            if start.second or start.microsecond:
+                start += timedelta(minutes=1)
             start = start.replace(second=0, microsecond=0)
             start += timedelta(minutes=(-start.minute) % 15)
         stop = min(horizon, datetime.combine(day, time(config.learning_end_hour % 24), config.tz)
@@ -699,7 +704,7 @@ class LearningCalendar:
             return await self.book(task, approved, now)
         return "Unknown planning action."
 
-    async def revise(self, task_id, token, instruction, now=None):
+    async def revise(self, task_id, token, instruction, now=None, *, update_id=None):
         if not self.settings.enable_learning_calendar:
             return "Task planning is unavailable."
         state = self.get(task_id)
@@ -717,7 +722,7 @@ class LearningCalendar:
         try:
             if booked_edit:
                 from .study_reschedule import reschedule
-                return await reschedule(self, task_id, token, instruction, now)
+                return await reschedule(self, task_id, token, instruction, now, update_id=update_id)
             return await self._revise(task_id, token, instruction, now)
         finally:
             self.db.mutate_task_action_state("learning:tick", lambda old: {**old, "until": now.isoformat()}
@@ -1192,6 +1197,10 @@ class LearningCalendar:
         for task in tasks:
             state = self.get(task["id"])
             if not state:
+                continue
+            if state.get('pending_reschedule'):
+                # Preserve the scheduled recovery entry point until the owner
+                # reconciles the uncertain Calendar mutation explicitly.
                 continue
             if state.get('reset_remaining_sessions'):
                 from .study_reset import advance_sessions

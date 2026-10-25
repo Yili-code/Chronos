@@ -1495,6 +1495,7 @@ def test_booked_edit_bypasses_other_proposal_and_preserves_progress(setup):
     other = planner.db.create_task('Other proposal', None, None, NOW)
     planner.update(other['id'], lambda old: {'status': 'proposed', 'token': 'other'})
     event = {'id': 'existing', 'etag': 'v1', '_calendar_id': planner.settings.calendar_id,
+             'creator': {'email': planner.settings.calendar_account}, 'organizer': {'self': True},
              'start': {'dateTime': state['start']}, 'end': {'dateTime': state['end']},
              'extendedProperties': {'private': {'chronosTask': str(task['id']), 'chronosToken': 'booked'}}}
     calendar.event.return_value = event
@@ -1502,6 +1503,12 @@ def test_booked_edit_bypasses_other_proposal_and_preserves_progress(setup):
     planner.ai = SimpleNamespace(parse_schedule_edit=AsyncMock(return_value=SimpleNamespace(
         actionable=True, timing='exact', start='2026-10-19T14:30:00+08:00', minutes=30,
         progress_note='Partly completed')))
+    async def move(event_id, body, etag):
+        assert event_id == event['id'] and etag == event['etag']
+        event.update(body)
+        event['etag'] = 'v2'
+        return event
+    calendar.move_event.side_effect = move
     reply = asyncio.run(planner.revise(task['id'], 'booked', '今天兩點半 已完成部分', NOW))
     assert 'updated' in reply
     assert planner.get(task['id'])['progress_note'] == 'Partly completed'
@@ -1529,6 +1536,7 @@ def test_booked_edit_recovers_uncertain_calendar_write(setup):
              'minutes': 60, 'snapshot': task_fields(task)}
     planner.update(task['id'], lambda old: state)
     event = {'id': 'existing', 'etag': 'v1', '_calendar_id': planner.settings.calendar_id,
+             'creator': {'email': planner.settings.calendar_account}, 'organizer': {'self': True},
              'start': {'dateTime': state['start']}, 'end': {'dateTime': state['end']},
              'extendedProperties': {'private': {'chronosTask': str(task['id']), 'chronosToken': 'booked'}}}
     calendar.event.return_value = event

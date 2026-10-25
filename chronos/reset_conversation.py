@@ -94,7 +94,7 @@ async def prepare(planner,chat_id,text,update_id,now=None,request_date=None):
     pending_scope=scope_question(pending,now)
     choice=type_answer(text) if pending_scope else None
     explicit=study_alias(text) or broad_request(text) or study_reset.looks_reset(text)
-    bulk=explicit or bulk_language(text) or choice is not None or study_reset.command_args(text) is not None or study_reset.pending_reply(state,text)
+    bulk=explicit or typed_request(text) is not None or choice is not None or study_reset.command_args(text) is not None or study_reset.pending_reply(state,text)
     # Telegram retries retain the original message timestamp. Never turn an old failed delivery into a new bulk write.
     if request_date is not None and now.timestamp()-request_date>600 and (bulk or waiting(text) and state.get('status') in study_reset.ACTIVE|{'failed','question'}):
         retire_unstarted(db,now)
