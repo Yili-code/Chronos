@@ -650,6 +650,17 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
     if settings.telegram_chat_id and chat_id != settings.telegram_chat_id:
         raise HTTPException(status_code=403, detail="Unauthorized chat")
     update_id = update.update_id
+    from . import study_reset
+    reset_state = db.get_task_action_state(study_reset.KEY)
+    if (update.message and settings.enable_learning_calendar and
+            (study_reset.looks_reset(source_message.text or '') or
+             study_reset.pending_reply(reset_state, source_message.text or ''))):
+        receipt = db.get_update(update_id)
+        if receipt is None:
+            reply = await study_reset.run(learning_calendar(), chat_id, source_message.text, update_id)
+            receipt = db.process_update(update_id, lambda: reply)
+        await deliver_learning_reply(chat_id, update_id, receipt)
+        return {'ok': True}
     if update.callback_query and update.callback_query.data == 'assignments:refresh':
         receipt = db.get_update(update_id)
         if receipt is None:
