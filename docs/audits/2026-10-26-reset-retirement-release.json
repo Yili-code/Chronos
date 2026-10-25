@@ -1,0 +1,21 @@
+{
+  "sha": "27be4e07a29b582583b721a53c26f50c09f271b8",
+  "revision": "chronos-reset-fix-27be4e0",
+  "traffic_percent": 100,
+  "rollback": "chronos-reliability-e7d1e88",
+  "ci_run": 40211507667,
+  "readiness": {
+    "status": "ready",
+    "mode": "public",
+    "database": "firestore",
+    "release": "27be4e07a29b582583b721a53c26f50c09f271b8"
+  },
+  "status": {
+    "readiness": "ready",
+    "release": "27be4e07a29b582583b721a53c26f50c09f271b8",
+    "telegram_webhook": "configured",
+    "learning_calendar": "configured",
+    "study": "configured",
+    "gmail": "disabled"
+  }
+}
