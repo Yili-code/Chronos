@@ -260,7 +260,7 @@ def card(state):
 
 
 async def preview(planner, chat_id, instruction, update_id, now=None):
-    from .calendar_replan import key
+    from .calendar_replan import key, revoke_pending
     now = now or datetime.now(planner.settings.tz)
     old = planner.db.get_task_action_state(key(chat_id)) or {}
     if old.get('status') in {'creating', 'paused'}:
@@ -268,6 +268,8 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
     token = sha256(f'ordered:{chat_id}:{update_id}'.encode()).hexdigest()[:32]
     if old.get('token') == token:
         return question_reply(old['question']) if old.get('status') == 'clarifying' else card(old)
+    if not revoke_pending(planner.db, chat_id, old):
+        return 'The previous review changed. Check its current result before requesting a replacement.'
     prefs = read_preferences(planner.db, chat_id)
     previous = ({**old['parsed'], 'candidates': old.get('candidates',{}), 'original_instruction': old.get('original_instruction','')}
         if explicit_group(instruction,prefix=True) is None and (has_clarification(old) or
@@ -556,6 +558,8 @@ async def callback(planner, chat_id, message_id, token, action, now=None):
             return old
         if old.get('status') in {'done','cancelled','expired'}:
             return old
+        if old.get('status') == 'editing' and action == 'allow':
+            return old  # Never re-authorize the old arrangement from its button.
         if old.get('status') == 'creating' and old.get('lease_until','') > now.isoformat():
             return old
         recovering = old.get('status') in {'creating','paused'}
