@@ -365,7 +365,10 @@ def test_parser_requests_validated_schema_and_supplies_owner_constraints(setup, 
     parsed = asyncio.run(ai.parse_study_reset(INPUTS[0], [], [], {'constraints': {}}, NOW))
     assert parsed == output
     args = generate.call_args.args
-    assert args[2] == reset.ResetOutput.model_json_schema() and args[3] is reset.ResetOutput
+    schema = reset.ResetOutput.model_json_schema()
+    for name in ('tasks', 'dependencies', 'exams'):
+        del schema['properties'][name]['maxItems']
+    assert args[2] == schema and args[3] is reset.ResetOutput
     assert 'Exam events remain FIXED' in args[0]
 
 
