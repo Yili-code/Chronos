@@ -448,6 +448,8 @@ async def execute(planner, state, now, lease, deadline):
             raise CalendarError('A fixed event changed. Inspect its timing before rebuilding.')
     for session in sessions:
         actual = await planner.calendar.event(session['event_id'])
+        if actual is None and session['event_id'] in state['inserted']:
+            raise CalendarError('A previously verified replacement event was removed. Inspect Calendar before continuing the saved rebuild.')
         if actual is not None and not matches_session(actual, session, state, cfg):
             raise CalendarError('A replacement event changed or has a conflicting identity. Rebuilding paused.')
     from .learning_calendar import class_windows

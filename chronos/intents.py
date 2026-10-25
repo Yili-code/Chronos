@@ -311,6 +311,14 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
                         return reply[0]
                     return app.message_bundle({"text": reply[0], "planning_requested": True})
             elif intent.action == "plan_edit":
+                from .temporal_constraints import literal_weekday_conflict
+                conflict = literal_weekday_conflict(text, now)
+                if conflict:
+                    return clarify(conflict, ids)
+                # Booked edits perform Calendar writes during preparation. A
+                # classifier result must still refer to the task it observed.
+                if app.edit_conflict(app.tasks.list_open(), selected):
+                    return lambda: "任務已變更，請重新確認要做的操作。沒有調整行程。"
                 action = await app.prepare_message(f"/planedit {task_id} {instruction}", update_id=update_id)
             elif intent.minutes is None or intent.outcome is None:
                 return clarify("這次花了幾分鐘？完成、部分完成，還是略過？", ids)

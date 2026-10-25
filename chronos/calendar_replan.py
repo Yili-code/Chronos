@@ -9,10 +9,21 @@ from .google_calendar import CalendarError
 from .learning_calendar import find_slot, overlaps
 from .study_reflow import bounds, movable, apply, reconcile, ReflowReviewError
 from .task_actions import task_fields
+from .temporal_constraints import literal_weekday_conflict
 
 
 def key(chat_id):
     return f'replan:chat:{chat_id}'
+
+
+def revoke_pending(db, chat_id, previous):
+    """New constraints revoke the old approval before any external parsing."""
+    if not previous or previous.get('status') != 'pending':
+        return True
+    current = db.mutate_task_action_state(key(chat_id), lambda old:
+        {**old, 'status': 'editing'} if old and old.get('token') == previous['token']
+        and old.get('status') == 'pending' else old)
+    return bool(current and current.get('token') == previous['token'] and current.get('status') == 'editing')
 
 
 def card(state):
@@ -107,6 +118,11 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
         return 'A calendar change needs recovery. Use Allow on its existing card before replanning.'
     if previous and previous.get('token') == token:
         return card(previous)
+    if not revoke_pending(db, chat_id, previous):
+        return 'The previous review changed. Check its current result before requesting a replacement.'
+    conflict = literal_weekday_conflict(instruction, now.astimezone(config.tz))
+    if conflict:
+        return conflict
     try:
         output = explicit_window(instruction, now) or await planner.ai.parse_replan(instruction, now,
             {k: previous[k] for k in ('start', 'end', 'destination_start')} if previous and previous.get('status') == 'editing' else None)
@@ -229,6 +245,8 @@ async def callback(planner, chat_id, message_id, token, action, now=None):
             return old
         if old['status'] not in {'pending', 'creating', 'editing'}:
             return old
+        if old['status'] == 'editing' and action == 'allow':
+            return old  # Edit revokes approval until a replacement preview exists.
         if old['status'] == 'creating' and action != 'allow':
             return old
         if old['status'] != 'creating' and old['expires_at'] <= now.isoformat():

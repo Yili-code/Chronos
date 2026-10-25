@@ -5,6 +5,7 @@ from contextvars import ContextVar
 from datetime import datetime
 from dataclasses import replace
 from pathlib import Path
+from zoneinfo import ZoneInfo
 from typing import Callable, Iterator
 
 from .course_tags import assignment_project
@@ -152,8 +153,9 @@ class Database(TaskActions):
             )
             return state
 
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, *, tz=None):
         self.path = path
+        self.tz = tz or ZoneInfo('Asia/Taipei')
         self._transaction: ContextVar[sqlite3.Connection | None] = ContextVar("transaction", default=None)
 
     def initialize(self) -> None:
@@ -358,7 +360,7 @@ class Database(TaskActions):
             excluded = {row['task_id'] for row in connection.execute(
                 "SELECT task_id, record_json FROM assignments")
                 if json.loads(row['record_json']).get('course_id') not in TRACKED_COURSES}
-        return sorted((self._task_data(row) for row in rows if row['id'] not in excluded), key=task_sort_key)
+        return sorted((self._task_data(row) for row in rows if row['id'] not in excluded), key=lambda task: task_sort_key(task, self.tz))
 
     def create_assignment(self, assignment: Assignment) -> dict:
         """Persist source identity and its ordinary task together, exactly once."""
@@ -720,5 +722,6 @@ def create_database(settings):
             project_id=settings.firestore_project_id or None,
             database_id=settings.firestore_database,
             collection_prefix=settings.firestore_collection_prefix,
+            tz=settings.tz,
         )
-    return Database(settings.database_path)
+    return Database(settings.database_path, tz=settings.tz)

@@ -1,5 +1,6 @@
 """Explicit owner edits of existing study bookings, independent of proposal turns."""
 from datetime import datetime, timedelta
+from hashlib import sha256
 import re
 from uuid import uuid4
 
@@ -7,9 +8,33 @@ from .ai import AIError
 from .google_calendar import CalendarError
 from .study_reflow import bounds
 from .task_actions import task_fields
+from .temporal_constraints import literal_weekday_conflict
+from .calendar_ownership import owned_single_event
 
 
-async def reschedule(planner, task_id, token, instruction, now):
+def verified_move(event, event_id, task_id, token, pending, cfg):
+    props = (event or {}).get('extendedProperties', {}).get('private', {})
+    try:
+        clocks = [datetime.fromisoformat(event[k]['dateTime'].replace('Z', '+00:00')) for k in ('start', 'end')]
+        return bool(event.get('id') == event_id and owned_single_event(event, cfg)
+                    and all(value.utcoffset() is not None for value in clocks)
+                    and props.get('chronosTask') == str(task_id) and props.get('chronosToken') == token
+                    and props.get('chronosReschedule') == pending['marker']
+                    and tuple(value.astimezone(cfg.tz) for value in clocks) == tuple(datetime.fromisoformat(pending[k]) for k in ('start', 'end')))
+    except (KeyError, ValueError, TypeError):
+        return False
+
+
+def receipt_key(update_id):
+    return f'learning:edit-receipt:{update_id}'
+
+
+def success_reply(pending):
+    return f"Work block updated\n{pending['start']} · {pending['minutes']} minutes" + (
+        '\n' + pending['progress_note'] if pending['progress_note'] else '')
+
+
+async def reschedule(planner, task_id, token, instruction, now, *, update_id=None):
     from .learning_calendar import find_slot
     state = planner.get(task_id)
     task = next((t for t in planner.db.list_open_tasks() if t['id'] == task_id), None)
@@ -19,21 +44,28 @@ async def reschedule(planner, task_id, token, instruction, now):
     event = await planner.calendar.event(state['event_id'])
     props = (event or {}).get('extendedProperties', {}).get('private', {})
     if (not event or event.get('status') == 'cancelled' or props.get('chronosTask') != str(task_id)
-            or props.get('chronosToken') != token or not event.get('etag')):
-        raise CalendarError('The booked event is missing or its ownership cannot be verified. Nothing changed.')
+            or props.get('chronosToken') != token or not owned_single_event(event, planner.settings)):
+        raise CalendarError('The booked event is missing or no longer a verified owner-only single event. Check Calendar before retrying.')
     pending = state.get('pending_reschedule')
     if pending:
         if props.get('chronosReschedule') == pending['marker']:
-            if bounds(event, planner.settings.tz) != tuple(datetime.fromisoformat(pending[k]) for k in ('start', 'end')):
+            if not verified_move(event, state['event_id'], task_id, token, pending, planner.settings):
                 raise CalendarError('The moved event changed again. Check Calendar before retrying.')
-            record(planner, task_id, token, pending)
-            return 'Previous calendar change recovered. Review /plan, then send any further edit again.'
+            reply = 'Previous calendar change recovered. Review /plan, then send any further edit again.'
+            record(planner, task_id, token, pending, update_id=update_id, reply=reply)
+            return reply
         if event['etag'] != pending['etag']:
             raise CalendarError('The booked event changed during an uncertain edit. Check Calendar before retrying.')
+        if (pending.get('request_digest') != sha256(instruction.strip().encode()).hexdigest()
+                and instruction.strip().casefold() not in {'retry', '重試', '重试'}):
+            return 'An earlier calendar edit needs reconciliation. Repeat its original request or send retry to check it first; this new request has not been applied.'
     elif bounds(event, planner.settings.tz) != tuple(datetime.fromisoformat(state[k]) for k in ('start', 'end')):
         raise CalendarError('The event was edited outside Chronos. Check Calendar before changing it here.')
     window = None
     if not pending:
+        conflict = literal_weekday_conflict(instruction, now.astimezone(planner.settings.tz))
+        if conflict:
+            return conflict
         note = state.get('progress_note', '')
         match = re.fullmatch(r'\s*(\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2})\s+(\d{1,2}:\d{2})(?:\s+(\d{1,3}))?\s*', instruction)
         try:
@@ -67,6 +99,8 @@ async def reschedule(planner, task_id, token, instruction, now):
             return 'Could not interpret the time or duration. The booking is unchanged.'
         pending = {'marker': uuid4().hex, 'etag': event['etag'], 'start': start.isoformat(),
                    'end': end.isoformat(), 'minutes': minutes, 'progress_note': note,
+                   'request_digest': sha256(instruction.strip().encode()).hexdigest(),
+                   'update_id': update_id,
                    'snapshot': task_fields(task)}
     start, end = (datetime.fromisoformat(pending[k]) for k in ('start', 'end'))
     if pending['snapshot'] != task_fields(task):
@@ -92,24 +126,40 @@ async def reschedule(planner, task_id, token, instruction, now):
         pending.update(start=start.isoformat(), end=end.isoformat())
     if not slot or slot != (start, end):
         return 'That time conflicts with your calendar, deadline or study limits. The booking is unchanged.'
-    saved = planner.update(task_id, lambda old: {**old, 'pending_reschedule': pending}
-                           if old.get('token') == token and old['status'] == 'scheduled' else old)
-    if saved.get('pending_reschedule') != pending:
+    def reserve():
+        current_task = planner.db.get_task(task_id)
+        current = planner.get(task_id)
+        request = planner.db.get_task_action_state(receipt_key(update_id)) if update_id is not None else None
+        if (not current_task or current_task['status'] != 'open'
+                or task_fields(current_task) != pending['snapshot'] or current != state
+                or (request and (request.get('task_id') != task_id or request.get('token') != token))):
+            return False
+        planner.db._save_task_action_state(f'learning:task:{task_id}', {**current, 'pending_reschedule': pending})
+        if update_id is not None:
+            planner.db._save_task_action_state(receipt_key(update_id), {'task_id': task_id, 'token': token})
+        return True
+    if not planner.db._run_task_action(reserve):
         return 'The booking changed. Try again from /plan.'
     await planner.calendar.move_event(state['event_id'], {
         'start': {'dateTime': pending['start'], 'timeZone': planner.settings.timezone},
         'end': {'dateTime': pending['end'], 'timeZone': planner.settings.timezone},
         'extendedProperties': {**event.get('extendedProperties', {}),
                                'private': {**props, 'chronosReschedule': pending['marker']}}}, pending['etag'])
-    record(planner, task_id, token, pending)
-    return f"Work block updated\n{pending['start']} · {pending['minutes']} minutes" + (
-        '\n' + pending['progress_note'] if pending['progress_note'] else '')
+    verified = await planner.calendar.event(state['event_id'])
+    if not verified_move(verified, state['event_id'], task_id, token, pending, planner.settings):
+        raise CalendarError('The calendar change could not be verified. Check /plan and retry to reconcile; no success is recorded.')
+    reply = success_reply(pending)
+    record(planner, task_id, token, pending, update_id=update_id, reply=reply)
+    return reply
 
 
-def record(planner, task_id, token, pending):
+def record(planner, task_id, token, pending, *, update_id=None, reply=None):
     def save():
         state = planner.get(task_id)
-        if state.get('token') != token or state['status'] != 'scheduled':
+        task = planner.db.get_task(task_id)
+        if (not task or task['status'] != 'open' or task_fields(task) != pending['snapshot']
+                or state.get('token') != token or state['status'] != 'scheduled'
+                or state.get('pending_reschedule') != pending):
             raise CalendarError('Calendar moved, but the task changed. Reconciliation is required.')
         days = {state['start'][:10], pending['start'][:10]}
         buckets = {d: planner.db.get_task_action_state('learning:day:' + d) or {} for d in days}
@@ -120,4 +170,11 @@ def record(planner, task_id, token, pending):
         updated = {**state, **{k: pending[k] for k in ('start', 'end', 'minutes', 'progress_note')}}
         updated.pop('pending_reschedule', None)
         planner.db._save_task_action_state(f'learning:task:{task_id}', updated)
+        replies = {}
+        if pending.get('update_id') is not None:
+            replies[pending['update_id']] = success_reply(pending)
+        if update_id is not None:
+            replies[update_id] = reply or success_reply(pending)
+        for request_id, text in replies.items():
+            planner.db._save_task_action_state(receipt_key(request_id), {'reply': text})
     planner.db._run_task_action(save)

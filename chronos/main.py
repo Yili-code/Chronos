@@ -659,6 +659,26 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
     if settings.telegram_chat_id and chat_id != settings.telegram_chat_id:
         raise HTTPException(status_code=403, detail="Unauthorized chat")
     update_id = update.update_id
+    if update.message:
+        # Booked edits commit their verified result and acknowledgement together.
+        # Recover that reply before routing a retried update against newer state.
+        from .study_reschedule import receipt_key
+        applied_edit = db.get_task_action_state(receipt_key(update_id))
+        if applied_edit and db.get_update(update_id) is None:
+            if 'reply' in applied_edit:
+                reply = applied_edit['reply']
+            else:
+                # Binding was saved before PATCH. Resume its original target,
+                # never rerun a model against a potentially different task list.
+                try:
+                    reply = await learning_calendar().revise(applied_edit['task_id'], applied_edit['token'],
+                                                            'retry', update_id=update_id)
+                except CalendarError as error:
+                    reply = str(error)
+                lease = db.get_task_action_state('learning:tick') or {}
+                if lease.get('until', '') > datetime.now(settings.tz).isoformat():
+                    raise HTTPException(status_code=503, detail='The original edit is still running; retry this update later')
+            db.process_update(update_id, lambda: reply)
     from . import study_reset, event_reset
     reset_state = db.get_task_action_state(study_reset.KEY)
     event_command = event_reset.command_args(source_message.text or '') is not None
@@ -917,7 +937,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                     else:
                         reply = (learning_calendar().partial_reply(study_edit["task_id"], study_edit["token"], instruction)
                         if study_edit.get("mode") == "feedback" else
-                        await learning_calendar().revise(study_edit["task_id"], study_edit["token"], instruction))
+                        await learning_calendar().revise(study_edit["task_id"], study_edit["token"], instruction, update_id=update_id))
                 except CalendarError as error:
                     reply = str(error)
                 state = learning_calendar().get(study_edit["task_id"])
@@ -1442,7 +1462,7 @@ async def prepare_message(text: str, *, update_id: int | None = None, chat_id: i
         if not state:
             return lambda: "No execution plan matches that task. Use /plan."
         try:
-            reply = await learning_calendar().revise(int(plan_edit[1]), state["token"], plan_edit[2])
+            reply = await learning_calendar().revise(int(plan_edit[1]), state["token"], plan_edit[2], update_id=update_id)
         except CalendarError as error:
             reply = str(error)
         return lambda: reply
