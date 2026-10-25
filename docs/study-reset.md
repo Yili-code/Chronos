@@ -1,5 +1,7 @@
 # Rebuild unfinished study sessions
 
+Use `/studyreset` from the Telegram command menu. Optional scope can follow the command: `/studyreset 包含過期未完成的行程` or `/studyreset 只排未來`. `/studyreset help` explains the operation without changing anything. The command bypasses intent classification and retains the same planning, ambiguity and recovery protections as a natural-language request. A bare command asks about expired unfinished sessions when needed; a clear scope executes directly.
+
 An explicit bulk study reset deletes old managed study sessions and creates new events for every unfinished learning task, including tasks not yet scheduled. Task records and completion status are retained. Subjects may interleave; prerequisites must finish before their dependents start. Exams remain fixed deadlines.
 
 Clear requests execute under the owner's standing authorization, without an Allow card. Unclear task membership, exam matching, cyclic dependencies or historical scope produce one consolidated question before any Calendar mutation. In particular, expired sessions are never assumed completed. A question asking whether to include expired unfinished sessions accepts `包含` / `include past` or `只排未來` / `future only`. `取消` cancels a pending question without Calendar changes.

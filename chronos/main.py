@@ -77,7 +77,7 @@ HELP_TEXT = (
 )
 HELP_SECTIONS = {
     "tasks": "<b>任務</b>\n直接說「新增買牛奶」「報告做完了」，或回覆任務卡說「延到明天」。",
-    "study": "<b>計畫</b>\n直接說「幫我安排報告的時間」「今晚幫我空出來」。行程調整會先供你確認。",
+    "study": "<b>計畫</b>\n直接說「幫我安排報告的時間」「今晚幫我空出來」。一般行程調整會先供你確認。\n/studyreset 依單位順序重建全部未完成 study；範圍明確時直接執行。",
     "backward": "<b>期限規劃</b>\n直接說「幫我拆解下週五要交的報告，每天最多90分鐘」。確認後才建立任務與行程。",
     "assignments": "<b>作業</b>\n已追蹤作業會出現在 /task。不代寫或提交作業。",
 }
@@ -652,6 +652,15 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
     update_id = update.update_id
     from . import study_reset
     reset_state = db.get_task_action_state(study_reset.KEY)
+    reset_command = study_reset.command_args(source_message.text or '') is not None
+    if update.message and reset_command:
+        receipt = db.get_update(update_id)
+        if receipt is None:
+            reply = (await study_reset.command(learning_calendar(), chat_id, source_message.text, update_id)
+                     if settings.enable_learning_calendar else 'Learning Calendar is not enabled. Nothing changed.')
+            receipt = db.process_update(update_id, lambda: reply)
+        await deliver_learning_reply(chat_id, update_id, receipt)
+        return {'ok': True}
     if (update.message and settings.enable_learning_calendar and
             (study_reset.looks_reset(source_message.text or '') or
              study_reset.pending_reply(reset_state, source_message.text or ''))):
@@ -1345,6 +1354,14 @@ async def prepare_message(text: str, *, update_id: int | None = None, chat_id: i
         parsed = task_review.defer_inferred_course_tags(parsed, normalized)
         return prepare_created_tasks(parsed, chat_id=chat_id)
     normalized = re.sub(r"^(/[A-Za-z_]+)@[A-Za-z0-9_]+(?=\s|$)", r"\1", normalized)
+    from . import study_reset
+    if study_reset.command_args(normalized) is not None:
+        if chat_id is None or update_id is None:
+            return lambda: '請在已連接的 Telegram 對話使用 /studyreset。'
+        if not settings.enable_learning_calendar:
+            return lambda: 'Learning Calendar is not enabled. Nothing changed.'
+        reply = await study_reset.command(learning_calendar(), chat_id, normalized, update_id)
+        return lambda: reply
     assignment_query = re.fullmatch(r'/assignments(?:\s+([a-z-]+))?(?:\s+([1-9][0-9]{0,5}))?', normalized)
     if assignment_query:
         course, page = assignment_query[1], int(assignment_query[2] or 1)

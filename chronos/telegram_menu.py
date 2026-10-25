@@ -7,6 +7,7 @@ from .telegram import TelegramClient
 COMMANDS = {
     "task": "查看任務",
     "plan": "Review task plans",
+    "studyreset": "Rebuild unfinished study sessions in order",
     "today": "View today's calendar agenda",
     "tomorrow": "View tomorrow's calendar agenda",
     "free": "Find free calendar slots",

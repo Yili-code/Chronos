@@ -15,6 +15,23 @@ from .task_actions import task_fields
 
 KEY = 'learning:study-reset'
 ACTIVE = {'planning', 'applying', 'partial'}
+COMMAND_HELP = ('/studyreset — 刪除舊 study 行程，依前置順序重建所有未完成學習任務。\n'
+                '/studyreset 包含過期未完成的行程\n/studyreset 只排未來\n'
+                '範圍不明確時會先追問；明確時直接執行。')
+
+
+def command_args(text):
+    match = re.fullmatch(r'\s*/studyreset(?:@[A-Za-z0-9_]+)?(?:\s+([\s\S]*\S))?\s*', text, re.I)
+    return (match[1] or '') if match else None
+
+
+async def command(planner, chat_id, text, update_id, now=None):
+    args = command_args(text)
+    if args is None or args.casefold() in {'help', '?', '說明', '说明'}:
+        return COMMAND_HELP
+    return await run(planner, chat_id,
+        'Rebuild all unfinished study sessions in prerequisite order, including unbooked study tasks.\n' + args,
+        update_id, now)
 
 
 class StudyChoice(BaseModel):
