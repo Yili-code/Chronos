@@ -49,10 +49,12 @@ class GoogleCalendar:
             async with httpx.AsyncClient(timeout=25, transport=self.transport) as client:
                 r = await client.request(method, "https://www.googleapis.com/calendar/v3/" + path,
                     headers={"Authorization": "Bearer " + token, **({"If-Match": etag} if etag else {})}, json=body, params=params)
-            if missing and r.status_code == 404:
+            if missing and r.status_code in {404, 410}:
                 return None
             if not r.is_success:
                 raise CalendarError(f"Google Calendar request failed (HTTP {r.status_code}).")
+            if method == 'DELETE' and r.status_code == 204:
+                return {}
             return r.json()
         except (httpx.HTTPError, ValueError, TypeError):
             raise CalendarError("Google Calendar request failed; its outcome may need reconciliation.") from None
@@ -136,6 +138,28 @@ class GoogleCalendar:
 
     async def insert(self, body):
         return await self.request("POST", self.events_path(), body=body, params={"sendUpdates": "none"})
+
+    async def delete_event(self, event_id, etag):
+        if not etag:
+            raise CalendarError('Event version is missing; deletion paused.')
+        return await self.request('DELETE', self.events_path() + '/' + quote(event_id, safe=''),
+                                  params={'sendUpdates': 'none'}, etag=etag)
+
+    async def task_events(self, task_id):
+        """Find every managed session, including historical and distant bookings."""
+        events, page = [], None
+        for _ in range(4):
+            params = {'privateExtendedProperty': 'chronosTask=' + str(task_id),
+                      'singleEvents': 'true', 'maxResults': 250}
+            if page:
+                params['pageToken'] = page
+            data = await self.request('GET', self.events_path(), params=params)
+            events.extend({**e, '_calendar_id': self.settings.calendar_id}
+                          for e in data.get('items', []) if e.get('status') != 'cancelled')
+            page = data.get('nextPageToken')
+            if not page:
+                return events
+        raise CalendarError('Too many managed sessions; narrow the rebuild scope before making changes.')
 
     async def verify_owner(self):
         data = await self.request("GET", "calendars/primary")

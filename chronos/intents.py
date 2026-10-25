@@ -18,7 +18,7 @@ class Intent(BaseModel):
     action: Literal[
         "task_create", "task_edit", "task_complete", "task_list", "task_review", "undo", "clear_tasks", "event_create",
         "plan_list", "plan_request", "plan_edit", "plan_feedback", "backward", "backward_progress",
-        "sequence_replan", "study_replan", "replan", "agenda", "free", "info", "reminder_create", "reminder_list", "reminder_cancel",
+        "study_reset", "sequence_replan", "study_replan", "replan", "agenda", "free", "info", "reminder_create", "reminder_list", "reminder_cancel",
         "classday", "calendar_view", "calendar_edit", "ai_usage", "announcements", "announcement",
         "mail_next", "cancel", "clarify", "unsupported", "acknowledge", "preference", "assignment_query", "assignment_scan",
     ]
@@ -121,7 +121,17 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
         interpret_items = [{"id": entry['task_id'], "position": position, **task_fields(by_id[entry['task_id']])}
                            for position, entry in enumerate(agenda_context['entries'], 1)
                            if entry.get('task_id') in by_id]
-    from . import sequence_replan
+    from . import sequence_replan, study_reset
+    reset_pending = app.db.get_task_action_state(study_reset.KEY) if persistent else None
+    if (persistent and app.settings.enable_learning_calendar and
+            (study_reset.looks_reset(text) or study_reset.pending_reply(reset_pending, text))):
+        try:
+            result = await study_reset.run(app.learning_calendar(), chat_id, text, update_id, now)
+        except (AIError, CalendarError, ValueError) as error:
+            result = 'Study rebuild paused.\n' + escape(str(error))
+        return lambda: result
+    if reset_pending and reset_pending.get('status') == 'question':
+        context['study_reset_question'] = {k: reset_pending.get(k) for k in ('instruction', 'question')}
     ordered_pending = app.db.get_task_action_state(app.calendar_replan.key(chat_id)) if persistent else None
     if sequence_replan.has_clarification(ordered_pending):
         context['ordered_sequence_question'] = {k:ordered_pending.get(k) for k in ('parsed','question','candidates')}
@@ -324,6 +334,13 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
             parts = ([empty_named_query(intent.agenda_keywords, start, end)] if intent.agenda_keywords and not events
                      else render_window_agenda(events, start, end, app.settings.tz, db=app.db))
             result = app.message_bundle(*({"text": part, "parse_mode": "HTML"} for part in parts))
+            action = lambda: result
+        elif intent.action == "study_reset":
+            if not persistent or not app.settings.enable_learning_calendar:
+                return lambda: 'Learning Calendar is not enabled. Nothing changed.'
+            result = await study_reset.run(app.learning_calendar(), chat_id,
+                (pending['instruction'] + '\nOwner clarification: ' + text) if pending and pending.get('action') == 'study_reset' else text,
+                update_id, now)
             action = lambda: result
         elif intent.action == "sequence_replan":
             if not persistent or not app.settings.enable_learning_calendar:

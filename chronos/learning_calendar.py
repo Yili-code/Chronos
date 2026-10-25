@@ -1179,6 +1179,10 @@ class LearningCalendar:
                 if old["claim"] == claim else old)
 
     async def _tick(self, now, *, force_proposal=False):
+        from .study_reset import KEY, ACTIVE
+        rebuild = self.db.get_task_action_state(KEY) or {}
+        if rebuild.get('status') in ACTIVE:
+            return {'waiting_for': 'study rebuild reconciliation'}
         self.sync_queue()
         await self.retire_cards()
         tasks = self.db.list_open_tasks()
@@ -1187,6 +1191,13 @@ class LearningCalendar:
             state = self.get(task["id"])
             if not state:
                 continue
+            if state.get('reset_remaining_sessions'):
+                from .study_reset import advance_sessions
+                while state.get('reset_remaining_sessions') and state.get('status') == 'scheduled' and state['end'] <= now.isoformat():
+                    revised = await advance_sessions(self, task, state, now)
+                    if revised == state:
+                        break
+                    state = revised
             if state["status"] == "creating":
                 await self.book(task, state, now)
                 from .automatic_planning import receipt
