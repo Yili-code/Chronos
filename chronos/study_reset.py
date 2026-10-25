@@ -238,7 +238,7 @@ def result(state):
             for message in reply['messages']:
                 message['event_reset_result'] = True
         return reply
-    retry = '/studyreset' if state.get('event_type', 'study') == 'study' else '/eventreset ' + state['event_type']
+    retry = '重排所有讀書行程' if state.get('event_type', 'study') == 'study' else '重排所有 ' + state['event_type'] + ' 活動'
     return (label + ' 重建暫停；已確認刪除 ' + str(len(state.get('deleted', []))) +
             ' 個舊行程、建立 ' + str(len(state.get('inserted', []))) +
             ' 個新時段。請輸入 ' + escape(retry) + ' 恢復核對。\n' + escape(state.get('error', '')))
@@ -253,7 +253,7 @@ async def run(planner, chat_id, instruction, update_id, now=None):
         return '先完成現有 Calendar 操作的恢復核對，再重建 study；本次尚未變更行程。'
     prior = db.get_task_action_state(KEY)
     if prior and prior.get('status') in ACTIVE and prior.get('event_type', 'study') != 'study':
-        return '另一類型的重建尚未結束，請先使用 /eventreset ' + escape(prior['event_type']) + ' 恢復核對。'
+        return '另一類型的重建尚未結束，請先說「重排所有 ' + escape(prior['event_type']) + ' 活動」恢復核對。'
     token = sha256(f'study-reset:{chat_id}:{update_id}'.encode()).hexdigest()[:32]
     if prior and prior.get('chat_id') != chat_id and prior.get('status') in ACTIVE | {'question'}:
         return 'Another study rebuild needs resolution first.'
@@ -314,7 +314,7 @@ async def run(planner, chat_id, instruction, update_id, now=None):
             removed, historical = [], False
             for i in tasks:
                 old = planner.get(i) or {}
-                if old.get('status') in {'creating', 'backward_managed', 'reset_pending'} or str(old.get('delivery', '')).endswith(('_uncertain', '_sending')):
+                if old.get('pending_reschedule') or old.get('status') in {'creating', 'backward_managed', 'reset_pending'} or str(old.get('delivery', '')).endswith(('_uncertain', '_sending')):
                     raise ValueError('A selected task has an unresolved Calendar operation. Resolve it before rebuilding.')
                 events = await planner.calendar.task_events(i)
                 if old.get('event_id') and old.get('status') in {'scheduled', 'awaiting_feedback'} and old['event_id'] not in {e['id'] for e in events}:

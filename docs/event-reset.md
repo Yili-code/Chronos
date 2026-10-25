@@ -1,13 +1,15 @@
 # Rebuild events by type
 
-Use `/eventreset <type> [constraints]`. The category is required; an empty command or `/eventreset help` shows usage and makes no changes. It never defaults to every category.
+Specify the category and constraints in natural language. `/eventreset` and its menu entry have been removed; old command messages receive a retirement notice and never execute a rebuild. Categories remain supported as data. A request without a category asks a plain-language question instead of defaulting to every category.
 
 Examples:
 
-- `/eventreset study`
-- `/eventreset meeting 只排未來`
-- `/eventreset workout 明天下午`
-- `/eventreset work 包含過期未完成的行程`
+- 重排所有讀書行程
+- 重排所有會議，只排未來
+- 重新安排所有健身活動到明天下午
+- 重排所有工作行程，包含過期未完成的行程
+
+After a category question, `study reset`, `study` or `讀書` selects study while retaining the original request. Waiting/status messages report the saved stage without starting another rebuild. New broad questions retain their non-executable scope for two hours; `取消` cancels the question. The older `/studyreset` remains compatible but is not advertised in the menu.
 
 Built-in event labels include exam, contest, meeting, social and other. Custom labels such as workout or work are also accepted as a single word, with hyphens/underscores allowed. Chinese aliases include 學習, 會議 and 健身. This is Chronos's activity category, not Google's special Calendar `eventType` field. Explicit category metadata takes precedence; untyped/other events and open tasks can be classified from their meaning, with a question when unclear.
 
@@ -19,4 +21,6 @@ The new schedule defaults to the next 30 days. The planner reads the surrounding
 
 Shared, recurring, foreign-owned, all-day, currently running, non-whole-minute events or events with attachments/conference data cannot be silently deleted/recreated. Missing/uncertain task or booking links stop the operation. The existing durable executor saves the complete feasible plan before deletion, checks ETags and fresh constraints, reconciles deterministic replacement IDs after unknown outcomes, and pauses the background planner during incomplete operations. This is not an atomic transaction across Calendar and the database; partial progress is reported and retained. Long receipts paginate and retry only pages not recorded delivered.
 
-Tests use isolated stores and Calendar/Telegram substitutes. They do not establish universal model classification accuracy or live Calendar deletion/recreation correctness.
+Telegram retries retain the original message time. Bulk-reset messages older than ten minutes receive an expired-request reply rather than becoming fresh Calendar writes after deployment. A planning-only journal may be retired only when its exclusive lease has ended and it contains no execution plan or external progress. Applying/partial journals remain protected. Provider failures produce replies rather than an uncaught operation-label KeyError.
+
+Tests cross the real shared AI transport with isolated HTTP substitutes, in addition to isolated stores and Calendar/Telegram substitutes. They do not establish universal model classification accuracy or live Calendar deletion/recreation correctness.

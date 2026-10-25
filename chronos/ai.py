@@ -368,6 +368,7 @@ class ExternalAI:
             "event_reset rebuilds ALL events/tasks of one specified activity category (reset_type), including standalone Calendar events. "
             "Examples: 重排所有會議 -> event_reset reset_type meeting; 把所有健身活動重新排 -> event_reset reset_type workout. "
             "Category is data, may be custom, and must never default to all categories. Ask when the type is missing. "
+            "Clarification questions must use everyday activity names, never internal action identifiers such as study_reset or event_reset. "
             "study_reset deletes old study Calendar sessions and rebuilds ALL unfinished learning tasks, including unscheduled tasks, "
             "in prerequisite order. Use it for clear bulk reset/rebuild requests, including Chinese and English paraphrases. "
             "Examples: 移除所有 study 行程並依照各個單位先後順序進行重排; 全部讀書行程打掉重排; "
@@ -867,6 +868,8 @@ class ExternalAI:
             "schedule edit": "No execution plan was changed",
             "calendar replan": "No Calendar arrangement was changed",
             "study revision": "No study arrangement was changed",
+            "study reset": "No study arrangement was changed",
+            "event reset": "No Calendar arrangement was changed",
             "sequence replan": "No ordered arrangement was changed",
             "calendar event title": "No Calendar event was created",
             "backward_plan": "No backward plan was created",
@@ -875,7 +878,7 @@ class ExternalAI:
             "mail summary": "No mail summary was created",
             "task metadata review": "No task or tag was changed",
             "nightly planning": "No nightly execution plan was created",
-        }[subject]
+        }.get(subject, "Nothing was changed")
         if not configured_keys(config):
             raise AIError("The AI service is not configured. Contact the service owner.")
         url = f"{config.gemini_api_base.rstrip('/')}/models/{config.gemini_model}:generateContent"

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 import httpx
 
-from chronos import event_reset as reset, study_reset as core, main
+from chronos import event_reset as reset, study_reset as core, main, reset_conversation
 from chronos.google_calendar import CalendarError
 from chronos.tasks import TaskService
 from test_learning_calendar import setup, NOW
@@ -163,20 +163,20 @@ def test_generic_rebuild_includes_unbooked_tasks_without_touching_study(setup):
 @pytest.mark.parametrize('text',['/eventreset','/eventreset help','/eventreset all'])
 def test_missing_help_and_wildcard_types_never_execute(setup,text):
     planner,events,controls=initialize(setup)
-    assert asyncio.run(reset.command(planner,123,text,1,NOW))
+    assert asyncio.run(main.prepare_message(text,update_id=1,chat_id=123))()==reset_conversation.REMOVED
     planner.ai.parse_event_reset.assert_not_awaited()
     planner.calendar.delete_event.assert_not_awaited()
 
 
 @pytest.mark.parametrize('text',['/eventreset meeting','/eventreset@ChronosBot workout 只排未來'])
-def test_generic_command_is_direct_and_category_is_data(store,monkeypatch,text):
+def test_removed_generic_command_never_rebuilds_or_creates_tasks(store,monkeypatch,text):
     monkeypatch.setattr(main.settings,'enable_learning_calendar',True)
     execute=AsyncMock(return_value='rebuilt')
     monkeypatch.setattr(reset,'run',execute)
     classifier=classify(monkeypatch,action='unsupported')
-    assert run(text)['reply']=='rebuilt'
-    execute.assert_awaited_once()
-    assert execute.call_args.args[2] in {'meeting','workout'}
+    assert run(text)['reply']==reset_conversation.REMOVED
+    execute.assert_not_awaited()
+    assert not store.list_open_tasks()
     classifier.assert_not_awaited()
 
 
@@ -184,7 +184,7 @@ def test_study_type_preserves_existing_service_and_alias(setup,monkeypatch):
     planner,events,controls=initialize(setup)
     old=AsyncMock(return_value='study result')
     monkeypatch.setattr(core,'run',old)
-    assert asyncio.run(reset.command(planner,123,'/eventreset study',1,NOW))=='study result'
+    assert asyncio.run(reset.run(planner,123,'study','rebuild all study',1,NOW))=='study result'
     assert asyncio.run(core.command(planner,123,'/studyreset',2,NOW))=='study result'
     assert old.await_count==2
 
@@ -251,7 +251,8 @@ def test_unselected_event_can_anchor_dependency_without_moving_it(setup,directio
 
 @pytest.mark.parametrize('historical',[False,True])
 def test_real_webhook_category_reset_replay_and_short_scope_answer(setup,monkeypatch,historical):
-    from chronos import calendar_replan
+    from chronos import calendar_replan, intents
+    from chronos.intents import Intent
     planner,events,controls=initialize(setup,'workout',past=historical)
     if historical:
         controls['include_past']=None
@@ -260,15 +261,19 @@ def test_real_webhook_category_reset_replay_and_short_scope_answer(setup,monkeyp
         def now(cls,tz=None):
             return NOW.astimezone(tz)
     monkeypatch.setattr(reset,'datetime',Clock)
+    monkeypatch.setattr(reset_conversation,'datetime',Clock)
+    monkeypatch.setattr(intents,'datetime',Clock)
     monkeypatch.setattr(main,'settings',planner.settings)
     monkeypatch.setattr(main,'db',planner.db)
     monkeypatch.setattr(main,'tasks',TaskService(planner.db,planner.settings.tz))
     monkeypatch.setattr(main,'learning_calendar',lambda:planner)
     monkeypatch.setattr(main,'telegram',planner.telegram)
+    monkeypatch.setattr(main,'ai',planner.ai)
+    planner.ai.classify_intent.return_value=Intent(action='event_reset',reset_type='workout')
     planner.db.mutate_task_action_state(calendar_replan.key(123),lambda old:{'status':'editing','ordered_sequence':True,'expires_at':'2099-01-01T00:00:00+08:00'})
     async def send():
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app),base_url='http://test') as client:
-            message={'message_id':1,'chat':{'id':123},'text':'/eventreset@ChronosBot workout'}
+            message={'message_id':1,'chat':{'id':123},'text':'重排所有健身活動'}
             assert (await client.post('/telegram/webhook',json={'update_id':1,'message':message})).status_code==200
             if historical:
                 assert 'old0' in events and planner.calendar.insert.await_count==0

@@ -77,7 +77,7 @@ HELP_TEXT = (
 )
 HELP_SECTIONS = {
     "tasks": "<b>任務</b>\n直接說「新增買牛奶」「報告做完了」，或回覆任務卡說「延到明天」。",
-    "study": "<b>計畫</b>\n/eventreset &lt;type&gt; 重建指定類型，例如 study、meeting。範圍明確時直接執行；/studyreset 仍可用。",
+    "study": "<b>計畫</b>\n直接說「重排所有讀書行程」或「重排所有會議」。未指定類型時會先追問，範圍明確時直接執行。",
     "backward": "<b>期限規劃</b>\n直接說「幫我拆解下週五要交的報告，每天最多90分鐘」。確認後才建立任務與行程。",
     "assignments": "<b>作業</b>\n已追蹤作業會出現在 /task。不代寫或提交作業。",
 }
@@ -451,6 +451,7 @@ class TelegramMessage(BaseModel):
     caption: str | None = None
     photo: list[TelegramPhoto] = Field(default_factory=list, max_length=20)
     message_id: int | None = Field(default=None, gt=0)
+    date: int | None = Field(default=None,ge=0)
     reply_to_message: TelegramReplyReference | None = None
 
 
@@ -659,6 +660,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
     if settings.telegram_chat_id and chat_id != settings.telegram_chat_id:
         raise HTTPException(status_code=403, detail="Unauthorized chat")
     update_id = update.update_id
+    request_context = {'request_date':source_message.date} if source_message.date is not None else {}
     if update.message:
         # Booked edits commit their verified result and acknowledgement together.
         # Recover that reply before routing a retried update against newer state.
@@ -679,15 +681,24 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                 if lease.get('until', '') > datetime.now(settings.tz).isoformat():
                     raise HTTPException(status_code=503, detail='The original edit is still running; retry this update later')
             db.process_update(update_id, lambda: reply)
-    from . import study_reset, event_reset
+    from . import study_reset, event_reset, reset_conversation
     reset_state = db.get_task_action_state(study_reset.KEY)
-    event_command = event_reset.command_args(source_message.text or '') is not None
-    reset_command = event_command or study_reset.command_args(source_message.text or '') is not None
+    if update.message and reset_conversation.candidate(source_message.text or ''):
+        receipt = db.get_update(update_id)
+        if receipt is None:
+            reply = (reset_conversation.REMOVED if reset_conversation.removed_command(source_message.text or '') else
+                     await reset_conversation.prepare(learning_calendar(),chat_id,source_message.text or '',update_id,request_date=source_message.date)
+                     if settings.enable_learning_calendar else None)
+            if reply is not None:
+                receipt = db.process_update(update_id,lambda:reset_conversation.receipt_reply(reply))
+        if receipt is not None and (receipt['delivered'] or any(m.get('reset_conversation') for m in receipt.get('messages',[]))):
+            await deliver_learning_reply(chat_id,update_id,receipt)
+            return {'ok':True}
+    reset_command = study_reset.command_args(source_message.text or '') is not None
     if update.message and reset_command:
         receipt = db.get_update(update_id)
         if receipt is None:
-            command_handler = event_reset.command if event_command else study_reset.command
-            reply = (await command_handler(learning_calendar(), chat_id, source_message.text, update_id)
+            reply = (await study_reset.command(learning_calendar(), chat_id, source_message.text, update_id)
                      if settings.enable_learning_calendar else 'Learning Calendar is not enabled. Nothing changed.')
             receipt = db.process_update(update_id, lambda: reply)
         await deliver_learning_reply(chat_id, update_id, receipt)
@@ -1131,7 +1142,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                 if re.match(r"^/edit(?:\s|$)", text, re.IGNORECASE):
                     action = await prepare_message(f"/edit #{bound_task} {instruction}", update_id=update_id)
                 else:
-                    action = await prepare_message(text, update_id=update_id, chat_id=chat_id, bound_task_id=bound_task)
+                    action = await prepare_message(text, update_id=update_id, chat_id=chat_id, bound_task_id=bound_task, **request_context)
             elif source_message.reply_to_message is not None and (agenda := db.get_task_action_state(
                     f'agenda:message:{chat_id}:{source_message.reply_to_message.message_id}')):
                 import sys
@@ -1149,7 +1160,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                     local_date=received_date,
                 ))
             else:
-                action = await prepare_message(text, update_id=update_id, chat_id=chat_id)
+                action = await prepare_message(text, update_id=update_id, chat_id=chat_id, **request_context)
             receipt = db.process_update(update_id, action)
     if update.message:
         bind_booking_request(db, chat_id, source_message.message_id, receipt)
@@ -1371,7 +1382,7 @@ async def handle_message(text: str) -> str:
 
 
 async def prepare_message(text: str, *, update_id: int | None = None, chat_id: int | None = None,
-                          bound_task_id: int | None = None, create_only: bool = False) -> Callable[[], str | dict]:
+                          bound_task_id: int | None = None, create_only: bool = False, request_date: int | None = None) -> Callable[[], str | dict]:
     """Resolve external input first; the returned action performs no async work."""
     normalized = text.strip()
     if re.match(r'^/coursehabit(?:@[A-Za-z0-9_]+)?(?:\s|$)', normalized):
@@ -1386,15 +1397,19 @@ async def prepare_message(text: str, *, update_id: int | None = None, chat_id: i
         parsed = task_review.defer_inferred_course_tags(parsed, normalized)
         return prepare_created_tasks(parsed, chat_id=chat_id)
     normalized = re.sub(r"^(/[A-Za-z_]+)@[A-Za-z0-9_]+(?=\s|$)", r"\1", normalized)
-    from . import study_reset, event_reset
-    generic_command = event_reset.command_args(normalized) is not None
-    if generic_command or study_reset.command_args(normalized) is not None:
+    from . import study_reset, reset_conversation
+    if reset_conversation.removed_command(normalized):
+        return lambda: reset_conversation.REMOVED
+    if chat_id is not None and update_id is not None and settings.enable_learning_calendar and reset_conversation.candidate(normalized):
+        reply = await reset_conversation.prepare(learning_calendar(),chat_id,normalized,update_id,request_date=request_date)
+        if reply is not None:
+            return lambda:reply
+    if study_reset.command_args(normalized) is not None:
         if chat_id is None or update_id is None:
             return lambda: '請在已連接的 Telegram 對話使用活動重建指令。'
         if not settings.enable_learning_calendar:
             return lambda: 'Learning Calendar is not enabled. Nothing changed.'
-        command_handler = event_reset.command if generic_command else study_reset.command
-        reply = await command_handler(learning_calendar(), chat_id, normalized, update_id)
+        reply = await study_reset.command(learning_calendar(), chat_id, normalized, update_id)
         return lambda: reply
     assignment_query = re.fullmatch(r'/assignments(?:\s+([a-z-]+))?(?:\s+([1-9][0-9]{0,5}))?', normalized)
     if assignment_query:
@@ -1408,7 +1423,7 @@ async def prepare_message(text: str, *, update_id: int | None = None, chat_id: i
         import sys
         from .intents import prepare
         return await prepare(sys.modules[__name__], normalized, update_id=update_id,
-                             chat_id=chat_id, bound_task_id=bound_task_id)
+                             chat_id=chat_id, bound_task_id=bound_task_id,**({'request_date':request_date} if request_date is not None else {}))
     if not normalized.startswith("/") and (re.fullmatch(
             r"(?:\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2})\s+\d{1,2}:\d{2}(?:\s+\d{1,3}(?:\s*(?:minutes|min|分鐘))?)?", normalized, re.IGNORECASE)
             or study_window(normalized, datetime.now(settings.tz), settings.learning_minutes)):
@@ -1455,7 +1470,7 @@ async def prepare_message(text: str, *, update_id: int | None = None, chat_id: i
         import sys
         from .intents import prepare
         return await prepare(sys.modules[__name__], normalized, update_id=update_id,
-                             chat_id=chat_id, bound_task_id=bound_task_id)
+                             chat_id=chat_id, bound_task_id=bound_task_id,**({'request_date':request_date} if request_date is not None else {}))
     plan_edit = re.fullmatch(r"/planedit\s+(\d+)\s+(.+)", normalized, re.DOTALL)
     if plan_edit:
         state = learning_calendar().get(int(plan_edit[1]))

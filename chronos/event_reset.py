@@ -15,18 +15,10 @@ from .google_calendar import CalendarError
 from .study_reflow import bounds
 from .task_actions import task_fields
 
-HELP = ('/eventreset <type> [條件] — 刪除該類型的舊行程並重建，其他類型保持原位。\n'
-        '/eventreset study\n/eventreset meeting 只排未來\n/eventreset workout 明天下午\n'
-        'type 必填，可用既有分類或自訂類型。/studyreset 仍可使用。\n'
-        '非 study 預設保留原時長；範圍不明確時先追問。')
 ALIASES = {'學習':'study','学习':'study','讀書':'study','读书':'study',
+           '工作':'work',
            '會議':'meeting','会议':'meeting','社交':'social','考試':'exam','考试':'exam',
            '競賽':'contest','竞赛':'contest','其他':'other','運動':'workout','运动':'workout','健身':'workout'}
-
-
-def command_args(text):
-    m = re.fullmatch(r'\s*/eventreset(?:@[A-Za-z0-9_]+)?(?:\s+([\s\S]*\S))?\s*', text, re.I)
-    return (m[1] or '') if m else None
 
 
 def normalize_type(value):
@@ -35,19 +27,6 @@ def normalize_type(value):
     if not re.fullmatch(r'[\w][\w-]{0,39}', value) or value in {'all','全部','所有'}:
         raise ValueError('請指定單一活動類型，例如 study、meeting 或 workout。')
     return value
-
-
-async def command(planner, chat_id, text, update_id, now=None):
-    args = command_args(text)
-    if not args or args.casefold() in {'help','?','說明','说明'}:
-        return HELP
-    event_type, *extra = args.split(maxsplit=1)
-    try:
-        event_type = normalize_type(event_type)
-    except ValueError as error:
-        return escape(str(error))
-    instruction = extra[0] if extra else ''
-    return await run(planner, chat_id, event_type, instruction, update_id, now)
 
 
 async def resume(planner, chat_id, text, update_id, now=None):
@@ -230,7 +209,7 @@ async def run(planner, chat_id, event_type, instruction, update_id, now=None):
             removed,snapshots,past=[],{},False
             for i,item in items.items():
                 old=planner.get(i) or {} if i>0 else {}
-                if old.get('status') in {'creating','backward_managed','reset_pending'} or str(old.get('delivery','')).endswith(('_uncertain','_sending')):
+                if old.get('pending_reschedule') or old.get('status') in {'creating','backward_managed','reset_pending'} or str(old.get('delivery','')).endswith(('_uncertain','_sending')):
                     raise ValueError('選取項目有尚待恢復的操作，請先完成核對。')
                 source=[item['_event']] if i<0 else await planner.calendar.task_events(i)
                 selected=[]

@@ -90,7 +90,7 @@ def explicit_event_minutes(text):
     return total if total == int(total) else -1
 
 
-async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None, agenda_context=None):
+async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None, agenda_context=None, request_date=None):
     """Run external interpretation before the caller's task/receipt transaction."""
     now = datetime.now(app.settings.tz)
     key = f"intent:clarify:{chat_id}"
@@ -126,6 +126,9 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
     reset_pending = app.db.get_task_action_state(study_reset.KEY) if persistent else None
     if (persistent and app.settings.enable_learning_calendar and
             (study_reset.looks_reset(text) or study_reset.pending_reply(reset_pending, text))):
+        if request_date is not None and now.timestamp()-request_date>600:
+            from .reset_conversation import EXPIRED
+            return lambda:EXPIRED
         try:
             handler = event_reset.resume if study_reset.pending_reply(reset_pending,text) else study_reset.run
             result = await handler(app.learning_calendar(), chat_id, text, update_id, now)
@@ -169,6 +172,9 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
         return lambda: "Understood, Sir."
 
     instruction = intent.instruction or text
+    if intent.action in {'study_reset','event_reset'} and request_date is not None and now.timestamp()-request_date>600:
+        from .reset_conversation import EXPIRED
+        return lambda:EXPIRED
     # Keep the owner's field choice across a clarification, outside model discretion.
     content_choice = bool(re.search(r"(?:修改|更改|改|更新).{0,6}(?:內容|内容)|\b(?:edit|change|update)\s+(?:the\s+)?content\b", text, re.I))
     field_answer = bool(re.fullmatch(r"\s*(?:(?:修改|更改|改|更新)(?:他|它|這個任務|这个任务)?的?(?:內容|内容)|(?:edit|change|update)\s+(?:the\s+)?content)[。.!！]?\s*", text, re.I))
