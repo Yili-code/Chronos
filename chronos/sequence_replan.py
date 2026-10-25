@@ -17,6 +17,21 @@ UNITS = {'chapter': r'chapters?|ch\.?|章', 'lecture': r'lectures?|講',
          'part': r'parts?|部分', 'unit': r'units?|單元', 'session': r'sessions?|節'}
 
 
+def explicit_group(text, *, prefix=False):
+    """Extract a complete bounded group, never time constraints or preferences."""
+    units = '|'.join(unit + 's?' for unit in UNITS)
+    pattern = (r'\s*(?:reschedule|replan|reorder)\s+(.{1,100}?)\s+(' + units
+        + r')\s+(\d{1,3})\s*(?:[-–—~]|to|through)\s*(\d{1,3})\s+in\s+(?:order|sequence)\b')
+    match = re.match(pattern,text,re.I) if prefix else re.fullmatch(pattern+r'\s*[.!]?\s*',text,re.I)
+    if not match:
+        return None
+    first, last = int(match[3]), int(match[4])
+    if not 1 <= first <= last <= 999 or last - first >= 20:
+        return None
+    return SequenceReplanOutput(actionable=True,scope=match[1].strip(),
+        unit=match[2].lower().removesuffix('s'),ordinals=list(range(first,last+1)))
+
+
 def looks_ordered(text):
     return bool(re.search(r'\b(?:reschedule|replan|reorder)\b|重排|重新安排|改排', text, re.I)
         and re.search(r'in\s+(?:order|sequence)|sequential|依序|按順序|按顺序', text, re.I)
@@ -124,7 +139,11 @@ def event_info(planner, event):
         elif (not current or current.get('event_id') != event.get('id') or current.get('token') != props.get('chronosToken')):
             issue = 'This event differs from the session currently tracked for the task. Please check /plan before moving it.'
             issue_code = 'stale_booking'
-        elif current.get('status') in {'creating', 'planning'} or (current.get('delivery') or '').endswith(('_uncertain', '_sending')):
+        elif current.get('status') in {'creating', 'planning'} or (
+            (current.get('delivery') or '').endswith(('_uncertain', '_sending')) and not
+            (current.get('status') == 'awaiting_feedback' and current.get('delivery') == 'feedback_uncertain')):
+            # Unknown feedback-message delivery is not an uncertain Calendar
+            # mutation. Active senders and booking uncertainty still block.
             issue = 'An earlier booking is still being checked. Please review /plan before requesting another change.'
     return {'task_id': task['id'] if task else None, 'task_snapshot': task_fields(task) if task else None,
             'task_status': task.get('status') if task else None, 'task_state': current,
@@ -251,9 +270,15 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
         return question_reply(old['question']) if old.get('status') == 'clarifying' else card(old)
     prefs = read_preferences(planner.db, chat_id)
     previous = ({**old['parsed'], 'candidates': old.get('candidates',{}), 'original_instruction': old.get('original_instruction','')}
-        if has_clarification(old) or (old.get('ordered_sequence') and old.get('status') == 'editing' and old.get('expires_at','') > now.isoformat()) else None)
+        if explicit_group(instruction,prefix=True) is None and (has_clarification(old) or
+            (old.get('ordered_sequence') and old.get('status') == 'editing' and old.get('expires_at','') > now.isoformat())) else None)
+    if previous and looks_ordered(instruction):
+        # Shorthand can retain the group, but extraction never resolves cached
+        # event candidates; discovery below owns that decision.
+        previous = {**previous, 'candidates': {}}
     selection_reply = bool(previous and has_clarification(old) and looks_choice_answer(instruction))
-    parsed = (SequenceReplanOutput.model_validate(old['parsed']) if selection_reply else
+    canonical = explicit_group(instruction) if not prefs else None
+    parsed = (canonical if canonical is not None else SequenceReplanOutput.model_validate(old['parsed']) if selection_reply else
               SequenceReplanOutput.model_validate(await planner.ai.parse_sequence_replan(instruction, now, prefs, previous)))
     if selection_reply:
         parsed.choices = {}
