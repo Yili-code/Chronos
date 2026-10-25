@@ -1,0 +1,23 @@
+{
+  "sha": "e7d1e88f1a60bfaa1aa80a64c7d8e3910fabda75",
+  "revision": "chronos-reliability-e7d1e88",
+  "traffic_percent": 100,
+  "rollback": "chronos-event-reset-6dad93d",
+  "ci_run": 40209019493,
+  "readiness": {
+    "status": "ready",
+    "mode": "public",
+    "database": "firestore",
+    "release": "e7d1e88f1a60bfaa1aa80a64c7d8e3910fabda75"
+  },
+  "health": {
+    "status": "ok"
+  },
+  "configuration_unchanged_except_release_sha": true,
+  "exact_source_synthetic_tests": "212 passed, 1 warning in 10.07s",
+  "authenticated_status": "unverified: local scheduler credential rejected",
+  "calendar_write_e2e": "not exercised",
+  "production_secret_values_read": false,
+  "evidence_reconstructed_by_independent_readback": true,
+  "verified_at": "2026-10-26T00:00:57+08:00"
+}
