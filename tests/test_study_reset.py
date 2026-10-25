@@ -319,7 +319,8 @@ def test_cancel_scope_question_keeps_original_bookings(setup):
     assert 'oldstudy' in events
 
 
-def test_webhook_rebuild_precedes_existing_edit_context_and_replay_is_idempotent(setup, monkeypatch):
+@pytest.mark.parametrize('text', [INPUTS[7], '/studyreset', '/studyreset@ChronosBot 包含過期未完成的行程'])
+def test_webhook_rebuild_precedes_existing_edit_context_and_replay_is_idempotent(setup, monkeypatch, text):
     planner, events, output, *_ = initialize(setup)
     from chronos import calendar_replan
     class Clock(reset.datetime):
@@ -336,7 +337,7 @@ def test_webhook_rebuild_precedes_existing_edit_context_and_replay_is_idempotent
         {'status': 'editing', 'ordered_sequence': True, 'expires_at': '2099-01-01T00:00:00+08:00'})
     async def replay():
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url='http://test') as client:
-            message = {'message_id': 1, 'chat': {'id': 123}, 'text': INPUTS[7]}
+            message = {'message_id': 1, 'chat': {'id': 123}, 'text': text}
             assert (await client.post('/telegram/webhook', json={'update_id': 1, 'message': message})).status_code == 200
             assert (await client.post('/telegram/webhook', json={'update_id': 1, 'message': message})).status_code == 200
             assert (await client.post('/telegram/webhook', json={'update_id': 2, 'edited_message': message})).status_code == 200
@@ -366,3 +367,48 @@ def test_parser_requests_validated_schema_and_supplies_owner_constraints(setup, 
     args = generate.call_args.args
     assert args[2] == reset.ResetOutput.model_json_schema() and args[3] is reset.ResetOutput
     assert 'Exam events remain FIXED' in args[0]
+
+
+@pytest.mark.parametrize('text,args', [
+    ('/studyreset', ''), ('/studyreset  ', ''), ('/studyreset@ChronosBot', ''),
+    ('/studyreset 包含過期未完成的行程', '包含過期未完成的行程'),
+    ('/studyreset@ChronosBot 只排未來', '只排未來'),
+    ('/studyresetting', None), ('說明 /studyreset', None),
+])
+def test_dedicated_command_has_exact_boundary_and_bot_mention(text, args):
+    assert reset.command_args(text) == args
+
+
+@pytest.mark.parametrize('text', ['/studyreset', '/studyreset@ChronosBot 只排未來'])
+def test_dedicated_command_routes_without_classification(store, monkeypatch, text):
+    monkeypatch.setattr(main.settings, 'enable_learning_calendar', True)
+    service = AsyncMock(return_value='reset result')
+    monkeypatch.setattr(reset, 'run', service)
+    classifier = classify(monkeypatch, action='unsupported')
+    assert run(text)['reply'] == 'reset result'
+    service.assert_awaited_once()
+    instruction = service.call_args.args[2]
+    assert 'Rebuild all unfinished study sessions' in instruction
+    if '只排未來' in text:
+        assert '只排未來' in instruction
+    classifier.assert_not_awaited()
+
+
+def test_dedicated_command_help_does_not_call_ai_or_change_calendar(setup):
+    planner, events, output, *_ = initialize(setup)
+    before = deepcopy(events)
+    assert asyncio.run(reset.command(planner, 123, '/studyreset help', 1, NOW)) == reset.COMMAND_HELP
+    assert events == before
+    planner.ai.parse_study_reset.assert_not_awaited()
+    planner.calendar.delete_event.assert_not_awaited()
+    planner.calendar.insert.assert_not_awaited()
+
+
+def test_dedicated_command_disabled_and_unbound_do_not_execute(store, monkeypatch):
+    monkeypatch.setattr(main.settings, 'enable_learning_calendar', False)
+    execute = AsyncMock()
+    monkeypatch.setattr(reset, 'run', execute)
+    assert 'not enabled' in run('/studyreset')['reply']
+    reply = asyncio.run(main.prepare_message('/studyreset'))()
+    assert 'Telegram' in reply
+    execute.assert_not_awaited()
