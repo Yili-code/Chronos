@@ -782,19 +782,22 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                 reply = "Calendar could not confirm the arrangement. Nothing further was changed. If you pressed Allow, tap it again to recover its result."
             except (AIError, ValueError):
                 reply = "The scheduling request could not be parsed. No new Calendar changes were made; please retry."
-            cancelled = db.get_task_action_state(calendar_replan.key(chat_id)) or {}
-            cancel_token = (replan_callback[2] if replan_callback and replan_callback[1] == 'cancel' else
-                            replan_session.get('token') if replan_edit and source_message.text in {'/cancel', '取消'} else None)
-            cancel_message_id = source_message.message_id if replan_callback else (replan_session or {}).get('message_id')
-            if (cancel_token and cancelled.get('token') == cancel_token and cancelled.get('status') == 'cancelled'
-                    and cancelled.get('message_id') == cancel_message_id):
-                reply = {'messages': [{'text': reply, 'cancelled_preview_ids': list(dict.fromkeys([
-                    *cancelled.get('preview_message_ids', []), cancel_message_id]))}]}
+            review = db.get_task_action_state(calendar_replan.key(chat_id)) or {}
+            review_action = (replan_callback[1] if replan_callback else
+                             'cancel' if replan_edit and source_message.text in {'/cancel', '取消'} else None)
+            review_token = replan_callback[2] if replan_callback else (replan_session or {}).get('token')
+            review_message_id = source_message.message_id if replan_callback else (replan_session or {}).get('message_id')
+            terminal = {'allow':'done','cancel':'cancelled'}.get(review_action)
+            if (terminal and review_token and review.get('token') == review_token and review.get('status') == terminal
+                    and review.get('message_id') == review_message_id):
+                reply = {'messages': [{'text': reply, 'resolved_preview_ids': list(dict.fromkeys([
+                    *review.get('preview_message_ids', []), review_message_id]))}]}
             receipt = db.process_update(update_id, lambda: reply)
         await deliver_learning_reply(chat_id, update_id, receipt)
         for message in receipt.get('messages', []):
-            if message.get('cancelled_preview_ids'):
-                await delete_telegram_messages(chat_id, *message['cancelled_preview_ids'])
+            cleanup_ids = message.get('resolved_preview_ids') or message.get('cancelled_preview_ids')
+            if cleanup_ids:
+                await delete_telegram_messages(chat_id, *cleanup_ids)
         if update.callback_query:
             await telegram.answer_callback_query(update.callback_query.id)
         return {"ok": True}
