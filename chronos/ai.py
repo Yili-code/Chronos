@@ -22,6 +22,14 @@ class AIError(Exception):
     """A user-safe external AI failure."""
 
 
+def reset_response_schema(output_model):
+    """Avoid Gemini's large-array grammar expansion; validate caps locally."""
+    schema = output_model.model_json_schema()
+    for name in ('tasks', 'items', 'dependencies', 'exams'):
+        schema['properties'].get(name, {}).pop('maxItems', None)
+    return schema
+
+
 def relative_date_reference(now):
     """Compute calendar anchors without asking the model to perform date arithmetic."""
     day = now.date()
@@ -606,7 +614,7 @@ class ExternalAI:
             "When actionable true, question must be null; otherwise ask the minimum necessary combined question.",
             json.dumps({'instruction': instruction, 'tasks': tasks, 'events': events, 'previous': context,
                         'now': now.isoformat(), 'timezone': self.settings.timezone}, ensure_ascii=False),
-            ResetOutput.model_json_schema(), ResetOutput, 'study reset')
+            reset_response_schema(ResetOutput), ResetOutput, 'study reset')
 
     async def parse_event_reset(self, event_type, instruction, items, context, now):
         from .event_reset import ResetOutput
@@ -635,7 +643,7 @@ class ExternalAI:
             "otherwise actionable true and question null.",
             json.dumps({'target_category':event_type,'instruction':instruction,'items':items,'context':context,
                         'now':now.isoformat(),'timezone':self.settings.timezone},ensure_ascii=False),
-            ResetOutput.model_json_schema(),ResetOutput,'event reset')
+            reset_response_schema(ResetOutput),ResetOutput,'event reset')
 
     async def parse_replan(self, instruction, now, previous=None):
         return await self._generate_output(
