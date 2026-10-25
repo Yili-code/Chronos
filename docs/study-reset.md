@@ -1,6 +1,6 @@
 # Rebuild unfinished study sessions
 
-Use `/eventreset study` from the Telegram command menu; [other categories](event-reset.md) are supported by the same parameterized entry point. `/studyreset` remains compatible. Optional scope can follow either command, such as `/eventreset study 包含過期未完成的行程` or `/studyreset 只排未來`. Help explains the operation without changing anything. The command bypasses intent classification and retains the same planning, ambiguity and recovery protections as a natural-language request. A bare study command asks about expired unfinished sessions when needed; a clear scope executes directly.
+Say 「重排所有讀書行程」 and add scope such as 「包含過期未完成的行程」 or 「只排未來」. [Other activity categories](event-reset.md) remain supported through natural language. `/eventreset` has been removed; `/studyreset` remains compatible. A category question accepts a short reply such as `study reset` without another intent-classification call. Unclear expired scope still asks before mutation; clear requests execute directly. Old Telegram retries do not silently become fresh Calendar writes after a fix.
 
 An explicit bulk study reset deletes old managed study sessions and creates new events for every unfinished learning task, including tasks not yet scheduled. Task records and completion status are retained. Subjects may interleave; prerequisites must finish before their dependents start. Exams remain fixed deadlines.
 

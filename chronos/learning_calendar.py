@@ -1155,6 +1155,8 @@ class LearningCalendar:
             return {"enabled": True, "waiting_for": "calendar authorization and activation"}
         now = now or datetime.now(self.settings.tz)
         now = now.astimezone(self.settings.tz)
+        from .reset_conversation import retire_unstarted
+        retire_unstarted(self.db,now)
         claim = uuid4().hex
         lease = self.db.mutate_task_action_state("learning:tick", lambda old: {
             "claim": claim, "until": (now + timedelta(minutes=10)).isoformat()}
