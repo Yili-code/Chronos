@@ -509,29 +509,30 @@ class LearningCalendar:
 
     async def book(self, task, state, now):
         """Reconcile a deterministic event ID before retrying a calendar insertion."""
+        failure_status = "needs_replan" if state.get("exact_slot") else "queued"
         event_id = sha256(f"chronos:{task['id']}:{state['token']}".encode()).hexdigest()
         await self.calendar.verify_owner()
         event = await self.calendar.event(event_id)
         if event is None:
             if task_fields(task) != state["snapshot"] or datetime.fromisoformat(state["start"]) <= now:
-                self.update(task["id"], lambda old: {**old, "status": "queued"})
+                self.update(task["id"], lambda old: {**old, "status": failure_status})
                 return "The task or proposed time changed. A fresh execution plan will require approval."
             start, end = (datetime.fromisoformat(state[key]) for key in ("start", "end"))
             if state.get('duration_source') == 'nightly_ai':
                 from .nightly_planning import slot_allowed
                 current_busy = await self.calendar.busy(start, end)
                 if slot_allowed(self, task, state, now, current_busy) is None:
-                    self.update(task['id'], lambda old: {**old, 'status': 'queued'})
+                    self.update(task['id'], lambda old: {**old, 'status': failure_status})
                     return 'That planned time is no longer available. No event was created. A fresh proposal will be prepared and requires confirmation.'
             if overlaps(start, end, short_task_windows(start.astimezone(self.settings.tz).date(), self.settings.tz,
                                                       (end - start).total_seconds() / 60)):
-                self.update(task["id"], lambda old: {**old, "status": "queued"})
+                self.update(task["id"], lambda old: {**old, "status": failure_status})
                 return "12:00–13:00 and 17:00–18:00 allow only tasks of at most 10 minutes. A new execution plan will require approval."
             cutoff = datetime.combine(start.astimezone(self.settings.tz).date(), time(self.settings.learning_end_hour % 24), self.settings.tz)
             if self.settings.learning_end_hour == 24:
                 cutoff += timedelta(days=1)
             if end > cutoff and state.get("late_window") != {"start": state["start"], "end": state["end"]}:
-                self.update(task["id"], lambda old: {**old, "status": "queued"})
+                self.update(task["id"], lambda old: {**old, "status": failure_status})
                 return "A late work block needs confirmation. A fresh plan will require approval."
             if state.get("calendar_moves"):
                 from .study_reflow import apply as apply_reflow
@@ -548,7 +549,7 @@ class LearningCalendar:
             from .backward_planning import reserved_windows
             busy = [*busy, *reserved_windows(self.db)]
             if overlaps(start, end, busy):
-                self.update(task["id"], lambda old: {**old, "status": "queued"})
+                self.update(task["id"], lambda old: {**old, "status": failure_status})
                 return "That time is now busy. A new execution plan will require approval."
             event = await self.calendar.insert({"id": event_id, "summary": task["title"], "colorId": "10",
                 "description": ("Chronos execution block. Scheduled under standing owner authorization. Task #" if state.get("auto_accepted") else "Chronos execution block. Confirmed by YiLi. Task #") + str(task["id"]),
@@ -556,6 +557,10 @@ class LearningCalendar:
                 "end": {"dateTime": state["end"], "timeZone": self.settings.timezone},
                 "visibility": "private", "transparency": "opaque",
                 "extendedProperties": {"private": {"chronosTask": str(task["id"]), "chronosToken": state["token"]}}})
+        if state.get("exact_slot") and any(
+                datetime.fromisoformat(event.get(k, {}).get("dateTime", "").replace("Z", "+00:00"))
+                != datetime.fromisoformat(state[k]) for k in ("start", "end")):
+            raise CalendarError("The exact work block changed. Recovery needs review.")
         props = event.get("extendedProperties", {}).get("private", {})
         if props.get("chronosToken") != state["token"] or props.get("chronosTask") != str(task["id"]):
             raise CalendarError("Calendar event ownership could not be verified.")
@@ -570,7 +575,7 @@ class LearningCalendar:
             self.db._save_task_action_state(day_key, {**budget, state["token"]: state["minutes"]})
             self.db._save_task_action_state(f"learning:task:{task['id']}", {**current,
                 "status": "scheduled", "event_id": event_id, "event_url": event.get("htmlLink", ""),
-                **({"delivery": "scheduled_pending"} if state.get("auto_accepted") else {})})
+                **({"delivery": "scheduled_sent" if state.get('exact_slot') else "scheduled_pending"} if state.get("auto_accepted") else {})})
             self.db._save_task_action_state("learning:proposal-queue", {**queue,
                 "active_task_id": None if queue.get("active_task_id") == task["id"] else queue.get("active_task_id"),
                 "retire_message_ids": list(dict.fromkeys([*queue.get("retire_message_ids", []),
@@ -1210,6 +1215,8 @@ class LearningCalendar:
                         break
                     state = revised
             if state["status"] == "creating":
+                if state.get('exact_slot'):
+                    continue  # The exact-slot review owns its booking and recovery lease.
                 await self.book(task, state, now)
                 from .automatic_planning import receipt
                 await receipt(self, task, self.get(task["id"]))

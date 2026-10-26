@@ -27,6 +27,9 @@ def revoke_pending(db, chat_id, previous):
 
 
 def card(state):
+    if state.get('task_slot'):
+        from .task_slot import card as slot_card
+        return slot_card(state)
     if state.get('ordered_sequence'):
         from .sequence_replan import card as ordered_card
         return ordered_card(state)
@@ -237,6 +240,9 @@ async def callback(planner, chat_id, message_id, token, action, now=None):
     now = now or datetime.now(planner.settings.tz)
     db = planner.db
     existing = db.get_task_action_state(key(chat_id)) or {}
+    if existing.get('task_slot') and existing.get('token') == token:
+        from .task_slot import callback as slot_callback
+        return await slot_callback(planner, chat_id, message_id, token, action, now)
     if existing.get('ordered_sequence') and existing.get('token') == token:
         from .sequence_replan import callback as ordered_callback
         return await ordered_callback(planner, chat_id, message_id, token, action, now)
