@@ -20,7 +20,7 @@ def test_bulk_rebuild_preserves_interrupted_booked_edit(setup,kind):
     before=dict(events)
     result=asyncio.run(study_reset.run(planner,123,'rebuild all study',1,NOW) if kind=='study' else
                        event_reset.run(planner,123,'work','rebuild all work',1,NOW))
-    assert '已全部重建' not in result
+    assert '已重新安排好' not in result
     assert events==before
     planner.calendar.delete_event.assert_not_awaited()
     planner.calendar.insert.assert_not_awaited()

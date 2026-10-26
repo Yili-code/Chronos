@@ -94,11 +94,11 @@ def test_rebuild_deletes_old_includes_unbooked_and_preserves_chapter_order(setup
 def test_past_unknown_scope_asks_once_and_answer_retains_request(setup):
     planner, events, output, *_ = initialize(setup, past=True)
     output.include_past = None
-    assert '是否也刪除' in rebuild(planner)
+    assert '過去的讀書時段也要一起重排嗎' in rebuild(planner)
     assert planner.db.get_task_action_state(reset.KEY)['status'] == 'question'
     planner.calendar.delete_event.assert_not_awaited()
     output.include_past = True
-    assert '已全部重建' in rebuild(planner, '包含', 2)
+    assert '已重新安排好' in rebuild(planner, '包含', 2)
     context = planner.ai.parse_study_reset.call_args.args[3]
     assert context['clarification']['instruction'] == INPUTS[0]
 
@@ -106,7 +106,7 @@ def test_past_unknown_scope_asks_once_and_answer_retains_request(setup):
 def test_future_only_retains_expired_event(setup):
     planner, events, output, *_ = initialize(setup, past=True)
     output.include_past = False
-    assert '已全部重建' in rebuild(planner)
+    assert '已重新安排好' in rebuild(planner)
     assert 'oldstudy' in events
     planner.calendar.delete_event.assert_not_awaited()
 
@@ -128,7 +128,7 @@ def test_uncertainty_prevents_all_calendar_mutations(setup, failure):
         planner.ai.parse_study_reset.side_effect = AIError('unavailable')
     before = deepcopy(events)
     reply = rebuild(planner)
-    assert '尚未' in reply and events == before
+    assert '行程沒有變動' in reply and events == before
     planner.calendar.insert.assert_not_awaited()
     planner.calendar.delete_event.assert_not_awaited()
 
@@ -139,7 +139,7 @@ def test_compression_preserves_fixed_exam_and_rejects_impossible_plan(setup):
     output.end = NOW.replace(hour=21).isoformat()
     # Three tasks cannot fit the evening at original durations; shorter sessions can.
     planner.settings.learning_daily_minutes = 720
-    assert '已全部重建' in rebuild(planner)
+    assert '已重新安排好' in rebuild(planner)
     state = planner.db.get_task_action_state(reset.KEY)
     assert state['factor'] < 1
     assert all(s['original_minutes'] == 180 and s['minutes'] >= 10 for s in state['sessions'])
@@ -150,7 +150,7 @@ def test_impossible_plan_never_deletes_original(setup):
     output.end = (NOW + timedelta(minutes=11)).isoformat()
     before = deepcopy(events)
     reply = rebuild(planner)
-    assert 'cannot fit' in reply and events == before
+    assert '仍無法在期限前排完' in reply and events == before
     planner.calendar.delete_event.assert_not_awaited()
 
 
@@ -161,10 +161,10 @@ def test_lost_insert_response_recovers_without_duplicate_events(setup):
         await insert(body)
         raise CalendarError('response lost')
     planner.calendar.insert.side_effect = lost
-    assert '重建暫停' in rebuild(planner)
+    assert '重排暫停' in rebuild(planner)
     assert len(events) == 1
     planner.calendar.insert.side_effect = insert
-    assert '已全部重建' in rebuild(planner, update=2)
+    assert '已重新安排好' in rebuild(planner, update=2)
     assert len(events) == 3 and planner.calendar.insert.await_count == 3
 
 
@@ -175,9 +175,9 @@ def test_lost_delete_response_recovers_and_background_worker_waits(setup):
         await delete(i, etag)
         raise CalendarError('response lost')
     planner.calendar.delete_event.side_effect = lost
-    assert '重建暫停' in rebuild(planner)
+    assert '重排暫停' in rebuild(planner)
     assert asyncio.run(planner._tick(NOW)) == {'waiting_for': 'study rebuild reconciliation'}
-    assert '已全部重建' in rebuild(planner, update=2)
+    assert '已重新安排好' in rebuild(planner, update=2)
     assert planner.calendar.delete_event.await_count == 1 and len(events) == 3
 
 
@@ -189,7 +189,7 @@ def test_exam_is_fixed_and_all_preparation_finishes_before_it(setup):
     events['exam'] = deepcopy(exam)
     output.exams = [reset.ExamAnchor(task_id=first['id'], event_id='exam')]
     reply = rebuild(planner)
-    assert '已全部重建' in reply
+    assert '已重新安排好' in reply
     assert events['exam'] == exam
     assert planner.get(first['id'])['end'] <= a.isoformat()
     assert planner.db.get_task(first['id'])['due_at'] == first['due_at']
@@ -197,7 +197,7 @@ def test_exam_is_fixed_and_all_preparation_finishes_before_it(setup):
 
 def test_multi_session_work_keeps_all_effort_and_does_not_infer_completion(setup):
     planner, events, output, first, *_ = initialize(setup, minutes=300)
-    assert '已全部重建' in rebuild(planner)
+    assert '已重新安排好' in rebuild(planner)
     state = planner.get(first['id'])
     assert sum(s['minutes'] for s in [state, *state['reset_remaining_sessions']]) == 300
     later = asyncio.run(reset.advance_sessions(planner, first, state, NOW + timedelta(days=1)))
@@ -252,7 +252,7 @@ def test_ten_scenarios_execute_real_rebuild_through_message_router(setup, monkey
     monkeypatch.setattr(main, 'ai', planner.ai)
     planner.ai.classify_intent.return_value = Intent(action='study_reset')
     reply = run(text)
-    assert '已全部重建' in reply['reply']
+    assert '已重新安排好' in reply['reply']
     assert 'oldstudy' not in events and len(events) == 3
     planner.ai.classify_intent.assert_not_awaited()
     planner.ai.parse_study_reset.assert_awaited_once()
@@ -295,7 +295,7 @@ def test_preflight_race_never_deletes_old_events(setup, changed):
         events['exam'] = {'id': 'exam', 'summary': 'graphs midterm', 'etag': 'original', '_calendar_id': 'primary',
             'start': {'dateTime': a.isoformat()}, 'end': {'dateTime': (a + timedelta(hours=1)).isoformat()}}
         output.exams = [reset.ExamAnchor(task_id=first['id'], event_id='exam')]
-    assert '重建暫停' in rebuild(planner)
+    assert '重排暫停' in rebuild(planner)
     assert 'oldstudy' in events
     planner.calendar.delete_event.assert_not_awaited()
     planner.calendar.insert.assert_not_awaited()
@@ -304,7 +304,7 @@ def test_preflight_race_never_deletes_old_events(setup, changed):
 def test_exact_estimated_effort_is_not_lost_to_model_underestimate(setup):
     planner, events, output, first, *_ = initialize(setup)
     planner.db.edit_task(first['id'], first['title'], reset.datetime.fromisoformat(first['due_at']), first['project'], {'estimated_minutes': 300})
-    assert '已全部重建' in rebuild(planner)
+    assert '已重新安排好' in rebuild(planner)
     state = planner.db.get_task_action_state(reset.KEY)
     assert sum(s['minutes'] for s in state['sessions'] if s['task_id'] == first['id']) == 300
 

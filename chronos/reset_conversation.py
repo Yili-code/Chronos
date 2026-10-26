@@ -8,7 +8,7 @@ from . import study_reset, event_reset
 
 REMOVED = '/eventreset 已移除。請直接描述要重排的活動，例如「重排所有讀書行程」或「重排所有會議」。'
 QUESTION = '要重排哪一類活動？例如讀書、會議或健身。'
-EXPIRED = '這則重排要求已過期，已停止重試。仍需要重排時，請重新傳送新的要求。'
+EXPIRED = '這則重排要求已經過了一段時間，我先不動你的行程。\n\n如果仍要重排，請重新告訴我要安排哪些活動。'
 
 
 def receipt_reply(reply):
@@ -103,17 +103,19 @@ async def prepare(planner,chat_id,text,update_id,now=None,request_date=None):
         if pending_scope and state.get('status') not in study_reset.ACTIVE|{'failed'}:
             return QUESTION
         if state.get('status')=='question':
-            return escape(state.get('question') or QUESTION)
+            return escape(study_reset.replies.question(state.get('question') or QUESTION))
         if state.get('status')=='planning':
             lease=db.get_task_action_state('learning:tick') or {}
             if lease.get('until','')<=now.isoformat():
                 retire_unstarted(db,now)
-                return '先前重排在規劃階段中斷，尚未進入行程變更。請重新傳送新的重排要求。'
-            return '正在規劃重排，目前尚未進入行程變更。'
+                return '剛才的重排中斷了，還沒改動你的行程。\n\n請重新傳送重排要求，我會再處理一次。'
+            return '我正在規劃新的安排，還沒改動你的行程。'
         if state.get('status')=='failed':
-            return '先前重排已停止，請重新傳送新的重排要求。'
-        return ('重排'+('暫停' if state.get('status')=='partial' else '進行中')+
-            f"：已確認刪除 {len(state.get('deleted',[]))} 個舊行程、建立 {len(state.get('inserted',[]))} 個新時段。")
+            return '剛才的重排已停止。若仍需要重排，請重新傳送要求。'
+        if state.get('status')=='partial':
+            return study_reset.result(state)
+        return ('我正在調整行程。\n\n'+
+            f"目前已移除 {len(state.get('deleted',[]))} 個舊行程，建立 {len(state.get('inserted',[]))} 個新時段，還沒有全部完成。")
     if broad_request(text):
         db.mutate_task_action_state(pending_key,lambda old:{'action':'event_reset','instruction':text,
             'question':QUESTION,'reset_scope_question':True,'candidate_ids':[],'snapshots':{},
@@ -121,7 +123,7 @@ async def prepare(planner,chat_id,text,update_id,now=None,request_date=None):
         return QUESTION
     if pending_scope and text.strip().lower() in {'cancel','/cancel','取消'}:
         db.mutate_task_action_state(pending_key,lambda old:{})
-        return '已取消重排追問，行程未變更。'
+        return '好，這次不重排了。你的行程沒有變動。'
     category='study' if study_alias(text) else choice or typed_request(text)
     if category:
         instruction=((pending.get('instruction','')+'\nOwner selected '+category) if pending_scope and (study_alias(text) or choice) else

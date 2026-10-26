@@ -11,6 +11,7 @@ from collections.abc import Callable
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, Header, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
+from starlette.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .database_metrics import snapshot as database_metrics_snapshot
@@ -29,6 +30,7 @@ from .tasks import (
 )
 from .telegram import TelegramClient
 from .reply_voice import creation_messages
+from .reset_replies import ResetInProgress
 from .runtime_health import (
     RuntimeConfigurationError,
     configured_components,
@@ -249,6 +251,11 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Chronos", lifespan=lifespan)
+
+
+@app.exception_handler(ResetInProgress)
+async def reset_in_progress(request: Request, error: ResetInProgress):
+    return JSONResponse(status_code=503, content={'detail': 'The original reset is still running; retry this update later'})
 
 
 def mail_workflow():
