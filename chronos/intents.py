@@ -17,7 +17,7 @@ class Intent(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     action: Literal[
         "task_create", "task_edit", "task_complete", "task_list", "task_review", "undo", "clear_tasks", "event_create",
-        "plan_list", "plan_request", "plan_edit", "plan_feedback", "backward", "backward_progress",
+        "plan_list", "plan_request", "task_schedule", "plan_edit", "plan_feedback", "backward", "backward_progress",
         "event_reset", "study_reset", "sequence_replan", "study_replan", "replan", "agenda", "free", "info", "reminder_create", "reminder_list", "reminder_cancel",
         "classday", "calendar_view", "calendar_edit", "ai_usage", "announcements", "announcement",
         "mail_next", "cancel", "clarify", "unsupported", "acknowledge", "preference", "assignment_query", "assignment_scan",
@@ -48,7 +48,7 @@ class Intent(BaseModel):
                               'database-systems', 'competitive-programming', 'operating-systems'] | None = None
 
 
-TARGET_ACTIONS = {"task_edit", "task_complete", "plan_request", "plan_edit", "plan_feedback"}
+TARGET_ACTIONS = {"task_edit", "task_complete", "plan_request", "task_schedule", "plan_edit", "plan_feedback"}
 
 
 def explicit_plan_batch(text, items, ids):
@@ -190,6 +190,12 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
         intent.edit_field = "content"
         instruction += "\nOnly change content; preserve title."
     ids = list(dict.fromkeys(intent.task_ids))
+    # A matched existing task with a requested start is scheduling, never creation.
+    if ids and intent.start is not None and intent.action in {'task_create', 'plan_request'}:
+        intent.action = 'task_schedule'
+    elif ids and intent.action == 'task_create':
+        intent.action = 'clarify'
+        intent.question = '這項任務已存在。要安排它的工作時段，還是另建不同的任務？'
     if agenda_context is not None and any(i not in {entry.get('task_id') for entry in agenda_context['entries']} for i in ids):
         return lambda: '指定項目不在這份行程中，請重新指定名稱。沒有變更。'
     if bound_task_id is not None and intent.action in TARGET_ACTIONS:
@@ -259,6 +265,13 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
             action = lambda: assignment_access.request_refresh(app.db, app.settings, chat_id, update_id)
         elif intent.action in simple:
             action = await app.prepare_message(simple[intent.action], update_id=update_id, chat_id=chat_id)
+        elif intent.action == 'task_schedule':
+            if not persistent or not app.settings.enable_learning_calendar:
+                return lambda: '請在已啟用排程的 Telegram 對話安排任務。'
+            from . import task_slot
+            result = await task_slot.preview(app.learning_calendar(), chat_id, selected,
+                instruction, update_id, now, start=intent.start, minutes=intent.minutes)
+            action = lambda: result
         elif intent.action == "task_create":
             action = await app.prepare_message(text if not pending else instruction, update_id=update_id, chat_id=chat_id, create_only=True)
         elif intent.action == "task_edit":
@@ -436,7 +449,7 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
         def transaction():
             # Booked edits already validate and apply their ETag-protected move
             # during preparation; their own new state is not a stale-list race.
-            if agenda_context is not None and intent.action != 'plan_edit' and not agendas.current(app.db, agenda_context):
+            if agenda_context is not None and intent.action not in {'plan_edit', 'task_schedule'} and not agendas.current(app.db, agenda_context):
                 return agendas.STALE
             saved = app.db.get_task_action_state(key) if persistent else None
             # Recheck the task after external work; list positions never become mutation IDs.

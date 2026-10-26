@@ -130,6 +130,9 @@ async def apply(planner, task, state, now):
     from .learning_calendar import overlaps, class_windows
     moves = state["calendar_moves"]
     additions = state.get('revision_additions', [])
+    if state.get('task_slot'):
+        from .task_slot import validate_target
+        validate_target(planner, state)
     if state.get('study_revision'):
         from .study_revision import validate_additions
         validate_additions(planner, state)
@@ -215,7 +218,7 @@ async def apply(planner, task, state, now):
     for start, stop in targets:
         if datetime.fromisoformat(start) <= now or overlaps(datetime.fromisoformat(start), datetime.fromisoformat(stop), fixed):
             raise ReflowReviewError("A reviewed destination is now busy or has passed. Reflow paused; check /plan.")
-    if state.get('study_revision'):
+    if state.get('study_revision') or state.get('task_slot'):
         from .learning_calendar import find_slot
         from .backward_planning import reserved_windows
         from .nightly_planning import state_window
@@ -231,8 +234,11 @@ async def apply(planner, task, state, now):
             a, b = (datetime.fromisoformat(item[k]) for k in ('start', 'end'))
             minutes = int((b-a).total_seconds()/60)
             load = {day: sum(bucket.values()) for day, bucket in budgets.items()}
-            load[a.date().isoformat()] -= minutes
-            if find_slot(tasks[item['task_id']], now, occupied, [], planner.settings, minutes, load, policy, window=(a,b)) != (a,b):
+            if item['task_id'] is not None:
+                load[a.date().isoformat()] -= minutes
+            check_now = min(now, a - timedelta(minutes=10)) if state.get('task_slot') else now
+            if find_slot(tasks.get(item['task_id'], {}), check_now, occupied, [], planner.settings, minutes, load, policy,
+                         window=(a,b), align_minutes=not state.get('task_slot')) != (a,b):
                 raise ReflowReviewError('Study constraints changed. Prepare a fresh proposal.')
             occupied.append((a,b))
     for move in moves:

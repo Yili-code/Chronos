@@ -177,11 +177,12 @@ def test_exam_classifier_contract(monkeypatch):
     assert result.event_category == 'exam'
     prompt = generate.await_args.args[0]
     assert 'category exam, never contest' in prompt
-    assert 'Preparing or studying for an exam remains task_create' in prompt
+    assert 'Preparing or studying for an exam is task_create ONLY for a new task' in prompt
+    assert 'first match existing tasks semantically' in prompt
     assert 'Context clarification.question is the exact previous question' in prompt
     assert 'same date 09:20-11:00' in prompt
     assert 'replaces the pending event instead' in prompt
-    assert 'competitions such as AtCoder remain contest' in prompt
+    assert 'Competitions such as AtCoder remain contest' in prompt
     assert 'do not repeat the title, date, time, duration or original input' in prompt
 
 
