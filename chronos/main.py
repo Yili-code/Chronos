@@ -1223,6 +1223,9 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                 raise HTTPException(status_code=502, detail="Telegram reply failed; waiting for retry")
             sent_id = result.get("result", {}).get("message_id")
             if sent_id is not None:
+                if message.get("planning_task_ids"):
+                    from .planning_notices import bind
+                    bind(learning_calendar(), chat_id, sent_id, message["planning_task_ids"])
                 agenda_context.bind(db, chat_id, sent_id, message)
                 task_review.bind(db, chat_id, sent_id, message)
                 bind_free_message(db, chat_id, sent_id, message)
