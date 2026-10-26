@@ -270,3 +270,30 @@ def test_compact_agenda_escapes_titles_and_keeps_continuations_compact():
     assert len(parts) > 1 and all(len(part) < 4096 for part in parts)
     assert all("&lt;Graphs&gt; second line" in part and "minutes" not in part for part in parts)
     assert all("\n\n17:00" in part and "\n17:00" in part for part in parts)
+
+
+def test_window_agenda_matches_today_two_line_layout(store):
+    from chronos.evening_agenda import render_window_agenda
+
+    task = store.create_task("Graphs & trees", None, "algorithms", NOW)
+    store.save_tag_alias("algorithms", "Algo & DS")
+    item = event("Graphs & trees")
+    item["extendedProperties"] = {"private": {"chronosTask": str(task["id"]), "chronosToken": "window-token"}}
+    store.mutate_task_action_state("learning:history:window-token", lambda old: {"feedback": {"outcome": "done"}})
+    begin = datetime.fromisoformat("2026-10-20T12:00:00+08:00")
+    end = begin.replace(hour=19)
+    assert render_window_agenda([item], begin, end, NOW.tzinfo, store) == [
+        "<b>10/20 12:00–10/20 19:00</b>\n\n17:00–18:30 · #Algo &amp; DS\nGraphs &amp; trees\n✓ Finished"]
+    assert render_window_agenda([], begin, end, NOW.tzinfo) == [
+        "<b>10/20 12:00–10/20 19:00</b>\n\nNo events scheduled."]
+
+
+def test_window_agenda_untagged_events_keep_spacing_and_continuations():
+    from chronos.evening_agenda import render_window_agenda
+
+    begin = datetime.fromisoformat("2026-10-20T12:00:00+08:00")
+    parts = render_window_agenda([event("<Graphs> " + "x" * 450)] * 20, begin, begin.replace(hour=19), NOW.tzinfo)
+    assert len(parts) > 1
+    assert all(part.startswith("<b>10/20 12:00–10/20 19:00</b>") for part in parts)
+    assert all("17:00–18:30\n&lt;Graphs&gt;" in part and "minutes" not in part for part in parts)
+    assert all(len(part) < 4096 for part in parts)

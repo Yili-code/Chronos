@@ -46,7 +46,7 @@ def test_named_query_keeps_time_and_event_name(store, monkeypatch, matching):
     assert end.isoformat() == '2026-10-25T00:00:00+08:00'
     assert 'Codeforces' not in reply, reply
     if matching:
-        assert '21:30–23:10 · AtCoder Beginner Contest 999' in reply
+        assert '21:30–23:10\nAtCoder Beginner Contest 999' in reply
         assert 'minutes' not in reply
     else:
         assert 'AtCoder'.casefold() in reply.casefold()
