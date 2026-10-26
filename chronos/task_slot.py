@@ -267,8 +267,8 @@ async def callback(planner, chat_id, message_id, token, action, now):
             await reconcile(planner, review)
         except CalendarError:
             pass  # Keep the durable review and original failure for explicit recovery.
-        stored = db.mutate_task_action_state(key(chat_id), lambda old: {**old, 'status': 'partial',
-            'lease_until': now.isoformat(), 'error': str(error)} if old.get('lease') == lease else old)
+        stored = db.mutate_task_action_state(key(chat_id), lambda old, message=str(error): {**old, 'status': 'partial',
+            'lease_until': now.isoformat(), 'error': message} if old.get('lease') == lease else old)
         result = card(stored)
         result['messages'][0]['text'] = 'Exact scheduling paused. No duplicate task was created.\n' + escape(str(error)) + '\n\n' + result['messages'][0]['text']
         return result
