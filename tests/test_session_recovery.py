@@ -121,6 +121,15 @@ def test_other_reason_is_escaped_and_recorded(setup):
     assert planner.db.get_task_action_state('learning:history:' + token)['recovery']['reason'] == '<busy> & tired'
 
 
+def test_automatic_recovery_acknowledges_next_step_without_queue_jargon(setup):
+    planner, task, _, _, token, _ = missed(setup, 'An interruption')
+    planner.settings.learning_auto_accept = True
+    reply = action(planner, task, token, 'ragain')
+    assert reply == 'I’ll find another time and let you know when it’s scheduled.'
+    assert 'Queued' not in reply and 'task(s)' not in reply
+    assert planner.get(task['id'])['status'] == 'queued'
+
+
 @pytest.mark.parametrize('outcome', ['rejected', 'uncertain'])
 def test_unanswered_reminder_retries_only_known_rejection(setup, outcome):
     from chronos.google_calendar import CalendarError
@@ -152,7 +161,9 @@ def test_shortest_block_is_not_lengthened_by_shorter_choice(setup):
     assert 'Try a shorter' not in str(result)
 
 
-def test_recovery_webhook_binds_cards_and_clears_free_text_context(system, setup, monkeypatch):
+@pytest.mark.parametrize('reply_style', ['reply', 'plain'])
+@pytest.mark.parametrize('cleanup_failure', [False, True])
+def test_recovery_webhook_binds_cards_and_clears_free_text_context(system, setup, monkeypatch, reply_style, cleanup_failure):
     client, tasks, bot, config = system
     _, _, calendar, _ = setup
     config.enable_learning_calendar = True
@@ -173,13 +184,30 @@ def test_recovery_webhook_binds_cards_and_clears_free_text_context(system, setup
     assert callback('skipped', 88001, 40).status_code == 200
     assert planner.get(task['id'])['recovery']['missed_count'] == 1
     assert planner.get(task['id'])['message_id'] == 50
+    bot.send_message.return_value = {'ok': True, 'result': {'message_id': 51}}
     assert callback('rwrite', 88002, 50).status_code == 200
     assert main.db.get_task_action_state('learning:edit-chat:123')['mode'] == 'recovery'
-    assert client.post('/telegram/webhook', headers=headers, json={'update_id': 88003,
-        'message': {'message_id': 61, 'chat': {'id': 123}, 'text': 'An urgent interruption'}}).status_code == 200
+    assert main.db.get_task_action_state('learning:edit-chat:123')['prompt_message_id'] == 51
+    bot.send_message.return_value = {'ok': True, 'result': {'message_id': 52}}
+    message = {'message_id': 61, 'chat': {'id': 123}, 'text': 'An urgent interruption'}
+    if reply_style == 'reply':
+        message['reply_to_message'] = {'message_id': 51, 'chat': {'id': 123}, 'text': 'What got in the way?'}
+    def request(method, data):
+        if method == 'deleteMessage' and data.get('message_id') == 51 and cleanup_failure:
+            return {'ok': False, 'error_code': 500}
+        return {'ok': True}
+    bot.request.side_effect = request
+    payload = {'update_id': 88003, 'message': message}
+    assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == (502 if cleanup_failure else 200)
     assert planner.get(task['id'])['recovery']['stage'] == 'decision'
     assert not main.db.get_task_action_state('learning:edit-chat:123')
-    assert callback('rdefer', 88004, 50).status_code == 200
+    sends = bot.send_message.await_count
+    bot.request.side_effect = None
+    assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 200
+    assert bot.send_message.await_count == sends
+    deletes = [c.args[1]['message_id'] for c in bot.request.await_args_list if c.args[0] == 'deleteMessage']
+    assert 51 in deletes and 61 not in deletes and 52 not in deletes
+    assert callback('rdefer', 88004, 52).status_code == 200
     assert planner.get(task['id'])['status'] == 'postponed'
     assert len(tasks.list_open()) == 1
     calendar.insert.assert_not_awaited()

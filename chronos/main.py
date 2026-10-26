@@ -267,7 +267,11 @@ def learning_calendar():
 
 
 async def deliver_learning_reply(chat_id, update_id, receipt):
+    cleanup_ids = [identifier for part in receipt.get('messages', [])
+                   for identifier in part.get('resolved_learning_prompt_ids', [])]
     if receipt["delivered"]:
+        if cleanup_ids:
+            await delete_telegram_messages(chat_id, *cleanup_ids)
         return
     if any(m.get('event_reset_result') for m in receipt.get('messages',[])):
         for count,part in enumerate(receipt['messages'][receipt.get('delivered_count',0):],receipt.get('delivered_count',0)+1):
@@ -329,8 +333,9 @@ async def deliver_learning_reply(chat_id, update_id, receipt):
         message_id = result.get("result", {}).get("message_id")
         if message_id is None:
             raise HTTPException(status_code=502, detail="Planning prompt ID missing")
-        db.mutate_task_action_state(f"learning:edit-message:{chat_id}:{message_id}", lambda old: message["learning_edit"])
-        db.mutate_task_action_state(f"learning:edit-chat:{chat_id}", lambda old: {**message["learning_edit"],
+        binding = {**message['learning_edit'], 'prompt_message_id': message_id}
+        db.mutate_task_action_state(f"learning:edit-message:{chat_id}:{message_id}", lambda old: binding)
+        db.mutate_task_action_state(f"learning:edit-chat:{chat_id}", lambda old: {**binding,
             "expires_at": (datetime.now(settings.tz) + timedelta(hours=2)).isoformat()})
     if message.get("learning_menu"):
         message_id = result.get("result", {}).get("message_id")
@@ -353,6 +358,8 @@ async def deliver_learning_reply(chat_id, update_id, receipt):
         if saved and saved.get("message_id") == message_id:
             learning_calendar().retire(previous.get("message_id"), previous.get("edit_message_id"))
     db.mark_update_delivered(update_id)
+    if cleanup_ids:
+        await delete_telegram_messages(chat_id, *cleanup_ids)
     if message.get('delete_after_seconds') == 7 or message['text'].startswith('Updated. Review the new execution plan'):
         message_id = result.get('result', {}).get('message_id')
         if message_id is not None:
@@ -667,6 +674,10 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
     if settings.telegram_chat_id and chat_id != settings.telegram_chat_id:
         raise HTTPException(status_code=403, detail="Unauthorized chat")
     update_id = update.update_id
+    saved_reply = db.get_update(update_id)
+    if saved_reply and any(part.get('resolved_learning_prompt_ids') for part in saved_reply.get('messages', [])):
+        await deliver_learning_reply(chat_id, update_id, saved_reply)
+        return {'ok': True}
     request_context = {'request_date':source_message.date} if source_message.date is not None else {}
     if update.message:
         # Booked edits commit their verified result and acknowledgement together.
@@ -964,6 +975,16 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                 else:
                     db.mutate_task_action_state(pending_key, lambda old: {**study_edit, "task_id": study_edit["task_id"],
                         "token": study_edit["token"], "expires_at": (datetime.now(settings.tz) + timedelta(hours=2)).isoformat()})
+            if study_edit.get('mode') == 'recovery' and not update.edited_message:
+                state = learning_calendar().get(study_edit['task_id']) or {}
+                resolved = (instruction in {'/cancel', '取消'} or state.get('token') != study_edit['token']
+                            or state.get('status') != 'awaiting_resolution'
+                            or state.get('recovery', {}).get('stage') != 'reason')
+                prompt_id = study_edit.get('prompt_message_id') or (
+                    source_message.reply_to_message.message_id if source_message.reply_to_message else None)
+                if resolved and prompt_id is not None:
+                    parts = reply['messages'] if isinstance(reply, dict) else [{'text': reply}]
+                    reply = {'messages': [{**part, 'resolved_learning_prompt_ids': [prompt_id]} for part in parts]}
             receipt = db.process_update(update_id, lambda: reply)
         await deliver_learning_reply(chat_id, update_id, receipt)
         if settings.enable_learning_calendar:
