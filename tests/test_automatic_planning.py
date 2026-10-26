@@ -17,6 +17,18 @@ def test_default_is_auto_accept():
     assert Settings(_env_file=None).learning_auto_accept is True
 
 
+def test_scheduled_receipt_shows_weekday_without_redundant_minutes(setup):
+    from chronos.automatic_planning import receipt
+    planner, task, _, bot = setup
+    state = {'status': 'scheduled', 'token': 'receipt', 'delivery': 'scheduled_pending', 'minutes': 120,
+        'start': '2026-10-31T13:00:00+08:00', 'end': '2026-10-31T15:00:00+08:00'}
+    planner.update(task['id'], lambda old: state)
+    asyncio.run(receipt(planner, task, state))
+    text = bot.send_message.await_args.args[1]
+    assert text.endswith('10/31 (Sat) 13:00–15:00')
+    assert '120 minutes' not in text
+
+
 def enable(setup):
     planner, task, calendar, bot = setup
     planner.settings.learning_auto_accept = True
@@ -32,6 +44,11 @@ def test_default_books_then_notifies_without_proposal_or_accept_button(setup):
     bot.send_message.assert_awaited_once()
     text = bot.send_message.await_args.args[1]
     assert 'Scheduled, Sir' in text and task['title'] in text and 'proposed' not in text
+    from datetime import datetime
+    from chronos.task_timing import display_date
+    start = datetime.fromisoformat(state['start'])
+    assert display_date(start.date().isoformat()) in text
+    assert 'minutes' not in text
     assert 'Confirm schedule' not in str(bot.send_message.await_args.kwargs)
     assert 'Adjust time' in str(bot.send_message.await_args.kwargs)
     asyncio.run(planner.tick(NOW))
