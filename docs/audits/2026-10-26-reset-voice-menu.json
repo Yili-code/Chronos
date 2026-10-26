@@ -1,0 +1,14 @@
+{
+  "release": "520538e7f75f403f7d4bb63a72468b72a3d63b58",
+  "revision": "chronos-reset-voice-520538e",
+  "menu_verified": true,
+  "commands": [
+    "task",
+    "plan",
+    "today",
+    "tomorrow",
+    "free",
+    "info"
+  ],
+  "messages_sent": false
+}
