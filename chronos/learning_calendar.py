@@ -1283,6 +1283,8 @@ class LearningCalendar:
             if state["status"] in {"queued", "planning", "proposed", "editing", "no_slot", "creating"}:
                 break
         await self.retire_cards()
+        from .planning_notices import cleanup
+        await cleanup(self)
         return {"enabled": True, "proposals_checked": processed}
 
     def status(self, *, booked_only=False):

@@ -315,7 +315,7 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
                     reply = app.learning_calendar().request_proposals(ids, minutes=intent.minutes, immediate=True)
                     if not reply[1]:
                         return reply[0]
-                    return app.message_bundle({"text": reply[0], "planning_requested": True})
+                    return app.message_bundle({"text": reply[0], "planning_requested": True, "planning_task_ids": ids})
             elif intent.action == "plan_edit":
                 from .temporal_constraints import literal_weekday_conflict
                 conflict = literal_weekday_conflict(text, now)
