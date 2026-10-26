@@ -69,7 +69,7 @@ def respond(planner, task, token, action, now, reason=None):
             return card(planner, live, state, now)
         if stage == 'reason':
             if action == 'rwrite' and reason is None:
-                return {'messages': [{'text': 'What prevented you from starting? Reply here. /cancel leaves the decision open.',
+                return {'messages': [{'text': 'What got in the way? Tell me here, and we’ll work out the next step.',
                     'reply_markup': {'force_reply': True},
                     'learning_edit': {'task_id': task['id'], 'token': token, 'mode': 'recovery'}}]}
             if reason is None:
@@ -111,7 +111,12 @@ def respond(planner, task, token, action, now, reason=None):
     result = planner.db._run_task_action(apply)
     if isinstance(result, dict) and result.get('queue_recovery'):
         minutes = max(15, min(180, result['minutes'] // 2)) if result['short'] else None
-        return planner.request_proposals([task['id']], minutes=minutes)[0]
+        reply, accepted = planner.request_proposals([task['id']], minutes=minutes)
+        if not accepted:
+            return reply
+        opening = 'I’ll look for a shorter session' if result['short'] else 'I’ll find another time'
+        return opening + (' and let you know when it’s scheduled.' if planner.settings.learning_auto_accept
+                          else ' and show you a new time for confirmation.')
     return result
 
 

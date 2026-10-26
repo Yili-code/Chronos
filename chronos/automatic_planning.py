@@ -3,6 +3,7 @@ from datetime import datetime, time, timedelta
 from html import escape
 
 from .task_actions import task_fields
+from .task_timing import display_date
 
 
 def routine(planner, state):
@@ -54,6 +55,8 @@ async def receipt(planner, task, state):
         return
     start, end = (datetime.fromisoformat(state[k]).astimezone(planner.settings.tz) for k in ('start', 'end'))
     text = (f"<b>Scheduled, Sir.</b>\n{escape(task['title'])}\n"
-            f"{start:%m/%d %H:%M}–{end:%H:%M} · {state['minutes']} minutes")
+            f"{display_date(start.date().isoformat())} {start:%H:%M}–"
+            + (f"{display_date(end.date().isoformat())} " if end.date() != start.date() else '')
+            + f"{end:%H:%M}")
     await planner.send(task['id'], state, text,
         planner.buttons(task['id'], state, [('adjustbooked', 'Adjust time')]), 'scheduled')
