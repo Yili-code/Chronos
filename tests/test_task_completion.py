@@ -197,3 +197,13 @@ def test_reading_chapter_does_not_implicitly_complete_its_report():
     assert task_completion.chapter_matches('剛複習完 DB ch2',items)==[1]
     assert not task_completion.explicit_done('剛複習完 DB ch2 一半')
     assert not task_completion.explicit_done('還沒複習完 DB ch2')
+
+
+@pytest.mark.parametrize('text', ['如果我說「剛複習完 DB ch2」你會怎麼回？', '幫我翻譯剛複習完 DB ch2', '明天提醒我複習完 DB ch2', '新增複習完 DB ch2 的待辦', '教我用英文說剛複習完 DB ch2'])
+def test_questions_quotes_and_future_requests_never_bypass_interpretation(store,monkeypatch,text):
+    monkeypatch.setattr(main.settings,'enable_learning_calendar',True)
+    task=main.tasks.create('Database systems Chapter 2')
+    mock=classify(monkeypatch,action='acknowledge')
+    run(text)
+    assert main.db.get_task(task['id'])['status']=='open'
+    mock.assert_awaited_once()

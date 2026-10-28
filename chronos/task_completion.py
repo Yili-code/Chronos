@@ -17,13 +17,16 @@ def display_title(title):
 
 
 def explicit_done(text):
+    if re.search(r'如果|假設|假设|假如|是否|怎麼|怎么|如何|翻譯|翻译|意思|新增|新建|提醒|安排|明天|後天|后天|下週|下周|打算|預計|预计|希望|想要|計畫|计划|\b(?:if|how|translate|whether|suppose)\b|[「『“"？?]', text, re.I):
+        return False
     return (bool(re.search(r'複習完|复习完|讀完|读完|念完|看完|完整完成|全部完成|做完|finished|completed', text, re.I))
         and not re.search(r'還沒|还没|尚未|沒有|没有|部分|一半|半章|只看|只讀|只读|未完成|未讀完|未读完|還剩|还剩|not |haven.t', text, re.I))
 
 
 def chapter_matches(text, items):
     pattern = r'(?:database[–—_ -]*systems?|database|db|資料庫)\s*(?:chapter|ch\.?|第)\s*(\d+)\s*章?'
-    match = re.search(pattern, text, re.I)
+    report = r'\s*(?:我\s*)?(?:剛剛|剛才|剛|已經|已|今天|這次)?\s*(?:複習完|复习完|讀完|读完|念完|看完|完整完成|全部完成|完成)\s*'
+    match = re.fullmatch(report + pattern + r'\s*(?:了)?[。.!！]?\s*', text, re.I)
     if not match:
         return []
     return [item['id'] for item in items if (found := re.fullmatch(r'(?:Study |Review |複習\s*)?' + pattern, item['title'], re.I)) and int(found[1]) == int(match[1])]
