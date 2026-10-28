@@ -7,6 +7,7 @@ from hashlib import sha256
 from html import escape
 from uuid import uuid4
 
+from .study_feedback import PROMPT as FEEDBACK_PROMPT, extract as extract_feedback
 from .ai import AIError
 from .course_tracking import COURSE_SCHEDULE
 from .google_calendar import CalendarError
@@ -701,11 +702,11 @@ class LearningCalendar:
                 "parse_mode": "HTML",
                 "reply_markup": {"force_reply": True}, "learning_edit": {"task_id": task_id, "token": token}}]}
         if action == "partial" and state["status"] == "awaiting_feedback":
-            return {"messages": [{"text": "Report focused minutes | completed pages/total pages | next page.\nExample: 135 | 20/48 | 21\nExclude breaks and phone time. /cancel keeps the session open.",
+            return {"messages": [{"text": FEEDBACK_PROMPT,
                 "reply_markup": {"force_reply": True},
                 "learning_edit": {"task_id": task_id, "token": token, "mode": "feedback"}}]}
         if action in {"done", "partial", "skipped"}:
-            return self.feedback(task, token, action, state["minutes"] if action == "done" else 0 if action == "skipped" else None)
+            return self.feedback(task, token, action, 0 if action == "skipped" else None)
         if action in {"reject", "retry"}:
             permitted = state["status"] in {"proposed", "no_slot", "rejected"}
             if not permitted:
@@ -1038,22 +1039,42 @@ class LearningCalendar:
         return await self._revise(task["id"], state["token"], instruction(slot[0]), now)
 
     def partial_reply(self, task_id, token, instruction):
-        match = re.fullmatch(r"\s*(\d+)\s*\|\s*(\d+)\s*/\s*(\d+)\s*\|\s*(\d+)\s*", instruction)
         task = next((t for t in self.db.list_open_tasks() if t["id"] == task_id), None)
         if not task:
-            return "This task is no longer open."
-        if not match:
-            return "Use focused minutes | completed pages/total pages | next page. Example: 135 | 20/48 | 21"
-        minutes, completed, total, next_page = map(int, match.groups())
-        if not 0 < minutes <= 720 or not 0 < completed < total or next_page != completed + 1:
-            return "Check minutes and page counts; next page should follow completed pages."
+            return '這項任務已經結束，請查看目前的學習安排。'
         state = self.get(task_id) or {}
-        previous = (state.get("progress") or {}).get("completed_pages", 0)
-        if state.get("status") == "awaiting_feedback" and completed <= previous:
-            return "Completed pages must increase from the previous report."
-        return self.feedback(task, token, "partial", minutes,
-            f"Completed {completed}/{total} pages. Continue from page {next_page}.",
-            {"completed_pages": completed, "total_pages": total, "next_page": next_page, "session_pages": max(1, completed - previous)})
+        if state.get('token') != token or state.get('status') != 'awaiting_feedback':
+            return '這次回報已經結束，請使用最新的進度訊息。'
+        if task_fields(task) != state.get('snapshot'):
+            return '任務內容剛有變更，請先確認最新的學習安排。'
+        values = {**state.get('partial_draft', {}), **extract_feedback(instruction)}
+        for key, value in values.items():
+            if value != int(value) or value < 1 or (key == 'minutes' and value > 720):
+                return '請確認投入時間與頁碼；時間可以用分鐘或小時說明。這次進度還沒記錄。'
+            values[key] = int(value)
+        previous = (state.get('progress') or {}).get('completed_pages', 0)
+        total = values.get('total') or (state.get('progress') or {}).get('total_pages')
+        completed = values.get('completed')
+        if completed is not None and (completed <= previous or (total is not None and completed >= total)):
+            return '請確認目前讀到哪一頁；頁碼需要比上次往前，若全部讀完可以選「已完成」。'
+        if completed is not None and values.get('next_page', completed + 1) != completed + 1:
+            return f'你讀到第 {completed} 頁，下次是從第 {completed + 1} 頁開始嗎？請再確認頁碼。'
+        if not values.get('minutes') or completed is None:
+            self.update(task_id, lambda old: {**old, 'partial_draft': values}
+                if old and old.get('token') == token and old.get('status') == 'awaiting_feedback' else old)
+            if values.get('minutes'):
+                return f'專心讀了 {values["minutes"]} 分鐘。這次讀到第幾頁了？'
+            if completed is not None:
+                return f'讀到第 {completed} 頁了。這次大概專心讀了多久？'
+            return '這次大概專心讀了多久、讀到第幾頁？直接用平常說話的方式回答就好。'
+        minutes = values['minutes']
+        next_page = completed + 1
+        detail = f'讀到第 {completed} 頁，下次從第 {next_page} 頁開始。'
+        if total:
+            detail = f'已讀 {completed}/{total} 頁，下次從第 {next_page} 頁開始。'
+        return self.feedback(task, token, 'partial', minutes, detail,
+            {'completed_pages': completed, 'total_pages': total, 'next_page': next_page,
+             'session_pages': completed - previous})
 
     async def prepare_feedback(self, task, outcome, minutes, reason=""):
         state = self.get(task['id'])
@@ -1112,12 +1133,16 @@ class LearningCalendar:
                 recorded["duration_estimate"] = None
                 if progress:
                     recorded["progress"] = progress
-                    remaining = actual_minutes * (progress["total_pages"] - progress["completed_pages"]) / progress["session_pages"]
-                    recorded["requested_minutes"] = max(15, min(180, math.ceil(remaining / 15) * 15))
-                    recorded["duration_source"] = "owner"
+                    if progress.get('total_pages'):
+                        remaining = actual_minutes * (progress["total_pages"] - progress["completed_pages"]) / progress["session_pages"]
+                        recorded["requested_minutes"] = max(15, min(180, math.ceil(remaining / 15) * 15))
+                        recorded["duration_source"] = "owner"
+                    else:
+                        recorded.pop('requested_minutes', None)
+                        recorded.pop('duration_source', None)
                 title = re.sub(r" · Continue.*$", "", task['title'])
                 title += (f" · Continue pages {progress['next_page']}–{progress['total_pages']}"
-                          if progress else f" · Continue: {reason[:200]}" if reason else " · Continue remaining work")
+                          if progress and progress.get('total_pages') else f" · Continue: {reason[:200]}" if reason else " · Continue remaining work")
                 successor = self.db.continue_task(task, title, datetime.now(self.settings.tz))
                 recorded['status'] = 'finished'
                 recorded['successor_task_id'] = successor['id']
@@ -1136,8 +1161,8 @@ class LearningCalendar:
             if outcome == 'skipped':
                 from .session_recovery import card
                 return card(self, live, recorded, datetime.now(self.settings.tz))
-            return ("Completed and recorded. Future plans will use your reported time." if outcome == "done"
-                    else f"Recorded. Task #{task['id']} completed; remaining work saved as #{successor['id']}." if outcome == "partial"
+            return ('已記下這次完成的進度。' if outcome == 'done'
+                    else (f"已記下這次投入 {actual_minutes} 分鐘，下次從第 {progress['next_page']} 頁繼續。" if progress else '已記下這次進度，剩下的部分會接著安排。') if outcome == "partial"
                     else "Recorded. Use /plan to request another execution plan; writing still requires approval.")
         return self.db._run_task_action(record)
 
@@ -1158,15 +1183,13 @@ class LearningCalendar:
         await self.deliver_feedback(task, state)
 
     def feedback_content(self, task, state):
-        text = (f"<b>Did you get to this, Sir?</b>\n\n{escape(task['title'])}\n"
-                f"{display_time(state['start'], self.settings.tz)} · {state['minutes']} minutes planned\n\n"
-                "What is the outcome? Choose below.\n\n"
-                "Different duration? For 15 minutes completed, send\n"
-                f"<code>/taskupdate {task['id']} 15 done</code>")
-        if state.get("outcome_reminder_count"):
-            text = "The outcome is still unconfirmed; I have not assumed it was missed.\n\n" + text
-        return text, self.buttons(task["id"], state,
-            [("done", "Completed"), ("partial", "Partially completed"), ("skipped", "Did not start")])
+        text = (f"<b>這次學得如何？</b>\n\n{escape(task['title'])}\n"
+                f"{display_time(state['start'], self.settings.tz)} · 原訂 {state['minutes']} 分鐘\n\n"
+                '目前進度到哪裡了？')
+        if state.get('outcome_reminder_count'):
+            text = '還沒收到這次的進度，有空再告訴我就好。\n\n' + text
+        return text, self.buttons(task['id'], state,
+            [('done', '已完成'), ('partial', '完成一部分'), ('skipped', '還沒開始')])
 
     async def deliver_feedback(self, task, state):
         text, buttons = self.feedback_content(task, state)

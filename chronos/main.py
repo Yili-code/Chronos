@@ -948,7 +948,11 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             elif instruction in {"/cancel", "取消"}:
                 planner = learning_calendar()
                 state = planner.get(study_edit["task_id"])
-                if study_edit.get('mode') == 'booked':
+                if study_edit.get('mode') == 'feedback':
+                    if state and state.get('token') == study_edit['token'] and state.get('status') == 'awaiting_feedback':
+                        planner.update(study_edit['task_id'], lambda old: {k: v for k, v in old.items() if k != 'partial_draft'} if old and old.get('token') == study_edit['token'] else old)
+                    reply = '先不記錄這次進度，之後還可以回來補充。'
+                elif study_edit.get('mode') == 'booked':
                     reply = 'The current booking is unchanged.'
                 elif study_edit.get('mode') == 'recovery':
                     from .session_recovery import respond
