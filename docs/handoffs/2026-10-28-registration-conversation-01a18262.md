@@ -15,3 +15,12 @@
 
 - Final local validation 2026-10-28T20:24:00.441030+08:00: all 2480 Python tests passed in 141.29s; existing Starlette deprecation warning only. Ruff 0.14.1 undefined-name checks, compilation, docs (98 links/126 Markdown), extension tests (21 passed) and diff checks passed. Final production-model/local-SQLite two-turn flow retained one task and queued that same ID inside the two-day window; no production task/Calendar/message writes. Four final model-only samples also passed; the separate recent-only model classification miss is protected by deterministic routing and is not claimed as a model-only success.
 - Ready for atomic publication. PR/CI/merge/deployment pending; candidate must preserve runtime configuration and production standing authorization.
+
+- Publication: commit ff1563a7c7c02baf2253d74d239e6f32f4f876c8 pushed; PR https://github.com/Yili-code/Chronos/pull/106. CI 40687528586 in progress; extension success, Python 3.11/3.12 pending. No merge or deployment yet.
+
+- PR #106 merged with expected-head guard after CI 40687528586 passed all three required jobs. Exact merge source 7dac6f127ebbf87ae1097ef8bbdcc4ce3706a03d; merge-source CI pending. Deployment not started.
+
+- Exact merge-source CI 40687899391 passed Python 3.11, Python 3.12 and extension. Deployment started for source 7dac6f127ebbf87ae1097ef8bbdcc4ce3706a03d using a clean Git archive, zero-traffic candidate and guarded promotion. Runtime/source/readiness/Calendar-read checks and final production traffic verification pending.
+
+- Completed 2026-10-28T20:33:38.302957+08:00: deployed exact CI-verified merge 7dac6f127ebbf87ae1097ef8bbdcc4ce3706a03d as chronos-registration-conversation-7dac6f1, 100% production traffic. Public readiness and authenticated status agree on source; actual Calendar read verified. Candidate exact-source intent/capture/provider tests: 170 passed in 4.25s. Environment and runtime configuration unchanged except CHRONOS_RELEASE_SHA; standing automatic acceptance preserved. Rollback chronos-recovery-replies-dec485a.
+- Evidence: local worktree .pytest-tmp/registration-conversation-release-7dac6f1.json (sanitized). No production task/event/message writes during synthetic verification; historical task #217 and old Telegram messages were not replayed or migrated. Live owner Telegram mutation/Calendar-write E2E remains unobserved. Application work and deployment complete. Final evidence publication pending; other computers not verified synchronized.
