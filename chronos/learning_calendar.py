@@ -194,13 +194,19 @@ class LearningCalendar:
         """Atomically give an explicit owner request the next approval turn."""
         return self.request_proposals([task_id], immediate=immediate)[0]
 
-    def request_proposals(self, task_ids, *, minutes=None, immediate=False):
+    def request_proposals(self, task_ids, *, minutes=None, immediate=False, window=None):
         """Queue an explicit batch atomically; each Calendar write still needs approval."""
         task_ids = list(dict.fromkeys(task_ids))
         if not 1 <= len(task_ids) <= 20 or any(type(i) is not int or i < 1 for i in task_ids):
             raise ValueError("Select between 1 and 20 task IDs")
         if minutes is not None and (type(minutes) is not int or not 15 <= minutes <= 180):
             raise ValueError("Work blocks must be between 15 and 180 minutes")
+        if window is not None:
+            begin, stop = window
+            now = datetime.now(self.settings.tz)
+            if (begin.utcoffset() is None or stop.utcoffset() is None or
+                    not now < stop or not begin < stop or stop > now + timedelta(days=7)):
+                raise ValueError("請指定未來七天內的有效安排範圍。")
         def request():
             tasks = self.db.list_open_tasks()
             states = {i: self.get(i) or {} for i in dict.fromkeys([*(task['id'] for task in tasks), *task_ids])}
@@ -239,6 +245,9 @@ class LearningCalendar:
                 if minutes is not None:
                     current.update(requested_minutes=minutes, duration_source='owner')
                     current.pop('duration_estimate', None)
+                current.pop('requested_window', None)
+                if window is not None:
+                    current['requested_window'] = dict(zip(('start', 'end'), (v.isoformat() for v in window)))
                 updates[task_id] = {**current, "status": "queued", "token": uuid4().hex}
             for key, replacement in updates.items():
                 self.db._save_task_action_state(f"learning:task:{key}", replacement)
@@ -308,6 +317,7 @@ class LearningCalendar:
                 "nightly_batch": (old or {}).get("nightly_batch"),
                 **{k: old[k] for k in ('nightly_slot', 'nightly_overview', 'nightly_reason') if old and k in old},
                 "requested_minutes": (old or {}).get("requested_minutes"),
+                "requested_window": (old or {}).get("requested_window"),
                 "duration_source": (old or {}).get("duration_source"),
                 "duration_estimate": (old or {}).get("duration_estimate"),
                 "progress_note": (old or {}).get("progress_note", ""),
@@ -323,7 +333,7 @@ class LearningCalendar:
             return
         try:
             await self.calendar.verify_owner()
-            window = state.get('nightly_slot') if state.get('duration_source') == 'nightly_ai' else None
+            window = state.get('nightly_slot') if state.get('duration_source') == 'nightly_ai' else state.get('requested_window')
             if window:
                 begin, stop = (datetime.fromisoformat(window[k]) for k in ('start', 'end'))
                 busy = await self.calendar.busy(begin, stop)
@@ -372,12 +382,14 @@ class LearningCalendar:
                         state['nightly_slot'] = dict(zip(('start', 'end'), (v.isoformat() for v in slot)))
                         state['nightly_reason'] = 'Replacement session checked against current availability; confirmation is required.'
             else:
-                slot = find_slot(task, now, busy, reservations, self.settings, minutes, booked_minutes, policy)
+                slot = find_slot(task, now, busy, reservations, self.settings, minutes, booked_minutes, policy,
+                    window=(begin, stop) if window else None)
             from .nightly_planning import deadline as task_deadline
             due = task_deadline(task, self.settings)
             horizon = min(now + timedelta(days=7), due) if due else now + timedelta(days=7)
-            state['availability_search'] = {'start': now.isoformat(), 'end': horizon.isoformat(),
-                'scope': 'deadline' if due and due <= now + timedelta(days=7) else 'seven_days'}
+            state['availability_search'] = {'start': begin.isoformat() if state.get('requested_window') and source != 'nightly_ai' else now.isoformat(),
+                'end': stop.isoformat() if state.get('requested_window') and source != 'nightly_ai' else horizon.isoformat(),
+                'scope': 'requested_window' if state.get('requested_window') and source != 'nightly_ai' else 'deadline' if due and due <= now + timedelta(days=7) else 'seven_days'}
             plan = {**state, "status": "proposed" if slot else "no_slot", "minutes": minutes,
                     "duration_source": source, "delivery": "proposal_pending", "estimate_samples": evidence.get("samples", 0)}
             if slot:
@@ -393,7 +405,7 @@ class LearningCalendar:
                         if len(due) > 10 else
                         datetime.combine(datetime.fromisoformat(due).date(), time.max, self.settings.tz))
                     horizon = min(horizon, deadline)
-                if horizon > now and source != 'nightly_ai':
+                if horizon > now and source != 'nightly_ai' and not window:
                     from .study_reflow import preview
                     reflow = await preview(self, task, {**plan, "start": horizon.isoformat()}, now)
                     if reflow:
@@ -409,7 +421,9 @@ class LearningCalendar:
         if state["status"] == "no_slot":
             search = state.get('availability_search')
             if search:
-                scope = ('before the task deadline' if search['scope'] == 'deadline' else 'in the next 7 days')
+                scope = (f"within {display_time(search['start'], self.settings.tz)}–{display_time(search['end'], self.settings.tz)}"
+                    if search['scope'] == 'requested_window' else
+                    'before the task deadline' if search['scope'] == 'deadline' else 'in the next 7 days')
                 detail = (f"No continuous {state['minutes']}-minute block fits {scope} within your working hours, "
                     "current commitments and daily workload limit. Try another duration or planning window.")
             else:

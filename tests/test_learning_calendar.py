@@ -1804,3 +1804,33 @@ def test_plan_navigation_uses_saved_receipts_without_generation(system, monkeypa
     assert 'Arrange this' in bot.send_message.await_args.args[1]
     assert planner.get(task['id']) == {'status': 'queued'}
     main.ai.estimate_duration.assert_not_awaited()
+
+
+@pytest.mark.parametrize('occupied', [False, True])
+def test_requested_window_survives_queue_restart_without_outside_fallback(setup, occupied):
+    planner, task, calendar, bot = setup
+    begin = (NOW + timedelta(days=1)).replace(hour=0)
+    stop = begin + timedelta(days=2)
+    reply, queued = planner.request_proposals([task['id']], minutes=30, window=(begin, stop))
+    assert queued
+    calendar.busy.return_value = [(begin, stop)] if occupied else []
+    planner = LearningCalendar(planner.db, calendar, bot, planner.settings)
+    asyncio.run(planner.tick(NOW))
+    state = planner.get(task['id'])
+    assert state['requested_window'] == {'start': begin.isoformat(), 'end': stop.isoformat()}
+    if occupied:
+        assert state['status'] == 'no_slot'
+        assert 'calendar_moves' not in state
+        assert 'within' in planner.proposal_content(task, state)[0]
+    else:
+        assert state['status'] == 'proposed'
+        assert begin <= datetime.fromisoformat(state['start']) < datetime.fromisoformat(state['end']) <= stop
+    calendar.insert.assert_not_awaited()
+
+
+def test_requested_window_validation_has_no_queue_side_effects(setup):
+    planner, task, calendar, _ = setup
+    with pytest.raises(ValueError):
+        planner.request_proposals([task['id']], window=(NOW, NOW-timedelta(days=1)))
+    assert planner.get(task['id']) is None
+    calendar.insert.assert_not_awaited()

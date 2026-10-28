@@ -130,7 +130,7 @@ def test_review_provider_contract_uses_real_structured_output(monkeypatch):
         data = json.loads(payload['contents'][0]['parts'][0]['text'])
         assert data['courses']['security'] == '資訊安全實務與管理'
         assert data['tasks'][0]['id'] == 7
-        assert 'Use Study' in prompt and 'never apply changes' in prompt
+        assert 'Use concise noun phrases' in prompt and 'never apply changes' in prompt
         assert 'course_key' in str(payload['generationConfig']['responseJsonSchema'])
         return httpx.Response(200, json={'candidates': [{'content': {'parts': [{'text': json.dumps({
             'items': [{'task_id': 7, 'title': 'Study network firewalls', 'course_key': 'security',

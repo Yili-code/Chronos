@@ -127,7 +127,7 @@ def test_external_parse(monkeypatch):
         assert payload["contents"][0]["parts"][0]["text"] == "明天五點交報告 #Chronos"
         assert payload["generationConfig"]["responseMimeType"] == "application/json"
         prompt = payload["systemInstruction"]["parts"][0]["text"]
-        assert "concise, natural English action phrase" in prompt
+        assert "concise noun phrase in the user's language" in prompt
         assert "lowercase kebab-case" in prompt
         return valid_response()
     mock_provider(monkeypatch, handler)
@@ -372,7 +372,7 @@ def test_capture_effort_contract_and_result(monkeypatch):
         prompt = payload["systemInstruction"]["parts"][0]["text"]
         assert "timing.estimated_minutes" in prompt
         assert "Never put effort estimates in title, content" in prompt
-        assert "content/progress in concise natural English" in prompt
+        assert "Preserve the user's language" in prompt
         return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": json.dumps({
             "title": "Study graph theory midterm past exams", "due_at": None, "project": None,
             "timing": {"estimated_minutes": 120}})}]}}]})

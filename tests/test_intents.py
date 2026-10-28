@@ -425,7 +425,7 @@ def test_batch_creation_is_atomic_and_replay_safe(store, monkeypatch, text):
     acknowledgement = first["messages"][0]
     assert acknowledgement["task_created"] is True
     assert "task_id" not in acknowledgement
-    assert acknowledgement["text"].startswith("<b>I have added 5 tasks, Sir.</b>")
+    assert acknowledgement["text"].startswith("<b>已加入 5 項待辦</b>")
     assert [row[0]["callback_data"] for row in acknowledgement["reply_markup"]["inline_keyboard"]] == [
         f"task:edit:{task['id']}" for task in main.tasks.list_open()]
     assert first["messages"] == second["messages"]
@@ -506,3 +506,77 @@ def test_explicit_creation_keeps_social_word_as_task_title(store, monkeypatch):
     store.process_update(77002, action)
     main.ai.parse_many.assert_awaited_once_with("Hello")
     assert len(main.tasks.list_open()) == 1
+
+
+def test_pending_question_explanation_preserves_original_request(store, monkeypatch):
+    mock = classify(monkeypatch, action='clarify', instruction='報名 Taione 和 YC', question='想在哪天處理報名？')
+    run('報名 Taione 和 YC')
+    reply = run('看不懂你的意思', update=2)
+    assert '報名 Taione 和 YC' in reply['messages'][0]['text']
+    assert '想在哪天處理報名' in reply['messages'][0]['text']
+    assert mock.await_count == 1
+    assert store.get_task_action_state('intent:clarify:123')['instruction'] == '報名 Taione 和 YC'
+    assert not main.tasks.list_open()
+
+
+def test_recent_request_is_bounded_and_passed_as_context(store, monkeypatch):
+    mock = classify(monkeypatch, action='task_create', instruction='報名 Taione 和 YC')
+    run('報名 Taione 和 YC')
+    mock.return_value = Intent(action='clarify', question='要安排多久？')
+    run('明後天因為要等 GPT 額度恢復', update=2)
+    recent = mock.await_args.kwargs['context']['recent_request']
+    assert recent['instruction'] == '報名 Taione 和 YC'
+    assert datetime.fromisoformat(recent['expires_at']) > datetime.now(main.settings.tz)
+
+
+def test_new_work_with_window_queues_same_created_task_and_replay(store, monkeypatch):
+    monkeypatch.setattr(main.settings, 'enable_learning_calendar', True)
+    begin = (datetime.now(main.settings.tz) + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    stop = begin + timedelta(days=2)
+    classify(monkeypatch, action='task_create', instruction='明天或後天安排 Taione 與 YC 報名，等 GPT 額度恢復', start=begin, end=stop)
+    reply = run('明天或後天安排個時間報名 Taione 和 YC')
+    items = main.tasks.list_open()
+    assert len(items) == 1
+    state = store.get_task_action_state(f"learning:task:{items[0]['id']}")
+    assert state['requested_window'] == {'start': begin.isoformat(), 'end': stop.isoformat()}
+    assert state['status'] == 'queued'
+    assert any(m.get('planning_requested') for m in reply['messages'])
+    assert run('明天或後天安排個時間報名 Taione 和 YC') == reply
+    assert len(main.tasks.list_open()) == 1
+
+
+def test_invalid_window_does_not_create(store, monkeypatch):
+    monkeypatch.setattr(main.settings, 'enable_learning_calendar', True)
+    now = datetime.now(main.settings.tz)
+    classify(monkeypatch, action='task_create', start=now, end=now-timedelta(days=1))
+    run('安排報名')
+    assert not main.tasks.list_open()
+    main.ai.parse.assert_not_awaited()
+
+
+def test_date_only_followup_reuses_created_id_despite_wrong_model_action(store, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    monkeypatch.setattr(main.settings, 'enable_learning_calendar', True)
+    mock = classify(monkeypatch, action='task_create', instruction='報名 Taione 和 YC')
+    run('報名 Taione 和 YC')
+    task = main.tasks.list_open()[0]
+    assert store.get_task_action_state('intent:recent:123')['task_ids'] == [task['id']]
+    planner = SimpleNamespace(request_proposals=Mock(return_value=('正在安排', True)))
+    monkeypatch.setattr(main, 'learning_calendar', lambda: planner)
+    mock.return_value = Intent(action='task_create', instruction='報名 Taione 和 YC，明後天因為要等 GPT 額度恢復')
+    run('明後天因為要等 GPT 額度恢復', update=2)
+    assert len(main.tasks.list_open()) == 1
+    assert main.ai.parse.await_count == 1
+    args, options = planner.request_proposals.call_args
+    assert args == ([task['id']],)
+    begin, stop = options['window']
+    assert begin.date() == datetime.now(main.settings.tz).date() + timedelta(days=1)
+    assert stop - begin == timedelta(days=2)
+
+
+def test_date_prefixed_new_request_does_not_inherit_recent_id(store, monkeypatch):
+    classify(monkeypatch, action='task_create', instruction='報名 Taione 和 YC')
+    run('報名 Taione 和 YC')
+    run('明天新增另一個報告任務', update=2)
+    assert len(main.tasks.list_open()) == 2
