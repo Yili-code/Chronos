@@ -110,7 +110,9 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
         recent = None
     from . import task_completion
     completion_pending = app.db.get_task_action_state(f'completion:recent:{chat_id}') if persistent and app.settings.enable_learning_calendar else None
-    if completion_pending:
+    if (completion_pending and not pending and recent
+            and recent.get('action') in {'task_complete', 'plan_feedback'}
+            and recent.get('task_ids') == [completion_pending['task_id']]):
         completion_reply = task_completion.followup(app.learning_calendar(), text, chat_id, now, completion_pending)
         if completion_reply is not None:
             return completion_reply
