@@ -1,6 +1,6 @@
 # Chronos progress snapshot
 
-- Updated: 2026-10-29T04:27:09+08:00 (Asia/Taipei).
+- Updated: 2026-10-29T04:31:30+08:00 (Asia/Taipei).
 - Remote baseline: Yili-code/Chronos main at f19b6d50aa99b3606f0579378ab1ee944823c58f. Read current main and PR #111 through the connected GitHub source; this snapshot records verified remote state, not a local checkout sync.
 - Scope: documentation-only update of current implementation and release status. No application files, runtime settings, production data, or deployment changed.
 
@@ -24,5 +24,6 @@ Recent related releases also made study feedback conversational and measurement-
 
 The local checkout remains on main at 01f3ebe and shows 184 commits behind its cached origin/main ref. Manual sync and fetch were blocked by PermissionError writing `.git/FETCH_HEAD`. The existing untracked `docs/handoffs/2026-10-21-exam-planning-review-01a15c58.md` is preserved and was not folded into this snapshot. Do not describe this machine as synchronized. Once Git metadata is writable, fetch and fast-forward without discarding that untracked file, then reread AGENTS.md, PROJECT_STATUS.md and active handoffs.
 
-- Validation for this task: GitHub main/PR/CI/release evidence read-only verified; documentation-only change; no runtime tests run.
-- Commit/push: snapshot prepared on `codex/current-progress-2026-10-29` from current remote main; PR publication pending.
+- Validation for the snapshot: GitHub main/PR/CI/release evidence read-only verified; no runtime tests run.
+- Publication: PR #112 passed CI run 40763549384 (Python 3.11, Python 3.12, extension) and merged as 9648908a48304c394a3a8c4d5a014d7df7f6f28d. No workflow run was associated with the merge commit at the time of this update.
+- Commit/push: follow-up handoff correction on `codex/current-progress-merge-record`; PR publication pending.
