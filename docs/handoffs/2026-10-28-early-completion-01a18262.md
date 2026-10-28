@@ -24,3 +24,9 @@
 - The direct alias path now requires a full-message asserted completion phrase, rather than a keyword anywhere in the message. Mixed requests and meta-language examples remain model-routed. Additional tests cover quoted, hypothetical, translated, future, creation and language-teaching requests. This bound is the primary protection; lexical exclusions are additional context checks.
 
 - Final assertion-guard validation 2026-10-28T21:33:58.411627+08:00: all 2559 Python tests passed in 148.61s; 47 new completion/guard cases included. Ruff 0.14.1 and diff checks passed. Original merge 76220ac was never deployed by this task. Publishing the atomic guard followup, then exact final merge CI and guarded deployment.
+
+- Guard PR #110 passed CI 40697657199 and merged with expected-head guard as 0eddb3eaa4d3001e962901ed7cdad890f0d78ead. Still not deployed. Final conversation ownership check added precedence for a newer active clarification over an older optional completion-duration prompt; otherwise a duration for task B could be written to completed task A. Added both-store regression and will validate final source before deployment.
+
+- Optional duration capture now additionally requires the most recent successful interpreted action to be completion of that same fixed task. This prevents old measurements from absorbing a duration after either a new question or a newer successful request. Reuses the existing recent-action record without extra data reads. Both cases have strict-store regression coverage.
+
+- Frozen release validation 2026-10-28T21:45:00.570203+08:00: all 2563 Python tests passed in 148.06s, including 51 new completion/assertion/context ownership cases. Final Ruff 0.14.1, docs/diff checks passed. No further behavior changes planned; publish this ownership followup and deploy its exact verified merge source. No production writes or intermediate deployment performed.

@@ -207,3 +207,33 @@ def test_questions_quotes_and_future_requests_never_bypass_interpretation(store,
     run(text)
     assert main.db.get_task(task['id'])['status']=='open'
     mock.assert_awaited_once()
+
+
+def test_new_clarification_takes_precedence_over_optional_old_duration(store,monkeypatch):
+    monkeypatch.setattr(main.settings,'enable_learning_calendar',True)
+    finished=main.tasks.create('Database systems Chapter 2')
+    run('剛複習完 DB ch2')
+    other=main.tasks.create('Other report')
+    main.db.mutate_task_action_state('intent:clarify:123',lambda _: {
+        'instruction':'安排另一份報告','question':'這份報告想安排多久？','candidate_ids':[other['id']],
+        'parsed_intent':{'action':'plan_request'},'snapshots':{str(other['id']):task_fields(other)},
+        'expires_at':(datetime.now(main.settings.tz)+timedelta(minutes=10)).isoformat(),'token':'new-question'})
+    mock=classify(monkeypatch,action='clarify',question='補充另一份報告的安排')
+    run('可能三個小時吧',update=2)
+    mock.assert_awaited_once()
+    assert main.learning_calendar().get(finished['id'])['feedback']['actual_minutes'] is None
+    assert main.db.get_task(other['id'])['status']=='open'
+
+
+def test_new_successful_request_also_retires_old_completion_followup(store,monkeypatch):
+    monkeypatch.setattr(main.settings,'enable_learning_calendar',True)
+    finished=main.tasks.create('Database systems Chapter 2')
+    run('剛複習完 DB ch2')
+    other=main.tasks.create('Other report')
+    main.db.mutate_task_action_state('intent:recent:123',lambda _: {'action':'plan_request',
+        'task_ids':[other['id']],'instruction':'安排另一份報告',
+        'expires_at':(datetime.now(main.settings.tz)+timedelta(minutes=10)).isoformat()})
+    mock=classify(monkeypatch,action='acknowledge')
+    run('可能三個小時吧',update=2)
+    mock.assert_awaited_once()
+    assert main.learning_calendar().get(finished['id'])['feedback']['actual_minutes'] is None
