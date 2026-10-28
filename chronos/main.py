@@ -1,4 +1,5 @@
 import asyncio
+from uuid import uuid4
 from html import escape
 import hmac
 import json
@@ -119,13 +120,13 @@ def record_course_progress_reply(
 
 
 def task_edit_keyboard(items: list[dict]) -> dict:
-    return {"inline_keyboard": [[{"text": f"Edit #{task['id']} · {task['title'][:40]}",
+    return {"inline_keyboard": [[{"text": f"修改 · {task['title'][:40]}",
                                   "callback_data": f"task:edit:{task['id']}"}] for task in items[:50]]}
 
 
 def task_card(task: dict, text: str) -> dict:
     if (task.get("timing") or {}).get("uncertain"):
-        text += "\n\nIs this the deadline, planned work time, or course/event date? Reply with the intended role."
+        text += "\n\n這個時間是要完成的期限，還是打算處理這項工作的日期？直接回覆即可。"
     return {"text": text, "parse_mode": "HTML", "task_id": task["id"],
             "reply_markup": task_edit_keyboard([task])}
 
@@ -1718,10 +1719,11 @@ def prepare_created_task(parsed, *, chat_id=None):
     return prepare_created_tasks([parsed], chat_id=chat_id)
 
 
-def prepare_created_tasks(parsed_tasks, *, chat_id=None):
+def prepare_created_tasks(parsed_tasks, *, chat_id=None, planning_window=None, planning_minutes=None):
     aliases = tasks.project_aliases()
     def create() -> dict:
         before = tasks.list_open()
+        queue = (db.get_task_action_state('learning:proposal-queue') or {}) if planning_window else None
         created = tasks.create_many(parsed_tasks)
         messages = creation_messages(created, settings.tz, aliases, task_card, task_edit_keyboard)
         # Read once before writes, preserving the Firestore transaction contract.
@@ -1732,6 +1734,18 @@ def prepare_created_tasks(parsed_tasks, *, chat_id=None):
         # Keep the existing single-task list and its receipt/retry contract.
         listing = ([{"text": format_tasks(after, settings.tz, project_aliases=aliases), "parse_mode": "HTML"}]
                    if len(created) == 1 else [])
+        if planning_window:
+            for task in created:
+                db._save_task_action_state(f"learning:task:{task['id']}", {
+                    'status': 'queued', 'token': uuid4().hex,
+                    'requested_minutes': planning_minutes,
+                    'requested_window': dict(zip(('start', 'end'), (v.isoformat() for v in planning_window)))})
+            ids = [task['id'] for task in created]
+            db._save_task_action_state('learning:proposal-queue', {**queue,
+                'active_task_id': queue.get('active_task_id') or ids[0],
+                'requested_task_ids': list(dict.fromkeys([*queue.get('requested_task_ids', []), *ids]))})
+            messages.append({'text': '已加入待辦，接著會在指定日期內尋找可用時段；安排結果會另外通知。',
+                'planning_requested': True, 'planning_task_ids': ids})
         return message_bundle(*messages, *listing, *suggestions)
     return create
 

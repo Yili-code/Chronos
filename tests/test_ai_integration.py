@@ -29,7 +29,7 @@ def test_telegram_uses_external_ai(task_service, monkeypatch):
     parse = AsyncMock(return_value=ParsedTask("Review external analysis"))
     monkeypatch.setattr(main.ai, "parse", parse)
     reply = asyncio.run(main.handle_message("新增 工作"))
-    assert reply.startswith("<b>I have added it, Sir.</b>")
+    assert reply.startswith("<b>已加入待辦</b>")
     assert "<b>Review external analysis</b>" in reply
     assert "<b>Due</b>" not in reply
     assert task_service.list_open()[0]["due_at"] is None

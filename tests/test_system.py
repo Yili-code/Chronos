@@ -77,7 +77,7 @@ def test_creation_shows_updated_list_and_retries_only_undelivered_list(system, t
     assert len(service.list_open()) == 4
     assert bot.send_message.await_count == 3
     card, failed_list, retried_list = bot.send_message.await_args_list
-    assert card.args[1].startswith("<b>I have added it, Sir.</b>")
+    assert card.args[1].startswith("<b>已加入待辦</b>")
     assert failed_list.args[1] == retried_list.args[1]
     assert "<b>Unscheduled</b>" in retried_list.args[1]
     assert "Check operating system class scope" in retried_list.args[1].split("<b>Unscheduled</b>")[1]
@@ -812,7 +812,7 @@ def test_batch_acknowledgement_delivers_once_and_keeps_learning_trigger(system, 
     assert client.post("/telegram/webhook", headers=headers, json=payload).status_code == 200
     assert len(service.list_open()) == 2
     assert bot.send_message.await_count == 1
-    assert "I have added 2 tasks, Sir." in bot.send_message.await_args.args[1]
+    assert "已加入 2 項待辦" in bot.send_message.await_args.args[1]
     assert len(bot.send_message.await_args.kwargs["reply_markup"]["inline_keyboard"]) == 2
     calendar.tick.assert_awaited()
 

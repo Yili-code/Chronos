@@ -100,6 +100,14 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
         pending = None
     if agenda_context is not None and pending and pending.get('agenda_context') != agenda_context:
         pending = None
+    if pending and re.fullmatch(r"\s*(?:看不懂(?:你的意思)?|不懂|什麼意思|什么意思|what do you mean)[？?。!！]*\s*", text, re.I):
+        original = escape(pending['instruction'])
+        question = escape(pending['question'])
+        example = '\n例如「明天處理」或「星期五前完成」，分別表示工作日期與完成期限。' if re.search(r'時間|何時|哪天|日期|期限', pending['question']) else ''
+        return lambda: app.message_bundle({'text': f'剛才是在確認「{original}」。\n{question}{example}\n直接回覆這個問題即可，不必重述整件事。', 'parse_mode': 'HTML'})
+    recent = app.db.get_task_action_state(f'intent:recent:{chat_id}') if persistent else None
+    if recent and recent.get('expires_at', '') <= now.isoformat():
+        recent = None
     items = app.tasks.list_open()
     by_id = {item["id"]: item for item in items}
     if bound_task_id is not None and bound_task_id not in by_id:
@@ -107,7 +115,7 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
     from . import preferences
     saved_preferences = preferences.read(app.db, chat_id) if persistent else {}
     context = {"bound_task_id": bound_task_id, "clarification": pending,
-               "preferences": saved_preferences}
+               "preferences": saved_preferences, "recent_request": recent}
     from . import study_revision
     recent_plan = study_revision.recent_context(app.db, now) if persistent else None
     if recent_plan:
@@ -163,6 +171,20 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
     except (AIError, ValueError) as error:
         return lambda reply=str(error): "目前無法理解這個要求，沒有變更任何內容。\n" + escape(reply)
 
+    # A date-only answer to the just-created task cannot create a duplicate,
+    # even if the classifier chooses task_create. Explicit new work stays model-routed.
+    date_answer = re.fullmatch(r"\s*(明後天|明天或後天|明天|後天)(?:[，,\s]*(?:因為|因为|要等|等)[^。！？\n]{1,200})?[。.!！]?\s*", text)
+    recent_ids = (recent or {}).get('task_ids', [])
+    if (date_answer and not pending and recent and recent.get('action') == 'task_create'
+            and len(recent_ids) == 1 and recent_ids[0] in by_id
+            and bound_task_id in {None, recent_ids[0]}
+            and not re.search(r'新增|新建|刪除|删除|完成|改成|改為|改为', text)):
+        offset = 2 if date_answer[1] == '後天' else 1
+        begin = (now + timedelta(days=offset)).replace(hour=0, minute=0, second=0, microsecond=0)
+        stop = begin + timedelta(days=2 if date_answer[1] in {'明後天', '明天或後天'} else 1)
+        intent = Intent(action='plan_request', task_ids=recent_ids, start=begin, end=stop,
+            instruction=recent['instruction'] + '\n' + text)
+
     if agenda_context is not None:
         from . import agenda_context as agendas
         if not agendas.current(app.db, agenda_context):
@@ -191,8 +213,10 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
         instruction += "\nOnly change content; preserve title."
     ids = list(dict.fromkeys(intent.task_ids))
     # A matched existing task with a requested start is scheduling, never creation.
-    if ids and intent.start is not None and intent.action in {'task_create', 'plan_request'}:
+    if ids and intent.start is not None and intent.end is None and intent.action in {'task_create', 'plan_request'}:
         intent.action = 'task_schedule'
+    elif ids and intent.action == 'task_create' and intent.start is not None and intent.end is not None:
+        intent.action = 'plan_request'
     elif ids and intent.action == 'task_create':
         intent.action = 'clarify'
         intent.question = '這項任務已存在。要安排它的工作時段，還是另建不同的任務？'
@@ -219,6 +243,19 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
             return app.message_bundle({"text": "\n".join(lines), "parse_mode": "HTML"})
         return save
 
+    if intent.action == 'task_schedule' and intent.start is not None and intent.end is not None:
+        intent.action = 'plan_request'
+    scheduling_window = None
+    if intent.action in {'plan_request', 'task_create'} and (intent.start is not None or intent.end is not None):
+        if (intent.start is None or intent.end is None or intent.start.utcoffset() is None or
+                intent.end.utcoffset() is None or not intent.start < intent.end or
+                not now < intent.end <= now + timedelta(days=7)):
+            return clarify('想在哪幾天安排這項工作？請提供未來七天內的日期範圍。', ids)
+        if intent.minutes is not None and not 15 <= intent.minutes <= 180:
+            return clarify('每項工作時段需為 15 至 180 分鐘，請調整時長。', ids)
+        scheduling_window = (intent.start, intent.end)
+        if not persistent or not app.settings.enable_learning_calendar:
+            return clarify('目前未啟用排程。要先保存為未排程的待辦嗎？', ids)
     if any(i not in by_id for i in ids):
         return clarify("找不到指定的未完成任務，請重新指定名稱。")
     batch_plan = (intent.action == "plan_request" and intent.target_selection == "all"
@@ -273,7 +310,17 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
                 instruction, update_id, now, start=intent.start, minutes=intent.minutes)
             action = lambda: result
         elif intent.action == "task_create":
-            action = await app.prepare_message(text if not pending else instruction, update_id=update_id, chat_id=chat_id, create_only=True)
+            if scheduling_window:
+                parsed = await app.ai.parse_many(instruction)
+                from . import task_review
+                parsed = task_review.defer_inferred_course_tags(parsed, instruction)
+                # The window belongs to the scheduling request, not an ambiguous deadline.
+                for item in parsed:
+                    item.timing.pop('uncertain', None)
+                    item.timing.pop('scheduled', None)
+                action = app.prepare_created_tasks(parsed, chat_id=chat_id, planning_window=scheduling_window, planning_minutes=intent.minutes)
+            else:
+                action = await app.prepare_message(text if not pending else instruction, update_id=update_id, chat_id=chat_id, create_only=True)
         elif intent.action == "task_edit":
             action = await app.prepare_message(f"/edit #{task_id} {instruction}", update_id=update_id)
         elif intent.action == "event_create":
@@ -325,7 +372,8 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
                     if any(target['id'] not in current_by_id or
                         task_fields(current_by_id[target['id']]) != task_fields(target) for target in targets):
                         return "任務已變更，請重新確認要做的操作。"
-                    reply = app.learning_calendar().request_proposals(ids, minutes=intent.minutes, immediate=True)
+                    options = {'window': scheduling_window} if scheduling_window else {}
+                    reply = app.learning_calendar().request_proposals(ids, minutes=intent.minutes, immediate=True, **options)
                     if not reply[1]:
                         return reply[0]
                     return app.message_bundle({"text": reply[0], "planning_requested": True, "planning_task_ids": ids})
@@ -457,6 +505,14 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
                 if app.edit_conflict(app.tasks.list_open(), selected):
                     return "任務已變更，請重新確認要做的操作。"
             result = action()
+            if persistent:
+                recent_targets = ids
+                if intent.action == 'task_create' and isinstance(result, dict):
+                    recent_targets = list(dict.fromkeys(message['task_id'] for message in result.get('messages', [])
+                        if message.get('task_created') and message.get('task_id')))
+                app.db._save_task_action_state(f'intent:recent:{chat_id}', {
+                    'instruction': instruction, 'action': intent.action, 'task_ids': recent_targets,
+                    'expires_at': (now + timedelta(minutes=10)).isoformat()})
             if saved and pending and saved.get("token") == pending.get("token"):
                 app.db._save_task_action_state(key, {})
             return result
