@@ -599,6 +599,9 @@ class LearningCalendar:
         return f"Time block scheduled\n{display_time(state['start'], self.settings.tz)}–{datetime.fromisoformat(state['end']):%H:%M}"
 
     async def callback(self, action, task_id, token, message_id):
+        if action == 'completecancel':
+            from .task_completion import cancel_future
+            return await cancel_future(self, task_id, token)
         active = self.sync_queue()
         state = self.get(task_id)
         task = next((t for t in self.db.list_open_tasks() if t["id"] == task_id), None)
@@ -1090,9 +1093,9 @@ class LearningCalendar:
             if end.tzinfo is None:
                 raise ValueError('Missing timezone')
         except (CalendarError, KeyError, ValueError, TypeError):
-            return lambda: 'Unable to verify this booking right now. Please try /taskupdate again shortly.'
+            return lambda: '目前無法核對這個預約時段，請稍後再試。任務若已完成，也可以直接回報任務完成。'
         if end > datetime.now(self.settings.tz):
-            return lambda: 'This work session has not ended yet. Report after ' + display_time(end.isoformat(), self.settings.tz) + '.'
+            return lambda: '這個預約時段還沒結束。若任務已提前完成，直接告訴我「這項任務完成了」，不必等到預約時間。'
         return lambda: self.feedback(task, state['token'], outcome, minutes, reason, verified_booking=state)
 
     def feedback(self, task, token, outcome, actual_minutes, reason="", progress=None, *, verified_booking=None):

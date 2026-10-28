@@ -108,6 +108,12 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
     recent = app.db.get_task_action_state(f'intent:recent:{chat_id}') if persistent else None
     if recent and recent.get('expires_at', '') <= now.isoformat():
         recent = None
+    from . import task_completion
+    completion_pending = app.db.get_task_action_state(f'completion:recent:{chat_id}') if persistent and app.settings.enable_learning_calendar else None
+    if completion_pending:
+        completion_reply = task_completion.followup(app.learning_calendar(), text, chat_id, now, completion_pending)
+        if completion_reply is not None:
+            return completion_reply
     items = app.tasks.list_open()
     by_id = {item["id"]: item for item in items}
     if bound_task_id is not None and bound_task_id not in by_id:
@@ -162,7 +168,13 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
                       and item.get("status") in {"active", "pending"}]
     bulletins = app.db.list_announcements() if persistent else []
     try:
-        intent = await app.ai.classify_intent(text, interpret_items, now, context=context,
+        matched_completed = task_completion.chapter_matches(text, items) if task_completion.explicit_done(text) else []
+        if matched_completed:
+            intent = Intent(action='task_complete', task_ids=matched_completed,
+                target_selection='single' if len(matched_completed) == 1 else 'ambiguous', instruction=text,
+                minutes=task_completion.reported_minutes(text))
+        else:
+            intent = await app.ai.classify_intent(text, interpret_items, now, context=context,
             reminders=[{k: item.get(k) for k in ("token", "title", "start")} for item in reminder_items],
             announcements=[{"id": token, "title": record["announcement"]["title"]}
                            for token, record in bulletins])
@@ -184,6 +196,14 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
         stop = begin + timedelta(days=2 if date_answer[1] in {'明後天', '明天或後天'} else 1)
         intent = Intent(action='plan_request', task_ids=recent_ids, start=begin, end=stop,
             instruction=recent['instruction'] + '\n' + text)
+
+    if pending and len(pending.get('candidate_ids', [])) == 1:
+        previous_intent = pending.get('parsed_intent') or {}
+        completed_before = previous_intent.get('outcome') == 'done' or task_completion.explicit_done(pending['instruction'])
+        answer_minutes = task_completion.duration_answer(text)
+        if completed_before and (answer_minutes is not None or task_completion.explicit_done(text)):
+            intent = Intent(action='plan_feedback', task_ids=pending['candidate_ids'], outcome='done',
+                minutes=answer_minutes, instruction=pending['instruction'] + '\n' + text)
 
     if agenda_context is not None:
         from . import agenda_context as agendas
@@ -229,8 +249,8 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
 
     def clarify(question, candidates=None):
         candidates = (candidates or [])[:8]
-        lines = [escape(question)] + [f"{n}. {escape(by_id[i]['title'][:160])} (#{i})"
-                              for n, i in enumerate(candidates, 1) if i in by_id]
+        lines = [escape(question)] + ([f"{n}. {escape(task_completion.display_title(by_id[i]['title'])[:160])}"
+                              for n, i in enumerate(candidates, 1) if i in by_id] if len(candidates) > 1 else [])
         state = {"instruction": instruction, "question": question,
                  "parsed_intent": intent.model_dump(mode="json"), "action": intent.action, "edit_field": intent.edit_field, "candidate_ids": candidates,
                  "snapshots": {str(i): task_fields(by_id[i]) for i in candidates if i in by_id},
@@ -347,6 +367,8 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
                 '\n'.join(dict.fromkeys(filter(None, [intent.content, instruction, text]))), now,
                 preview_content=intent.content if intent.content not in {text, instruction, intent.title} else None)
             action = lambda: result
+        elif intent.action == 'task_complete' and app.settings.enable_learning_calendar:
+            action = lambda: task_completion.complete(app.learning_calendar(), selected, intent.minutes, instruction, chat_id)
         elif intent.action == "task_complete":
             def action():
                 current = app.tasks.list_open()
@@ -387,8 +409,12 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
                 if app.edit_conflict(app.tasks.list_open(), selected):
                     return lambda: "任務已變更，請重新確認要做的操作。沒有調整行程。"
                 action = await app.prepare_message(f"/planedit {task_id} {instruction}", update_id=update_id)
+            elif intent.outcome == 'done' or task_completion.explicit_done(instruction):
+                action = lambda: task_completion.complete(app.learning_calendar(), selected, intent.minutes, instruction, chat_id)
             elif intent.minutes is None or intent.outcome is None:
-                return clarify("這次花了幾分鐘？完成、部分完成，還是略過？", ids)
+                if intent.outcome is not None:
+                    return clarify('這次大概投入多久？可以用分鐘或小時說。', ids)
+                return clarify('這次是完成一部分，還是整項都完成了？', ids)
             else:
                 action = await app.learning_calendar().prepare_feedback(selected, intent.outcome, intent.minutes, instruction)
         elif intent.action == "agenda":
