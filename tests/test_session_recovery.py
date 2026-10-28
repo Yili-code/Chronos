@@ -90,7 +90,7 @@ def test_unknown_outcome_gets_only_one_reminder_without_assuming_failure(setup):
     for offset in [0, 1, 1, 2]:
         asyncio.run(planner.tick(NOW + timedelta(days=offset)))
     bot.send_message.assert_awaited_once()
-    assert 'not assumed' in bot.send_message.await_args.args[1]
+    assert '還沒收到這次的進度' in bot.send_message.await_args.args[1]
     assert planner.get(task['id'])['status'] == 'awaiting_feedback'
     assert 'feedback' not in planner.get(task['id'])
     assert len(planner.db.list_open_tasks()) == 1

@@ -1,0 +1,17 @@
+# Conversational study feedback
+
+- Updated: 2026-10-28 Asia/Taipei. Base 6a8c5a1, branch codex/progress-conversation; isolated worktree progress-conversation. Remote history verified; unrelated parent changes preserved.
+- Scope: replace the screenshot's pipe-format partial-study prompt with natural Traditional Chinese, accept natural duration/page reports and incremental answers, retain numeric input compatibility, localize feedback acknowledgement and cancellation. Preserve existing session/token validation, transactional successor creation and receipts.
+- Authorization: continuing the user's request to optimize assistant behavior, test and deploy; new screenshot identifies a missed feedback path. No production task or message replay.
+- Decision: deterministic parser outside AI routing; unknown total pages remain unknown. Collect only missing fields in a token-bound draft. Never infer focused minutes from scheduled duration or infer total pages from model output.
+- Implementation/validation/publication/deployment pending. Next: tests on SQLite and strict Firestore, full suite, PR/merge CI, guarded deployment. No commits or push yet.
+
+- Implemented: chronos/study_feedback.py deterministic Chinese/English duration and explicit page parser (legacy pipe input preserved); learning_calendar.py conversational prompt/errors/acknowledgement/outcome card, token-bound draft, optional total and no invented remaining-duration estimate; main.py feedback cancellation clears only the draft. Tests cover natural single/multi-turn reports, strict stores, unknown total, planned/break-inclusive/invalid values, webhook routing and cancellation.
+- Focused validation before final webhook phrasing refinement: 327 tests passed in 56.86s. Ruff 0.14.1 undefined-name checks and compilation passed. Full final suite pending. No live credentials/model calls or production task/Calendar/Telegram writes needed for this deterministic parser change.
+
+- Final review also found the Completed button supplied planned minutes as actual minutes. Removed that substitution: completion without an owner duration records null and does not train the duration profile. Explicit reported minutes still train it. Localized the completion acknowledgement and added strict-backend coverage. Full runs were interrupted while these safeguards were being added; no incomplete run counted as success.
+
+- Complete final run: 2510 passed, two failures were the same old English reminder-copy assertion on both stores. Updated that assertion to the new neutral reminder; preserved once-only delivery and awaiting-feedback/no-recovery state checks. Full rerun pending. Final focused feedback/cancellation/measurement coverage: 54 passed in 2.41s. Docs 98 links/127 Markdown and final Ruff checks passed.
+
+- Final validation 2026-10-28T20:56:14.513719+08:00: all 2512 Python tests passed in 137.56s. Existing Starlette deprecation warning only. Final feedback-focused subset: 54 passed; final Ruff 0.14.1 undefined-name checks, compilation, docs (98 links/127 Markdown) and diff checks passed. Regression coverage includes real webhook routing with split natural replies and cancellation on both stores; no live Telegram/Calendar writes.
+- Ready for atomic publication. Commit/push/PR/CI/merge/deployment pending. Deployment authorization continues from the user's request in this chat; candidate will preserve runtime settings and use exact merge-source CI.
