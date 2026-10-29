@@ -25,7 +25,7 @@ def window(text, now):
 
 def request(text, now):
     scope = window(text, now)
-    refs = re.findall(r'(?:\btask|任務|任务)\s*(#?)([1-9]\d*)\b', text, re.I)
+    refs = re.findall(r'(?:(?<![a-z0-9_])task|任務|任务)\s*(#?)([1-9]\d*)(?![a-z0-9_]|\.\d)', text, re.I)
     if not scope or len(refs) != 1:
         return None
     return {**scope, 'reference': int(refs[0][1]), 'stable_id': bool(refs[0][0])}
