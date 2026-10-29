@@ -8,8 +8,8 @@ from .study_feedback import PROMPT
 
 
 def new_request(text):
-    from .task_focus import request
-    if request(text, datetime.now().astimezone()):
+    from .task_focus import window
+    if window(text, datetime.now().astimezone()):
         return True
     return bool(re.search(r'安排|重排|改排|排到|移到|留給|留给|空出|騰出|腾出|查詢|查询|列出|新增|新建|(?:移除|刪除|删除|取消).{0,20}(?:行程|計畫|计划|安排)|\b(?:schedule|reschedule|replan|move|reserve|list|add|create)\b', text, re.I))
 
