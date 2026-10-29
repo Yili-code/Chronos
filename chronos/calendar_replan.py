@@ -12,6 +12,10 @@ from .task_actions import task_fields
 from .temporal_constraints import literal_weekday_conflict
 
 
+def cancel_request(text):
+    return bool(re.fullmatch(r'\s*(?:/cancel(?:@[A-Za-z0-9_]+)?|取消(?:剛才|刚才)?(?:那個|那个|這次|这次)?(?:調整|调整|改排|提案)?|cancel(?:\s+(?:this|that|the))?(?:\s+(?:change|proposal|adjustment))?)(?:[，,]\s*原行程不要動)?[。.!！]?\s*',text or '',re.I))
+
+
 def key(chat_id):
     return f'replan:chat:{chat_id}'
 

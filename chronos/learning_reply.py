@@ -7,6 +7,10 @@ from .task_actions import task_fields
 from .study_feedback import PROMPT
 
 
+def cancel_request(text):
+    return bool(re.fullmatch(r'\s*(?:/cancel(?:@[A-Za-z0-9_]+)?|取消(?:這次|这次)?(?:回報|回报|進度回報|进度回报)?|先不記錄(?:這次|这次)?(?:進度|进度)?)[。.!！]?\s*',text or '',re.I))
+
+
 def new_request(text):
     from .task_focus import window
     if window(text, datetime.now().astimezone()):
