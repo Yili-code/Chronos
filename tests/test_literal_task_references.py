@@ -12,6 +12,7 @@ from test_intents import store, run
     ('Schedule tasks 2, 3, 60 minutes each',[102,103]),
     ('安排 task 2, 3, 1.5 hours each',[102,103]),
     ('安排 tasks 2, 3, 4，每項90分鐘',[102,103,104]),
+    ('Schedule tasks2,3and4, 60 minutes each',[102,103,104]),
 ])
 def test_duration_numbers_are_not_task_references(text,expected):
     from chronos.task_references import literal_ids
@@ -26,6 +27,8 @@ def test_duration_numbers_are_not_task_references(text,expected):
     ('rename task 2 to Task 3', [102]),
     ('把 task 2 安排在 task 3 之後', [102]),
     ('新增待辦，標題就叫「下午的時間都用來完成 task 2」', None),
+    ('完成 Task2abc',None),
+    ('完成 multitask2',None),
 ])
 def test_field_payload_and_anchor_references_are_not_mutation_targets(text,expected):
     from chronos.task_references import literal_ids
@@ -41,8 +44,11 @@ def test_focus_sentence_inside_a_task_title_is_only_data():
 @pytest.mark.parametrize('command,target_index',[
     ('完成 task 2',1),
     ('Complete task 2',1),
+    ('完成task2',1),
+    ('Complete task2',1),
     ('把第2項標成完成',1),
     ('完成 task #{target_id}',0),
+    ('完成task#{target_id}',0),
     ('完成 task #{target_id}，不要碰 task 2',0),
     ('原本打算明天完成 task 2，但現在已經全部完成 task 2',1),
 ])

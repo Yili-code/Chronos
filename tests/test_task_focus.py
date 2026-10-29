@@ -20,6 +20,11 @@ def test_literal_focus(text):
     assert learning_reply.new_request(text)
 
 
+def test_compact_focus_reference_keeps_literal_position():
+    request=task_focus.request('下午的時間都用來完成task2',NOW)
+    assert request['reference']==2 and not request['stable_id']
+
+
 @pytest.mark.parametrize('text', ['不要把下午的時間都用來完成 task 2', '下午的時間都用來完成 task 2 嗎？', 'task 2 完成了', '讀了兩小時'])
 def test_unrelated_or_negated_text_is_not_focus(text):
     assert task_focus.request(text, NOW) is None

@@ -30,7 +30,7 @@ def completion_blocked(text):
 def literal_ids(text,items):
     """None means no literal reference; [] means unsafe/unresolved references."""
     text=operation_text(text)
-    matches=list(re.finditer(r'(?:\btasks?\b|任務|任务)\s*((?:#?\s*-?\d+)(?:\s*(?:[,，、/&]|\band\b)\s*#?\s*-?\d+)*)',text,re.I))
+    matches=list(re.finditer(r'(?:(?<![a-z0-9_])tasks?|任務|任务)\s*((?:#?\s*-?\d+)(?:\s*(?:[,，、/&]|(?<![a-z])and(?![a-z]))\s*#?\s*-?\d+)*)(?![a-z0-9_]|\.\d)',text,re.I))
     ordinals=list(re.finditer(r'第\s*('+NUMBER+r')\s*(?:項|项|個任務|个任务)',text))
     if not matches and not ordinals:
         return None
