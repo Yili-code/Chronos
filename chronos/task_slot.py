@@ -110,7 +110,7 @@ async def preview(planner, chat_id, task, instruction, update_id, now, *, start=
         target_event = await planner.calendar.event(saved['event_id'])
         if target_event:
             target_event = {**target_event, '_calendar_id': cfg.calendar_id}
-        if not target_event or not movable(target_event, cfg, now):
+        if not target_event or not movable(target_event, cfg, now, task_id=task["id"], study_state=saved):
             return 'The existing work session cannot be moved automatically. Nothing changed.'
         if all(e.get('id') != target_event['id'] or e.get('_calendar_id') != cfg.calendar_id for e in events):
             events.append(target_event)
@@ -134,7 +134,7 @@ async def preview(planner, chat_id, task, instruction, update_id, now, *, start=
                 fixed.append(window)
             continue
         props = event.get('extendedProperties', {}).get('private', {})
-        eligible = movable(event, cfg, now, allow_started=linked is not None and not is_target)
+        eligible = movable(event, cfg, now, allow_started=linked is not None and not is_target, task_id=linked, study_state=states.get(linked))
         if linked is not None or props.get('chronosTask'):
             s = states.get(linked) or {}
             eligible = (eligible and s.get('status') == 'scheduled' and not s.get('pending_reschedule')
