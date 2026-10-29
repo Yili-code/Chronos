@@ -118,7 +118,10 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
             if a.utcoffset() is None or b.utcoffset() is None or not now<=a<b or a.date()!=day or b-a>timedelta(days=1):raise ValueError
             owner_window=(a.astimezone(cfg.tz),b.astimezone(cfg.tz))
         except (ValueError,TypeError):return '請確認安排的開始與結束時間，這次沒有變更行程。'
-    breaks=rest_minutes(instruction)
+    try:
+        breaks=rest_minutes(instruction)
+    except ValueError as error:
+        return str(error)
     if not 0<=breaks<=60:return '請指定 0 至 60 分鐘的休息長度。'
     begin,end=owner_window or day_bounds(day,cfg)
     allocation_cfg=cfg.model_copy(update={'learning_start_hour':0,'learning_end_hour':24}) if owner_window else cfg
@@ -206,10 +209,10 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
         old = selected.get(i)
         original_minutes = int((old[2] - old[1]).total_seconds()/60) if old else (states[i] or {}).get('minutes', 0)
         minutes = required_minutes[i]
-        gap=breaks if owner_window and index<len(ordered)-1 else 0
+        gap=breaks if index<len(ordered)-1 else 0
         search_cfg=allocation_cfg.model_copy(update={'learning_daily_minutes':allocation_cfg.learning_daily_minutes+gap})
         block=find_slot(tasks[i],now,fixed,[],search_cfg,minutes+gap,budgets,policy,
-            window=(cursor if owner_window else begin,end),align_minutes=not bool(owner_window),lead_minutes=0 if owner_window else 10)
+            window=(cursor if owner_window or breaks else begin,end),align_minutes=not bool(owner_window),lead_minutes=0 if owner_window else 10)
         slot=(block[0],block[0]+timedelta(minutes=minutes)) if block else None
         if not slot and owner_window:
             return f"{escape(tasks[i]['title'])} 需要 {minutes} 分鐘，但無法在 {begin:%H:%M}–{end:%H:%M} 內同時避開行程、課前準備、期限與每日上限。要將哪項工作移到別的時段，或調整截止時間？這次沒有變更行程。"
@@ -219,7 +222,7 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
                     'Which task may move to another day? Nothing changed.')
         fixed.append(block)
         if gap:rest_slots.append({'start':slot[1].isoformat(),'end':block[1].isoformat(),'title':'短休息'})
-        if owner_window:cursor=block[1]
+        if owner_window or breaks:cursor=block[1]
         budgets[day.isoformat()] += minutes
         common = {'task_id': i, 'task_snapshot': task_fields(tasks[i]), 'title': tasks[i]['title'],
                   'start': slot[0].isoformat(), 'end': slot[1].isoformat(), 'minutes': minutes}

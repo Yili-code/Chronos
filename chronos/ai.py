@@ -356,6 +356,7 @@ class ExternalAI:
             "Do not infer completion or edits from these replies. Mixed requests containing a real change still need "
             "the matching action or clarification; no class/no progress is a meaningful course report, not an acknowledgement. "
             "task_edit changes a todo title/content/deadline/project; plan_edit changes its work session. "
+            "Marking an already-open task incomplete is acknowledge, never store a status word as content or create a duplicate. "
             "Moving a named existing task to a different start or an available morning/afternoon/evening window is plan_edit, "
             "even without the words work session; do not use plan_request for this edit. "
             "把資料庫報告移到明天早上有空的時候 -> plan_edit, preserving the requested window and duration. "
@@ -393,6 +394,7 @@ class ExternalAI:
             "ISPM need at least 120 min per chapter and I did not finish ch1 ch2, replan. "
             "Do not use replan for study-plan corrections. "
             "Whole-window allocation to an existing task, e.g. 下午的時間都用來完成 task 2, is replan: reserve the afternoon for that task and move other study bookings. It is neither a duplicate plan_request nor a completion report. "
+            "For a named existing focus task, include its permanent ID in task_ids rather than leaving the target empty. "
             "replan frees a calendar window by previewing moves, never deletes tasks/events. 今天下午的時間留給 competition programming midterm 準備，移除該時段現有的讀書計畫 is replan: move study bookings out of the afternoon, preserve the exam and other fixed activities, keep the preparation purpose in instruction. It is not clear_tasks or task_edit. "
             "clear_tasks means explicitly deleting ALL tasks, not freeing time. Individual task deletion is unsupported. "
             "reminder_create is a one-time notification without completion tracking; a deadline for deliverable work "
@@ -784,7 +786,9 @@ class ExternalAI:
             f"Existing task: {json.dumps({'title': current_task['title'], 'due_at': current_task.get('due_at'), 'project': current_task.get('project'), 'timing': current_task.get('timing', {})}, ensure_ascii=False)}"
         )
         patch = await self._generate_output(prompt, instruction, TaskEditOutput.model_json_schema(), TaskEditOutput, "task")
-        if re.search(r"內容|内容|\bcontent\b", instruction, re.I) and patch.title.op != "keep":
+        from . import edit_fields
+        if (re.search(r"內容|内容|\bcontent\b", instruction, re.I) and patch.title.op != "keep"
+                and (not edit_fields.title_change(instruction) or edit_fields.content_only(instruction))):
             raise AIError("Content edits must preserve the task title. No task was changed; rephrase the content.")
         values = {key: current_task.get(key) for key in ("title", "due_at", "project")}
         timing = dict(current_task.get("timing") or {})

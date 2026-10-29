@@ -7,9 +7,13 @@ from .task_actions import task_fields
 from .study_feedback import PROMPT
 
 
+def cancel_request(text):
+    return bool(re.fullmatch(r'\s*(?:/cancel(?:@[A-Za-z0-9_]+)?|取消(?:這次|这次)?(?:回報|回报|進度回報|进度回报)?|先不記錄(?:這次|这次)?(?:進度|进度)?)[。.!！]?\s*',text or '',re.I))
+
+
 def new_request(text):
-    from .task_focus import request
-    if request(text, datetime.now().astimezone()):
+    from .task_focus import window
+    if window(text, datetime.now().astimezone()):
         return True
     return bool(re.search(r'安排|重排|改排|排到|移到|留給|留给|空出|騰出|腾出|查詢|查询|列出|新增|新建|(?:移除|刪除|删除|取消).{0,20}(?:行程|計畫|计划|安排)|\b(?:schedule|reschedule|replan|move|reserve|list|add|create)\b', text, re.I))
 

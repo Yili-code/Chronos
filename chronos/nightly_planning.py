@@ -22,7 +22,7 @@ def class_blocks(day, settings, policy):
             for start, end in class_windows(day, settings.tz, policy)]
 
 
-def free_windows(day, busy, settings, policy=None):
+def free_windows(day, busy, settings, policy=None, *, minimum_minutes=30):
     """Subtract merged commitments; 30 minutes is a gap threshold, not a grid."""
     from .learning_calendar import short_task_windows
     begin, end = day_bounds(day, settings)
@@ -31,10 +31,10 @@ def free_windows(day, busy, settings, policy=None):
         if a < end and b > begin)
     cursor, result = begin, []
     for start, stop in blocked:
-        if start - cursor >= timedelta(minutes=30):
+        if start - cursor >= timedelta(minutes=minimum_minutes):
             result.append((cursor, start))
         cursor = max(cursor, stop)
-    if end - cursor >= timedelta(minutes=30):
+    if end - cursor >= timedelta(minutes=minimum_minutes):
         result.append((cursor, end))
     return result
 

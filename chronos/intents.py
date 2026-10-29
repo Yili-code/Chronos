@@ -170,6 +170,7 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
                       and item.get("status") in {"active", "pending"}]
     bulletins = app.db.list_announcements() if persistent else []
     from . import task_focus
+    from . import task_references
     focus_request = task_focus.request(text, now)
     focus_target = None
     if focus_request:
@@ -179,10 +180,21 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
             return lambda: "找不到指定的未完成任務，請用 /task 確認編號。沒有調整行程。"
         if bound_task_id is not None and focus_target["id"] != bound_task_id:
             return lambda: "回覆的任務與指定目標不同，請重新選擇任務。沒有調整行程。"
+    elif scope:=task_focus.window(text,now):
+        named=task_focus.named_target(text,items)
+        if named is not None:
+            focus_target=by_id[named]
+            focus_request=scope
+            if bound_task_id is not None and named!=bound_task_id:
+                return lambda:'回覆的任務與指定目標不同，請重新選擇任務。沒有調整行程。'
     try:
+        literal_completed=task_references.explicit_completion(text,interpret_items)
         matched_completed = task_completion.chapter_matches(text, items) if task_completion.explicit_done(text) else []
         if focus_request:
             intent = Intent(action="replan", task_ids=[focus_target["id"]], instruction=text)
+        elif literal_completed is not None:
+            intent=Intent(action='task_complete' if literal_completed else 'clarify',task_ids=literal_completed,
+                question=None if literal_completed else '請用 /task 確認要完成的任務編號。',instruction=text)
         elif matched_completed:
             intent = Intent(action='task_complete', task_ids=matched_completed,
                 target_selection='single' if len(matched_completed) == 1 else 'ambiguous', instruction=text,
@@ -196,6 +208,19 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
         intent = Intent.model_validate(intent)
     except (AIError, ValueError) as error:
         return lambda reply=str(error): "目前無法理解這個要求，沒有變更任何內容。\n" + escape(reply)
+
+    focus_scope = task_focus.window(text, now)
+    if not focus_request and focus_scope and intent.action in {
+            'replan', 'plan_request', 'plan_edit', 'task_schedule', 'task_complete', 'task_create'}:
+        if len(intent.task_ids) != 1 or intent.task_ids[0] not in by_id:
+            intent = Intent(action='clarify', question='下午要保留給哪一項未完成任務？', instruction=text)
+        else:
+            focus_target = by_id[intent.task_ids[0]]
+            focus_request = focus_scope
+            intent = Intent(action='replan', task_ids=[focus_target['id']], instruction=text)
+    if (intent.action in {'plan_request','plan_edit'} and len(intent.task_ids)>1
+            and study_revision.is_correction(text)):
+        intent.action='study_replan'
 
     # A date-only answer to the just-created task cannot create a duplicate,
     # even if the classifier chooses task_create. Explicit new work stays model-routed.
@@ -232,7 +257,9 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
         from .reset_conversation import EXPIRED
         return lambda:EXPIRED
     # Keep the owner's field choice across a clarification, outside model discretion.
-    content_choice = bool(re.search(r"(?:修改|更改|改|更新).{0,6}(?:內容|内容)|\b(?:edit|change|update)\s+(?:the\s+)?content\b", text, re.I))
+    from . import edit_fields
+    title_choice=edit_fields.title_change(text)
+    content_choice=edit_fields.content_change(text)
     field_answer = bool(re.fullmatch(r"\s*(?:(?:修改|更改|改|更新)(?:他|它|這個任務|这个任务)?的?(?:內容|内容)|(?:edit|change|update)\s+(?:the\s+)?content)[。.!！]?\s*", text, re.I))
     if field_answer and pending and len(pending.get("candidate_ids", [])) == 1:
         intent.action = "task_edit"
@@ -240,12 +267,26 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
         intent.question = None
         intent.edit_field = "content"
         instruction = pending["instruction"] + "\nOnly change content; preserve title."
-    elif intent.action == "task_edit" and (content_choice or intent.edit_field == "content"
+    elif intent.action=='task_edit' and title_choice and not content_choice:
+        intent.edit_field='title'
+    elif intent.action == "task_edit" and not title_choice and (content_choice or intent.edit_field == "content"
             or re.search(r"剩下|還剩|还剩|\bremaining\b", text, re.I)
             or (pending and pending.get("edit_field") == "content" and intent.task_ids == pending.get("candidate_ids"))):
         intent.edit_field = "content"
         instruction += "\nOnly change content; preserve title."
     ids = list(dict.fromkeys(intent.task_ids))
+    from . import task_references
+    if intent.action in TARGET_ACTIONS:
+        if task_references.nonoperative(text):
+            return lambda: '這是引用或假設內容，沒有變更任務。'
+        if intent.action=='task_complete' and task_references.completion_blocked(text):
+            return lambda: '任務維持未完成，沒有標記完成。'
+        literal_ids=task_references.literal_ids(text,interpret_items)
+        if literal_ids is not None:
+            if not literal_ids:
+                return lambda: '要操作哪一項任務？請用 /task 確認編號。沒有變更。'
+            ids=literal_ids
+            intent.task_ids=ids
     # A matched existing task with a requested start is scheduling, never creation.
     if ids and intent.start is not None and intent.end is None and intent.action in {'task_create', 'plan_request'}:
         intent.action = 'task_schedule'
@@ -320,6 +361,8 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
 
     task_id = ids[0] if len(ids) == 1 else None
     selected = by_id.get(task_id)
+    if selected and intent.action=='task_edit' and edit_fields.open_status_request(text):
+        return lambda: f'「{escape(selected["title"])}」目前就是未完成，不需要另建任務。內容與行程維持原樣。'
     # Fixed commands below are internal adapters to existing validated handlers.
     # Neither the model nor the user can supply a command name here.
     simple = {"task_list": "/task", "task_review": "/reviewtasks", "undo": "/undo", "clear_tasks": "/clear",
@@ -334,6 +377,14 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
             if intent.assignment_course is not None:
                 return lambda: assignment_access.query(app.db, app.settings, course=intent.assignment_course, page=intent.page)
             action = lambda: assignment_access.request_refresh(app.db, app.settings, chat_id, update_id)
+        elif intent.action=='free' and (intent.start is not None or intent.end is not None):
+            if (intent.start is None or intent.end is None or intent.start.utcoffset() is None
+                    or intent.end.utcoffset() is None or not timedelta(0)<intent.end-intent.start<=timedelta(days=7)
+                    or intent.end>now+timedelta(days=7)):
+                return clarify('想查哪一天、哪個時段的空檔？請提供未來七天內的範圍。')
+            from .free_time import bounded_free_message
+            result=await bounded_free_message(app.db,app.google_calendar,app.settings,intent.start,intent.end,now)
+            action=lambda:result
         elif intent.action in simple:
             action = await app.prepare_message(simple[intent.action], update_id=update_id, chat_id=chat_id)
         elif intent.action == 'task_schedule':

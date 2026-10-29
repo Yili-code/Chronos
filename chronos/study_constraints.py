@@ -34,9 +34,19 @@ def minimum(text):
 
 
 def rest_minutes(text):
-    m=re.search(r'(?:休息|breaks?)\s*(?:各|約|约)?\s*('+NUMBER+r')\s*(?:分(?:鐘|钟)?|minutes?|mins?)',text,re.I)
-    if not m:m=re.search(r'('+NUMBER+r')\s*(?:分(?:鐘|钟)?|minutes?|mins?)\s*(?:的)?(?:短)?休息',text,re.I)
-    if m:return int(number(m[1]))
+    values=[]
+    for pattern in [r'(?:休息|breaks?)\s*(?:(?:各|約|约|改成|改為|改为|調整為|调整为|to|of)\s*)?(-?'+NUMBER+r')\s*(?:分(?:鐘|钟)?|minutes?|mins?)',
+                    r'(-?'+NUMBER+r')\s*(?:分(?:鐘|钟)?|minutes?|mins?)\s*(?:的)?(?:短)?休息']:
+        for match in re.finditer(pattern,text,re.I):
+            if not re.search(r'不要|不用|不需|不必|不$',text[max(0,match.start()-4):match.start()]):
+                raw=match[1]
+                values.append((match.start(),number(raw.lstrip('-'))*(-1 if raw.startswith('-') else 1)))
+    for match in re.finditer(r'(?:不要|不用|不需(?:要)?|不必|不)\s*休息|\b(?:no|without)\s+breaks?\b',text,re.I):
+        values.append((match.start(),0))
+    if values:
+        value=max(values,key=lambda item:item[0])[1]
+        if value<0 or value!=int(value):raise ValueError('休息長度請使用 0 至 60 的整數分鐘，這次沒有變更行程。')
+        return int(value)
     return 5 if re.search(r'休息|break',text,re.I) else 0
 
 

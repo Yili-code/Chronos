@@ -692,10 +692,13 @@ def test_clear_requires_button_confirmation_and_deletes_every_task(system):
         'update_id': 60, 'message': {'chat': {'id': 123}, 'text': '/clear'}}).status_code == 200
     assert len(service.list_open()) == 1
     assert bot.send_message.call_args.args[1] == main.CLEAR_CONFIRM_TEXT
-    assert bot.send_message.call_args.kwargs['reply_markup'] == main.CLEAR_KEYBOARD
+    keyboard=bot.send_message.call_args.kwargs['reply_markup']['inline_keyboard']
+    confirm=keyboard[0][0]['callback_data'];cancel=keyboard[1][0]['callback_data']
+    assert confirm.startswith('clear:confirm:') and cancel.startswith('clear:cancel:')
+    assert confirm.rsplit(':',1)[1]==cancel.rsplit(':',1)[1]
 
     callback = {'update_id': 61, 'callback_query': {
-        'id': 'clear-1', 'data': 'clear:confirm', 'message': {'chat': {'id': 123}}}}
+        'id': 'clear-1', 'data': confirm, 'message': {'chat': {'id': 123}}}}
     assert client.post('/telegram/webhook', headers=headers, json=callback).status_code == 200
     assert service.list_open() == []
     assert bot.send_message.call_args.args[1] == 'Deleted 2 tasks.\n\nNo open tasks, Sir. A welcome state of affairs.'

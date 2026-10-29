@@ -823,7 +823,12 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         and (not (source_message.text or "").startswith("/") or source_message.text == "/cancel"))
     replan_cancel_question = bool(update.message and replan_session and replan_session.get('ordered_sequence')
         and replan_session.get('status') == 'clarifying' and source_message.text in {'/cancel', '取消'})
-    if replan_callback or replan_command or replan_edit or replan_cancel_question:
+    replan_cancel = bool(update.message and replan_session
+        and replan_session.get('status') in {'pending','editing','clarifying','creating','partial'}
+        and calendar_replan.cancel_request(source_message.text)
+        and (not source_message.reply_to_message or source_message.reply_to_message.message_id in
+             [replan_session.get('message_id'),*replan_session.get('preview_message_ids',[])]))
+    if replan_callback or replan_command or replan_edit or replan_cancel_question or replan_cancel:
         receipt = db.get_update(update_id)
         if receipt is None:
             try:
@@ -832,11 +837,11 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                 elif replan_callback:
                     reply = await calendar_replan.callback(learning_calendar(), chat_id, source_message.message_id,
                                                            replan_callback[2], replan_callback[1])
-                elif replan_cancel_question:
+                elif replan_cancel_question or replan_cancel and replan_session.get('status')=='clarifying':
                     db.mutate_task_action_state(calendar_replan.key(chat_id), lambda old:
                         {**old,'status':'cancelled'} if old and old.get('token') == replan_session['token'] and old.get('status') == 'clarifying' else old)
                     reply = 'Cancelled. Your calendar is unchanged.'
-                elif replan_edit and source_message.text in {"/cancel", "取消"}:
+                elif replan_cancel or replan_edit and source_message.text in {"/cancel", "取消"}:
                     reply = await calendar_replan.callback(learning_calendar(), chat_id, replan_session.get("message_id"),
                                                            replan_session["token"], "cancel")
                 else:
@@ -855,14 +860,16 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                 reply = "The scheduling request could not be parsed. No new Calendar changes were made; please retry."
             review = db.get_task_action_state(calendar_replan.key(chat_id)) or {}
             review_action = (replan_callback[1] if replan_callback else
-                             'cancel' if replan_edit and source_message.text in {'/cancel', '取消'} else None)
+                             'cancel' if replan_cancel or replan_cancel_question or replan_edit and source_message.text in {'/cancel', '取消'} else None)
             review_token = replan_callback[2] if replan_callback else (replan_session or {}).get('token')
             review_message_id = source_message.message_id if replan_callback else (replan_session or {}).get('message_id')
             terminal = {'allow':'done','cancel':'cancelled'}.get(review_action)
             if (terminal and review_token and review.get('token') == review_token and review.get('status') == terminal
                     and review.get('message_id') == review_message_id):
-                reply = {'messages': [{'text': reply, 'resolved_preview_ids': list(dict.fromkeys([
-                    *review.get('preview_message_ids', []), review_message_id]))}]}
+                parts=reply['messages'] if isinstance(reply,dict) else [{'text':reply}]
+                cleanup=list(dict.fromkeys([*review.get('preview_message_ids', []),review_message_id]))
+                reply={'messages':[{**part,**({'resolved_preview_ids':cleanup} if index==0 else {})}
+                                   for index,part in enumerate(parts)]}
             receipt = db.process_update(update_id, lambda: reply)
         await deliver_learning_reply(chat_id, update_id, receipt)
         for message in receipt.get('messages', []):
@@ -941,8 +948,9 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         if pending.get("expires_at", "") > datetime.now(settings.tz).isoformat():
             study_edit = pending
     learning_rerouted=False
-    from .learning_reply import new_request as new_learning_request
-    if study_edit and new_learning_request(instruction) and instruction not in {'/cancel','取消'}:
+    from .learning_reply import new_request as new_learning_request, cancel_request as cancel_learning_request
+    study_cancel=cancel_learning_request(instruction)
+    if study_edit and new_learning_request(instruction) and not study_cancel:
         old_token=study_edit.get('token')
         db.mutate_task_action_state(pending_key,lambda old:{} if (old or {}).get('token')==old_token else old)
         study_edit=None
@@ -952,7 +960,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         if receipt is None:
             if update.edited_message:
                 reply = "Send a new reply to adjust the execution plan. Editing an old message does not replay it."
-            elif instruction in {"/cancel", "取消"}:
+            elif study_cancel:
                 planner = learning_calendar()
                 state = planner.get(study_edit["task_id"])
                 if study_edit.get('mode') == 'feedback':
@@ -990,7 +998,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                         "token": study_edit["token"], "expires_at": (datetime.now(settings.tz) + timedelta(hours=2)).isoformat()})
             if study_edit.get('mode') == 'recovery' and not update.edited_message:
                 state = learning_calendar().get(study_edit['task_id']) or {}
-                resolved = (instruction in {'/cancel', '取消'} or state.get('token') != study_edit['token']
+                resolved = (study_cancel or state.get('token') != study_edit['token']
                             or state.get('status') != 'awaiting_resolution'
                             or state.get('recovery', {}).get('stage') != 'reason')
                 prompt_id = study_edit.get('prompt_message_id') or (
@@ -1112,10 +1120,9 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             elif data and re.fullmatch(r"image:\d+:\d+", data):
                 from .image_deadlines import confirm_photo
                 action = lambda: confirm_photo(db, tasks, data, chat_id, datetime.now(settings.tz))
-            elif data == "clear:confirm":
-                action = clear_tasks_reply
-            elif data == "clear:cancel":
-                action = lambda: "Understood. Nothing was deleted."
+            elif data and (clear_match:=re.fullmatch(r'clear:(confirm|cancel)(?::([a-f0-9]{32}))?',data)):
+                from .clear_confirmation import respond
+                action=lambda:respond(db,chat_id,clear_match[1],clear_match[2],datetime.now(settings.tz),clear_tasks_reply)
             elif data and re.fullmatch(r"edit:(?:retry|cancel):\d+", data):
                 action = await prepare_pending_edit(data)
             elif data and re.fullmatch(r"task:undo:[a-f0-9]{32}", data):
@@ -1616,7 +1623,10 @@ async def prepare_message(text: str, *, update_id: int | None = None, chat_id: i
     if command == "undo":
         return prepare_undo()
     if command == "clear":
-        return lambda: CLEAR_CONFIRM_TEXT
+        if chat_id is None or update_id is None:
+            return lambda: CLEAR_CONFIRM_TEXT
+        from .clear_confirmation import preview
+        return lambda:preview(db,chat_id,update_id,datetime.now(settings.tz),CLEAR_CONFIRM_TEXT)
     if command == "done":
         return lambda: "要完成哪一項？直接說任務名稱，或回覆任務卡說「完成了」。\n\n" + task_list_text()
     completed = re.fullmatch(r"done\s+(\d+)", command or "", re.IGNORECASE)

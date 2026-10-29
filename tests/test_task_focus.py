@@ -25,6 +25,32 @@ def test_unrelated_or_negated_text_is_not_focus(text):
     assert task_focus.request(text, NOW) is None
 
 
+@pytest.mark.parametrize('text',[
+    '今天下午不要全部留給 task 2',
+    '今天下午不想都用來完成 task 2',
+    'Do not reserve this afternoon for task 2',
+])
+def test_negated_window_allocation_is_not_focus(text):
+    assert task_focus.window(text,NOW) is None
+
+
+def test_unique_named_material_resolves_without_model_but_duplicate_stays_ambiguous():
+    tasks=[{'id':41,'title':'Competition programming past papers','project':'CP'},
+           {'id':42,'title':'Database systems midterm past papers','project':'DB'}]
+    text='下午都拿來準備競程考古題，其他讀書時段移走'
+    assert task_focus.named_target(text,tasks)==41
+    assert task_focus.named_target(text,[*tasks,{'id':43,'title':'CP past papers','project':'CP'}]) is None
+
+
+@pytest.mark.parametrize('text,title',[
+    ('下午都留給 DB Chapter 10','Database systems Chapter 1'),
+    ('下午都拿來準備 CP 2025 past papers','CP 2024 past papers'),
+    ('下午全留給 Database report','Report'),
+])
+def test_named_focus_never_drops_a_literal_chapter_year_or_course(text,title):
+    assert task_focus.named_target(text,[{'id':41,'title':title,'project':None}]) is None
+
+
 @pytest.mark.parametrize('stable', [False, True])
 def test_webhook_resolves_task_without_duplicate_request_or_completion(system, store, monkeypatch, stable):
     client, _, bot, cfg = system
