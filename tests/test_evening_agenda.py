@@ -158,7 +158,7 @@ def test_agenda_progress_markers(outcome, marker):
     now = NOW + timedelta(days=2)
     text = "\n".join(render_agenda([item], now.date(), NOW.tzinfo, db=db, now=now))
     assert "Study graphs\n" + marker in text
-    db.get_task_action_state.assert_called_once_with("learning:history:old-session")
+    assert [c.args[0] for c in db.get_task_action_state.call_args_list]==["planning:holds","learning:history:old-session"]
 
 
 def test_future_and_untracked_events_have_no_awaiting_marker():

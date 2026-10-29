@@ -10,6 +10,10 @@ from .tasks import project_display_name
 
 def render_agenda(events, day, tz, label="Tomorrow", db=None, now=None, show_task_ids=False, *, heading=None,
                   compact=False, show_project_tags=False, event_groups=None):
+    if db is not None and heading is None:
+        from .planning_holds import events as hold_events
+        begin=datetime.combine(day,time.min,tz)
+        events=[*events,*hold_events(db,max(begin,(now or datetime.now(tz))),begin+timedelta(days=1))]
     if heading is None:
         date = display_date(day.isoformat())
         heading = f"<b>{date if compact else label + ' · ' + date}</b>"
@@ -91,6 +95,9 @@ def render_agenda(events, day, tz, label="Tomorrow", db=None, now=None, show_tas
 
 def render_window_agenda(events, start, end, tz, db=None):
     heading = f"<b>{start:%m/%d %H:%M}–{end:%m/%d %H:%M}</b>"
+    if db is not None:
+        from .planning_holds import events as hold_events
+        events=[*events,*hold_events(db,start,end)]
     return render_agenda(events, start.date(), tz, db=db, heading=heading, show_project_tags=True)
 
 

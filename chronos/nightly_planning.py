@@ -63,7 +63,9 @@ def check_slot(planner, task, state, now, busy, booked_minutes=None):
     from .backward_planning import reserved_windows
     cfg = planner.settings
     start, end = (datetime.fromisoformat(state['nightly_slot'][k]).astimezone(cfg.tz) for k in ('start', 'end'))
-    begin, stop = day_bounds(start.date(), cfg)
+    from .study_constraints import approved_window
+    begin, stop = day_bounds(start.date(), cfg.model_copy(update={'learning_start_hour':0,'learning_end_hour':24}) if state.get('owner_window') else cfg)
+    working_allowed=approved_window(state,start,end) if state.get('owner_window') else begin<=start<end<=stop
     due = deadline(task, cfg)
     policy = planner.db.get_task_action_state('learning:course-calendar-policy')
     classes = class_blocks(start.date(), cfg, policy)
@@ -83,7 +85,7 @@ def check_slot(planner, task, state, now, busy, booked_minutes=None):
             pending.append((a, b))
             load += max(0, (min(stop, b) - max(begin, a)).total_seconds() / 60)
     reasons = []
-    if not begin <= start < end <= stop:
+    if not working_allowed:
         reasons.append('working_hours')
     if start <= now:
         reasons.append('elapsed')

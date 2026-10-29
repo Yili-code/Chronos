@@ -14,7 +14,8 @@ def routine(planner, state):
     cutoff = datetime.combine(start.date(), time(planner.settings.learning_end_hour % 24), planner.settings.tz)
     if planner.settings.learning_end_hour == 24:
         cutoff += timedelta(days=1)
-    return begin <= start < end <= cutoff
+    from .study_constraints import approved_window
+    return approved_window(state,start,end) if state.get("owner_window") else begin <= start < end <= cutoff
 
 
 async def accept(planner, task, state, now):

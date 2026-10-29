@@ -27,8 +27,9 @@ def key(token):
 
 
 def reserved_windows(db):
+    from .planning_holds import windows
     return [(datetime.fromisoformat(s['start']), datetime.fromisoformat(s['end']))
-            for s in (db.get_task_action_state(INDEX) or {}).get('slots', [])]
+            for s in (db.get_task_action_state(INDEX) or {}).get('slots', [])] + windows(db)
 
 
 def deadline_boundary(value):

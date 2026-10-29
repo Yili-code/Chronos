@@ -465,7 +465,9 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
         elif intent.action == "study_replan" or (intent.action == "replan" and study_revision.is_correction(text)):
             if not persistent or not app.settings.enable_learning_calendar:
                 return lambda: "請在已啟用排程的 Telegram 對話操作。"
-            result = await study_revision.preview(app.learning_calendar(), chat_id, text, update_id, now=now)
+            from .study_constraints import revision_instruction
+            instruction=revision_instruction(text,recent)
+            result = await study_revision.preview(app.learning_calendar(), chat_id, instruction, update_id, now=now)
             action = lambda: result
         elif intent.action in {"replan", "backward", "backward_progress"}:
             if not persistent or not app.settings.enable_learning_calendar:
