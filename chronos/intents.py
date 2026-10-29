@@ -169,9 +169,21 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
     reminder_items = [item for item in reminder_items if item.get("chat_id") == chat_id
                       and item.get("status") in {"active", "pending"}]
     bulletins = app.db.list_announcements() if persistent else []
+    from . import task_focus
+    focus_request = task_focus.request(text, now)
+    focus_target = None
+    if focus_request:
+        ref = focus_request["reference"]
+        focus_target = by_id.get(ref) if focus_request["stable_id"] else next((by_id[item["id"]] for item in interpret_items if item["position"] == ref), None)
+        if not focus_target:
+            return lambda: "找不到指定的未完成任務，請用 /task 確認編號。沒有調整行程。"
+        if bound_task_id is not None and focus_target["id"] != bound_task_id:
+            return lambda: "回覆的任務與指定目標不同，請重新選擇任務。沒有調整行程。"
     try:
         matched_completed = task_completion.chapter_matches(text, items) if task_completion.explicit_done(text) else []
-        if matched_completed:
+        if focus_request:
+            intent = Intent(action="replan", task_ids=[focus_target["id"]], instruction=text)
+        elif matched_completed:
             intent = Intent(action='task_complete', task_ids=matched_completed,
                 target_selection='single' if len(matched_completed) == 1 else 'ambiguous', instruction=text,
                 minutes=task_completion.reported_minutes(text))
@@ -473,7 +485,7 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
             if not persistent or not app.settings.enable_learning_calendar:
                 return lambda: "請在已啟用排程的 Telegram 對話操作。"
             if intent.action == "replan":
-                result = await app.calendar_replan.preview(app.learning_calendar(), chat_id, instruction, update_id)
+                result = await app.calendar_replan.preview(app.learning_calendar(), chat_id, text if focus_request else instruction, update_id, **({"focus_task": focus_target, "focus_window": (focus_request["start"], focus_request["end"])} if focus_request else {}))
             else:
                 planner = app.BackwardPlanner(app.db, app.google_calendar, app.ai, app.settings)
                 if intent.action == "backward":

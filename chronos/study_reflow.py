@@ -128,6 +128,8 @@ async def preview(planner, task, state, now):
 async def apply(planner, task, state, now):
     """Replay uncertain writes using an event marker; never repeat a different edit."""
     from .learning_calendar import overlaps, class_windows
+    from .task_focus import validate as validate_focus
+    validate_focus(planner, state)
     moves = state["calendar_moves"]
     additions = state.get('revision_additions', [])
     if state.get('task_slot'):
@@ -204,7 +206,7 @@ async def apply(planner, task, state, now):
                   for t in tasks.values() for s in [planner.get(t["id"])]
                   if s and s.get("start") and s.get("status") == "creating"]
     expected_blockers = {(item["event_id"], item.get("calendar_id", "").casefold()): item
-                         for item in state.get("blocked_events", [])}
+                         for item in [*state.get("blocked_events", []), *state.get("focus_kept", [])]}
     current_blockers = {(event.get("id"), event.get("_calendar_id", "").casefold()): (event, window)
                         for event, window in nonmoving_events}
     for identity, expected in expected_blockers.items():
