@@ -180,8 +180,8 @@ async def apply(planner, task, state, now):
         if load > planner.settings.learning_daily_minutes:
             raise ReflowReviewError("The reviewed arrangement now exceeds the daily study limit. Prepare a fresh proposal.")
     # Check destinations against all calendars again, including overlapping fixed events.
-    begin = min(datetime.fromisoformat(m["start"]) for m in [*moves, *additions])
-    end = max(datetime.fromisoformat(m["end"]) for m in [*moves, *additions])
+    begin = min((datetime.fromisoformat(m["start"]) for m in [*moves, *additions]),default=datetime.fromisoformat(state["start"]))
+    end = max((datetime.fromisoformat(m["end"]) for m in [*moves, *additions]),default=datetime.fromisoformat(state["end"]))
     agenda = await planner.calendar.agenda(min(begin, datetime.fromisoformat(state["start"])),
                                            max(end, datetime.fromisoformat(state["end"])))
     moving_ids = {m["event_id"] for m in moves}
@@ -193,6 +193,9 @@ async def apply(planner, task, state, now):
     fixed_events = [(event, window) for event, window in nonmoving_events
                     if event.get("transparency") != "transparent"]
     fixed = [window for _, window in fixed_events]
+    if state.get('owner_window'):
+        from .nightly_planning import class_blocks
+        fixed+=class_blocks(datetime.fromisoformat(state['start']).date(),planner.settings,policy)
     targets = [(m["start"], m["end"]) for m in [*moves, *additions]]
     if not state.get("window_replan"):
         targets.append((state["start"], state["end"]))
@@ -218,6 +221,8 @@ async def apply(planner, task, state, now):
     for start, stop in targets:
         if datetime.fromisoformat(start) <= now or overlaps(datetime.fromisoformat(start), datetime.fromisoformat(stop), fixed):
             raise ReflowReviewError("A reviewed destination is now busy or has passed. Reflow paused; check /plan.")
+    if state.get('revision_breaks') and any(overlaps(datetime.fromisoformat(s['start']),datetime.fromisoformat(s['end']),fixed) for s in state['revision_breaks']):
+        raise ReflowReviewError('A reviewed rest break is now busy. Prepare a fresh proposal.')
     if state.get('study_revision') or state.get('task_slot'):
         from .learning_calendar import find_slot
         from .backward_planning import reserved_windows
@@ -237,8 +242,12 @@ async def apply(planner, task, state, now):
             if item['task_id'] is not None:
                 load[a.date().isoformat()] -= minutes
             check_now = min(now, a - timedelta(minutes=10)) if state.get('task_slot') else now
-            if find_slot(tasks.get(item['task_id'], {}), check_now, occupied, [], planner.settings, minutes, load, policy,
-                         window=(a,b), align_minutes=not state.get('task_slot')) != (a,b):
+            config=planner.settings.model_copy(update={'learning_start_hour':0,'learning_end_hour':24}) if state.get('owner_window') else planner.settings
+            if state.get('owner_window'):
+                from .study_constraints import approved_window
+                if not approved_window(state,a,b):raise ReflowReviewError('A reviewed slot is outside the owner window.')
+            if find_slot(tasks.get(item['task_id'], {}), check_now, occupied, [], config, minutes, load, policy,
+                         window=(a,b), align_minutes=not (state.get('task_slot') or state.get('owner_window')),lead_minutes=0 if state.get('owner_window') else 10) != (a,b):
                 raise ReflowReviewError('Study constraints changed. Prepare a fresh proposal.')
             occupied.append((a,b))
     for move in moves:

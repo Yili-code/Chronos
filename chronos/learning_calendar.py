@@ -86,7 +86,7 @@ def class_windows(day, tz, policy=None):
             for slot in COURSE_SCHEDULE if slot.weekday == day.weekday()]
 
 
-def find_slot(task, now, busy, reservations, config, minutes, booked_minutes=None, course_policy=None, randomize=False, window=None, align_minutes=True):
+def find_slot(task, now, busy, reservations, config, minutes, booked_minutes=None, course_policy=None, randomize=False, window=None, align_minutes=True, lead_minutes=10):
     """Search 15-minute boundaries by default; class plus study load never exceeds the cap."""
     now = now.astimezone(config.tz)
     if window:
@@ -105,7 +105,7 @@ def find_slot(task, now, busy, reservations, config, minutes, booked_minutes=Non
         load += sum((end - start).total_seconds() / 60 for start, end in reservations if start.date() == day)
         if load + minutes > config.learning_daily_minutes:
             continue
-        start = max(now + timedelta(minutes=10), datetime.combine(day, time(config.learning_start_hour), config.tz))
+        start = max(now + timedelta(minutes=lead_minutes), datetime.combine(day, time(config.learning_start_hour), config.tz))
         if window:
             start = max(start, window[0])
         if align_minutes:
@@ -121,7 +121,7 @@ def find_slot(task, now, busy, reservations, config, minutes, booked_minutes=Non
                 if not randomize:
                     return start, end
                 candidates.append((start, end))
-            start += timedelta(minutes=15)
+            start += timedelta(minutes=15 if align_minutes else 1)
     return choice(candidates) if candidates else None
 
 
@@ -247,6 +247,8 @@ class LearningCalendar:
                     current.update(requested_minutes=minutes, duration_source='owner')
                     current.pop('duration_estimate', None)
                 current.pop('requested_window', None)
+                current.pop('owner_window',None)
+                current.pop('protected_breaks',None)
                 if window is not None:
                     current['requested_window'] = dict(zip(('start', 'end'), (v.isoformat() for v in window)))
                 updates[task_id] = {**current, "status": "queued", "token": uuid4().hex}
@@ -319,6 +321,8 @@ class LearningCalendar:
                 **{k: old[k] for k in ('nightly_slot', 'nightly_overview', 'nightly_reason') if old and k in old},
                 "requested_minutes": (old or {}).get("requested_minutes"),
                 "requested_window": (old or {}).get("requested_window"),
+                "owner_window": (old or {}).get("owner_window"),
+                "protected_breaks": (old or {}).get("protected_breaks",[]),
                 "duration_source": (old or {}).get("duration_source"),
                 "duration_estimate": (old or {}).get("duration_estimate"),
                 "progress_note": (old or {}).get("progress_note", ""),
@@ -373,7 +377,8 @@ class LearningCalendar:
             if source == 'nightly_ai':
                 from .nightly_planning import check_slot, replacement_slot
                 slot, reasons = check_slot(self, task, state, now, [*busy, *reservations], booked_minutes)
-                if not slot:
+                if not slot and state.get('owner_window'):state['nightly_invalid_reasons']=reasons
+                if not slot and not state.get('owner_window'):
                     state['nightly_invalid_reasons'] = reasons
                     state['nightly_overview'] = ''
                     busy = await self.calendar.busy(now, now + timedelta(days=7))
@@ -391,6 +396,7 @@ class LearningCalendar:
             state['availability_search'] = {'start': begin.isoformat() if state.get('requested_window') and source != 'nightly_ai' else now.isoformat(),
                 'end': stop.isoformat() if state.get('requested_window') and source != 'nightly_ai' else horizon.isoformat(),
                 'scope': 'requested_window' if state.get('requested_window') and source != 'nightly_ai' else 'deadline' if due and due <= now + timedelta(days=7) else 'seven_days'}
+            if state.get('owner_window'):state['availability_search']={**state['owner_window'],'scope':'requested_window'}
             plan = {**state, "status": "proposed" if slot else "no_slot", "minutes": minutes,
                     "duration_source": source, "delivery": "proposal_pending", "estimate_samples": evidence.get("samples", 0)}
             if slot:
@@ -524,7 +530,7 @@ class LearningCalendar:
 
     async def book(self, task, state, now):
         """Reconcile a deterministic event ID before retrying a calendar insertion."""
-        failure_status = "needs_replan" if state.get("exact_slot") else "queued"
+        failure_status = "needs_replan" if state.get("exact_slot") or state.get("owner_window") else "queued"
         event_id = sha256(f"chronos:{task['id']}:{state['token']}".encode()).hexdigest()
         await self.calendar.verify_owner()
         event = await self.calendar.event(event_id)
@@ -546,7 +552,8 @@ class LearningCalendar:
             cutoff = datetime.combine(start.astimezone(self.settings.tz).date(), time(self.settings.learning_end_hour % 24), self.settings.tz)
             if self.settings.learning_end_hour == 24:
                 cutoff += timedelta(days=1)
-            if end > cutoff and state.get("late_window") != {"start": state["start"], "end": state["end"]}:
+            from .study_constraints import approved_window
+            if end > cutoff and not approved_window(state,start,end) and state.get("late_window") != {"start": state["start"], "end": state["end"]}:
                 self.update(task["id"], lambda old: {**old, "status": failure_status})
                 return "A late work block needs confirmation. A fresh plan will require approval."
             if state.get("calendar_moves"):
@@ -599,6 +606,9 @@ class LearningCalendar:
         return f"Time block scheduled\n{display_time(state['start'], self.settings.tz)}–{datetime.fromisoformat(state['end']):%H:%M}"
 
     async def callback(self, action, task_id, token, message_id):
+        if action == 'refreshfeedback':
+            from .learning_reply import refresh
+            return refresh(self, task_id, token)
         if action == 'completecancel':
             from .task_completion import cancel_future
             return await cancel_future(self, task_id, token)
@@ -1049,7 +1059,8 @@ class LearningCalendar:
         if state.get('token') != token or state.get('status') != 'awaiting_feedback':
             return '這次回報已經結束，請使用最新的進度訊息。'
         if task_fields(task) != state.get('snapshot'):
-            return '任務內容剛有變更，請先確認最新的學習安排。'
+            from .learning_reply import stale
+            return stale(self,task,state)
         values = {**state.get('partial_draft', {}), **extract_feedback(instruction)}
         for key, value in values.items():
             if value != int(value) or value < 1 or (key == 'minutes' and value > 720):

@@ -814,7 +814,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         if reminder_callback:
             await telegram.answer_callback_query(update.callback_query.id)
         return {"ok": True}
-    replan_callback = re.fullmatch(r"replan:(allow|edit|cancel):([a-f0-9]{32})", update.callback_query.data or "") if update.callback_query else None
+    replan_callback = re.fullmatch(r"replan:(allow|edit|cancel|release):([a-f0-9]{32})", update.callback_query.data or "") if update.callback_query else None
     replan_session = db.get_task_action_state(calendar_replan.key(chat_id))
     replan_command = re.fullmatch(r"/replan(?:@[A-Za-z0-9_]+)?(?:\s+(.+))?", source_message.text or "", re.DOTALL) if update.message else None
     replan_edit = (not update.callback_query and update.message and replan_session
@@ -904,7 +904,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             await telegram.answer_callback_query(update.callback_query.id)
         return {"ok": True}
     if update.callback_query and (update.callback_query.data or "").startswith("learn:"):
-        matched = re.fullmatch(r"learn:(completecancel|adjustbooked|recover|rbusy|rforgot|rload|rlarge|rirrelevant|rprivate|rwrite|ragain|rshort|rdefer|rstop|rconfirm|rback|day[0-9]{8}|approve|edit|earlier|later|longer|shorter|postpone|more|lots|shuffle|manual|reject|retry|done|partial|skipped):(\d+):([a-f0-9]{32})", update.callback_query.data)
+        matched = re.fullmatch(r"learn:(refreshfeedback|completecancel|adjustbooked|recover|rbusy|rforgot|rload|rlarge|rirrelevant|rprivate|rwrite|ragain|rshort|rdefer|rstop|rconfirm|rback|day[0-9]{8}|approve|edit|earlier|later|longer|shorter|postpone|more|lots|shuffle|manual|reject|retry|done|partial|skipped):(\d+):([a-f0-9]{32})", update.callback_query.data)
         if not matched or source_message.message_id is None:
             raise HTTPException(status_code=400, detail="Invalid planning callback")
         receipt = db.get_update(update_id)
@@ -940,6 +940,13 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             and (not instruction.startswith("/") or instruction == "/cancel")):
         if pending.get("expires_at", "") > datetime.now(settings.tz).isoformat():
             study_edit = pending
+    learning_rerouted=False
+    from .learning_reply import new_request as new_learning_request
+    if study_edit and new_learning_request(instruction) and instruction not in {'/cancel','取消'}:
+        old_token=study_edit.get('token')
+        db.mutate_task_action_state(pending_key,lambda old:{} if (old or {}).get('token')==old_token else old)
+        study_edit=None
+        learning_rerouted=True
     if study_edit:
         receipt = db.get_update(update_id)
         if receipt is None:
@@ -975,7 +982,8 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                 except CalendarError as error:
                     reply = str(error)
                 state = learning_calendar().get(study_edit["task_id"])
-                if study_edit.get("mode") == "booked" or (study_edit.get("mode") == "recovery" and (state or {}).get("recovery", {}).get("stage") != "reason") or not state or state.get("token") != study_edit["token"] or state["status"] != ("awaiting_resolution" if study_edit.get("mode") == "recovery" else "awaiting_feedback" if study_edit.get("mode") == "feedback" else "editing"):
+                closed = isinstance(reply,dict) and any(m.get('learning_context_closed') for m in reply.get('messages',[]))
+                if closed or study_edit.get("mode") == "booked" or (study_edit.get("mode") == "recovery" and (state or {}).get("recovery", {}).get("stage") != "reason") or not state or state.get("token") != study_edit["token"] or state["status"] != ("awaiting_resolution" if study_edit.get("mode") == "recovery" else "awaiting_feedback" if study_edit.get("mode") == "feedback" else "editing"):
                     db.mutate_task_action_state(pending_key, lambda old: {} if (old or {}).get("token") == study_edit["token"] else old)
                 else:
                     db.mutate_task_action_state(pending_key, lambda old: {**study_edit, "task_id": study_edit["task_id"],
@@ -1170,6 +1178,8 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                 proposal = await prepare_photo(ai, telegram, tasks, photo, source_message.caption or "",
                                                update_id, chat_id, datetime.now(settings.tz))
                 action = lambda: proposal
+            elif learning_rerouted:
+                action = await prepare_message(text,update_id=update_id,chat_id=chat_id,**request_context)
             elif bound_task is not None:
                 instruction = re.sub(r"^/edit\s*", "", text, flags=re.IGNORECASE).strip()
                 if re.match(r"^/edit(?:\s|$)", text, re.IGNORECASE):

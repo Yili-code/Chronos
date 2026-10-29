@@ -33,8 +33,10 @@ def card(state):
     if state.get('ordered_sequence'):
         from .sequence_replan import card as ordered_card
         return ordered_card(state)
-    lines = ['<b>Your proposed calendar changes, Sir.</b>',
-             f"Requested window: {escape(state['start'])} → {escape(state['end'])}"]
+    lines = ['<b>行程調整提案</b>',f"範圍：{escape(state['start'][:16].replace('T',' '))} → {escape(state['end'][11:16])}"]
+    if state.get('focus_reservation'):lines.append('保留給：'+escape(state['focus_reservation']['title']))
+    if state.get('owner_window'):lines.append(f"工作會限制在這個範圍，間隔休息 {state.get('break_minutes',0)} 分鐘。")
+    for rest in state.get('revision_breaks',[]):lines.append(f"短休息：{rest['start'][11:16]}–{rest['end'][11:16]}")
     blocked = state.get('blocked_events', [])
     if blocked:
         lines += ['', '<b>Still occupied</b>',
@@ -70,6 +72,10 @@ def bind(db, chat_id, message_id, message):
 def explicit_window(instruction, now):
     """Resolve a complete, explicit same-day request without model ambiguity."""
     normalized = re.sub(r"\s+", "", instruction)
+    if re.search(r'(?:今天|今日)下午.*(?:留給|留给).{1,120}(?:準備|准备)',instruction,re.I):
+        start=max(now,now.replace(hour=13,minute=0,second=0,microsecond=0))
+        end=now.replace(hour=18,minute=0,second=0,microsecond=0)
+        return ReplanOutput(actionable=True,start=start.isoformat(),end=end.isoformat(),destination_start=end.isoformat())
     if re.fullmatch(r"(?:幫我)?(?:清空|騰出|空出)(?:今天晚上|今晚)(?:的)?(?:所有)?(?:行程|事情|安排|活動)?[。！!]?", normalized):
         start = max(now, now.replace(hour=18, minute=0, second=0, microsecond=0))
         end = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -148,6 +154,8 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
     events = await planner.calendar.agenda(now, horizon)
     tasks = {t['id']: t for t in db.list_open_tasks()}
     states = {i: planner.get(i) for i in tasks}
+    focus=re.search(r'(?:留給|留给)\s*(.{1,100}?(?:準備|准备))',instruction,re.I)
+    study_only=bool(re.search(r'讀書計畫|读书计划|學習計畫|学习计划|讀書安排|study plans?',instruction,re.I))
     selected, fixed, blocked = [], [], []
     for event in events:
         window = bounds(event, config.tz)
@@ -160,7 +168,7 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
         linked = next((i for i, s in states.items() if s and s.get('event_id') == event['id']
                        and event.get('_calendar_id', '').casefold() in {config.calendar_id.casefold(), config.calendar_account.casefold(), 'primary'}), None)
         props = event.get('extendedProperties', {}).get('private', {})
-        eligible = movable(event, config, now, allow_started=linked is not None)
+        eligible = movable(event, config, now, allow_started=linked is not None) and (not study_only or linked is not None)
         if linked is not None or props.get('chronosTask'):
             saved = states.get(linked) or {}
             eligible = (eligible and saved.get('status') == 'scheduled'
@@ -188,7 +196,7 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
                 fixed.append(window)
         else:
             selected.append((event, window, linked))
-    if not selected:
+    if not selected and not focus:
         if blocked:
             return 'The window cannot be fully freed. These activities cannot be moved automatically:\n' + \
                 '\n'.join(item['description'] for item in blocked) + '\nNothing changed.'
@@ -229,6 +237,7 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
     state = {'status': 'pending', 'token': token, 'chat_id': chat_id, 'start': start.isoformat(),
              'end': end.isoformat(), 'destination_start': destination.isoformat(), 'calendar_moves': moves,
              'blocked_events': blocked,
+             'focus_reservation': {'start':start.isoformat(),'end':end.isoformat(),'title':focus[1].strip(),'chat_id':chat_id} if focus else None,
              'window_replan': True, 'minutes': 0, 'expires_at': (now + timedelta(hours=2)).isoformat()}
     def save(old):
         return old if old and old.get('status') == 'creating' else state
@@ -239,6 +248,9 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
 async def callback(planner, chat_id, message_id, token, action, now=None):
     now = now or datetime.now(planner.settings.tz)
     db = planner.db
+    if action=='release':
+        from .planning_holds import release
+        return release(db,chat_id,token)
     existing = db.get_task_action_state(key(chat_id)) or {}
     if existing.get('task_slot') and existing.get('token') == token:
         from .task_slot import callback as slot_callback
@@ -275,6 +287,9 @@ async def callback(planner, chat_id, message_id, token, action, now=None):
     await planner.calendar.verify_owner()
     try:
         await apply(planner, {}, state, now)
+        if state.get("focus_reservation"):
+            from .planning_holds import save as save_hold
+            save_hold(db,state["token"],[state["focus_reservation"]],now)
         if state.get('study_revision'):
             from .study_revision import finish
             finish(planner, state)
@@ -293,5 +308,11 @@ async def callback(planner, chat_id, message_id, token, action, now=None):
         lines = ['Calendar updated.' if state['calendar_moves'] else 'Study plan reviewed.']
         lines += [f"{m['title']}: {m['start'][11:16]}–{m['end'][11:16]} · {m['minutes']} minutes" for m in state['calendar_moves']]
         lines += [f"Queued unfinished task: {m['title']} · {m['minutes']} minutes. Booking will be checked again." for m in state['revision_additions']]
-        return '\n'.join(lines)
+        text='\n'.join(lines)
+        if state.get('revision_breaks'):
+            return {'messages':[{'text':text,'reply_markup':{'inline_keyboard':[[{'text':'解除本次休息保留','callback_data':'replan:release:'+token}]]}}]}
+        return text
+    if state.get('focus_reservation'):
+        return {'messages':[{'text':'下午已保留給'+state['focus_reservation']['title']+'。已移開 '+str(len(state['calendar_moves']))+' 項讀書安排；固定活動保持原安排。用 /today 可查看目前結果。',
+            'reply_markup':{'inline_keyboard':[[{'text':'解除這段保留','callback_data':'replan:release:'+token}]]}}]}
     return 'Calendar updated.\n' + '\n'.join(f"{m['title']}: {m['old_start'][:16]} → {m['start'][:16]}" for m in state['calendar_moves'])
