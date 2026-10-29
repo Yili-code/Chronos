@@ -173,7 +173,7 @@ async def preview(planner, chat_id, instruction, update_id, now=None, *, focus_t
         linked = next((i for i, s in states.items() if s and s.get('event_id') == event['id']
                        and event.get('_calendar_id', '').casefold() in {config.calendar_id.casefold(), config.calendar_account.casefold(), 'primary'}), None)
         props = event.get('extendedProperties', {}).get('private', {})
-        eligible = movable(event, config, now, allow_started=linked is not None) and (not study_only or linked is not None)
+        eligible = movable(event, config, now, allow_started=linked is not None, task_id=linked, study_state=states.get(linked)) and (not study_only or linked is not None)
         if linked is not None or props.get('chronosTask'):
             saved = states.get(linked) or {}
             eligible = (eligible and saved.get('status') == 'scheduled'

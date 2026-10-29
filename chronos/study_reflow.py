@@ -21,7 +21,22 @@ def bounds(event, tz):
     raise CalendarError("A calendar event has no usable time. Earlier planning paused.")
 
 
-def movable(event, settings, now, *, allow_started=False):
+def verified_booking(event, settings, task_id, state):
+    """A course-like title is editable only with the original managed identity."""
+    props = event.get("extendedProperties", {}).get("private", {})
+    if (task_id is None or not state or state.get("status") != "scheduled"
+            or state.get("pending_reschedule") or state.get("event_id") != event.get("id")
+            or props.get("chronosTask") != str(task_id) or not state.get("token")
+            or props.get("chronosToken") != state["token"]):
+        return False
+    try:
+        expected = tuple(datetime.fromisoformat(state[k]).astimezone(settings.tz) for k in ("start", "end"))
+        return bounds(event, settings.tz) == expected
+    except (KeyError, TypeError, ValueError, CalendarError):
+        return False
+
+
+def movable(event, settings, now, *, allow_started=False, task_id=None, study_state=None):
     owner = settings.calendar_account.casefold()
     primary = settings.calendar_id.strip().casefold()
     source = event.get("_calendar_id", "").casefold()
@@ -35,7 +50,8 @@ def movable(event, settings, now, *, allow_started=False):
         and event.get("start", {}).get("dateTime")
         and bounds(event, settings.tz)[1 if allow_started else 0] > now
         and 0 < (bounds(event, settings.tz)[1] - bounds(event, settings.tz)[0]).total_seconds() <= 180 * 60
-        and not re.search(r"上課|課表|課程|\b(class|lecture|laboratory)\b", event.get("summary", ""), re.I))
+        and (not re.search(r"上課|課表|課程|\b(class|lecture|laboratory)\b", event.get("summary", ""), re.I)
+             or verified_booking(event, settings, task_id, study_state)))
 
 
 async def preview(planner, task, state, now):
@@ -53,7 +69,7 @@ async def preview(planner, task, state, now):
         window = bounds(event, config.tz)
         props = event.get("extendedProperties", {}).get("private", {})
         linked = next((key for key, s in states.items() if s and s.get("event_id") == event["id"]), None)
-        eligible = movable(event, config, now)
+        eligible = movable(event, config, now, task_id=linked, study_state=states.get(linked))
         if props.get("chronosTask") or linked is not None:
             linked_state = states.get(linked) or {}
             eligible = (eligible and linked_state.get("status") == "scheduled"
@@ -154,7 +170,8 @@ async def apply(planner, task, state, now):
                 raise ReflowReviewError("A moved activity changed again. Reflow paused; check /plan.")
         elif event.get("etag") != move["etag"] or not movable(
                 {**event, "_calendar_id": planner.settings.calendar_id}, planner.settings, now,
-                allow_started=bool(state.get("window_replan") and move["task_id"] is not None)):
+                allow_started=bool(state.get("window_replan") and move["task_id"] is not None),
+                task_id=move["task_id"], study_state=planner.get(move["task_id"]) if move["task_id"] is not None else None):
             raise ReflowReviewError("A reviewed activity changed. Reflow paused; check /plan.")
         saved = None
         if move["task_id"] is not None:

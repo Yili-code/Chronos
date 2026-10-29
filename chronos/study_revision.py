@@ -142,7 +142,7 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
         # Retain all other tracked sessions on the revised day, without changing their duration.
         relevant = linked is not None and a.date() == day and b > now and ((linked in minimums) if owner_window else (not keep_others or linked in minimums))
         if relevant:
-            if (state.get('status') != 'scheduled' or not movable(event, cfg, now)
+            if (state.get('status') != 'scheduled' or not movable(event, cfg, now, task_id=linked, study_state=state)
                     or (a.isoformat(), b.isoformat()) != (state.get('start'), state.get('end'))):
                 return 'A study booking has started or changed. Refresh the agenda before revising. Nothing changed.'
             if linked in selected:
