@@ -35,6 +35,7 @@ def card(state):
         return ordered_card(state)
     lines = ['<b>行程調整提案</b>',f"範圍：{escape(state['start'][:16].replace('T',' '))} → {escape(state['end'][11:16])}"]
     if state.get('focus_reservation'):lines.append('保留給：'+escape(state['focus_reservation']['title']))
+    if state.get('focus_task'):lines.append('這是專注時段保留，不會標記任務完成；原有目標工作時段保留。')
     if state.get('owner_window'):lines.append(f"工作會限制在這個範圍，間隔休息 {state.get('break_minutes',0)} 分鐘。")
     for rest in state.get('revision_breaks',[]):lines.append(f"短休息：{rest['start'][11:16]}–{rest['end'][11:16]}")
     blocked = state.get('blocked_events', [])
@@ -118,7 +119,7 @@ def explicit_window(instruction, now):
     return ReplanOutput(actionable=True, start=now.isoformat(), end=end, destination_start=end)
 
 
-async def preview(planner, chat_id, instruction, update_id, now=None):
+async def preview(planner, chat_id, instruction, update_id, now=None, *, focus_task=None, focus_window=None):
     now = now or datetime.now(planner.settings.tz)
     db, config = planner.db, planner.settings
     previous = db.get_task_action_state(key(chat_id))
@@ -133,7 +134,7 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
     if conflict:
         return conflict
     try:
-        output = explicit_window(instruction, now) or await planner.ai.parse_replan(instruction, now,
+        output = (ReplanOutput(actionable=True, start=focus_window[0].isoformat(), end=focus_window[1].isoformat(), destination_start=focus_window[1].isoformat()) if focus_window else explicit_window(instruction, now)) or await planner.ai.parse_replan(instruction, now,
             {k: previous[k] for k in ('start', 'end', 'destination_start')} if previous and previous.get('status') == 'editing' else None)
         if not output.actionable:
             raise ValueError
@@ -155,8 +156,12 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
     tasks = {t['id']: t for t in db.list_open_tasks()}
     states = {i: planner.get(i) for i in tasks}
     focus=re.search(r'(?:留給|留给)\s*(.{1,100}?(?:準備|准备))',instruction,re.I)
-    study_only=bool(re.search(r'讀書計畫|读书计划|學習計畫|学习计划|讀書安排|study plans?',instruction,re.I))
+    focus_title = focus_task["title"] if focus_task else focus[1].strip() if focus else None
+    if focus_task and (focus_task["id"] not in tasks or task_fields(tasks[focus_task["id"]]) != task_fields(focus_task)):
+        return "指定任務已變更，請重新確認。沒有調整行程。"
+    study_only=bool(focus_task) or bool(re.search(r'讀書計畫|读书计划|學習計畫|学习计划|讀書安排|study plans?',instruction,re.I))
     selected, fixed, blocked = [], [], []
+    focus_kept = []
     for event in events:
         window = bounds(event, config.tz)
         if event.get('status') == 'cancelled':
@@ -175,6 +180,10 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
                 and props.get('chronosTask') == str(linked) and props.get('chronosToken') == saved.get('token')
                 and not saved.get('pending_reschedule')
                 and window == tuple(datetime.fromisoformat(saved[k]) for k in ('start', 'end')))
+        if eligible and focus_task and linked == focus_task["id"]:
+            fixed.append(window)
+            focus_kept.append({"event_id":event["id"], "etag":event.get("etag"), "calendar_id":event.get("_calendar_id", ""), "old_start":window[0].isoformat(), "old_end":window[1].isoformat()})
+            continue
         if not eligible:
             reasons = []
             if window[1] <= now:
@@ -196,7 +205,9 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
                 fixed.append(window)
         else:
             selected.append((event, window, linked))
-    if not selected and not focus:
+    if focus_task and blocked:
+        return "無法將整個下午留給這項任務，以下固定活動會保留：\n" + "\n".join(item["description"] for item in blocked) + "\n沒有調整行程。"
+    if not selected and not focus_title:
         if blocked:
             return 'The window cannot be fully freed. These activities cannot be moved automatically:\n' + \
                 '\n'.join(item['description'] for item in blocked) + '\nNothing changed.'
@@ -236,8 +247,9 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
             'start': slot[0].isoformat(), 'end': slot[1].isoformat()})
     state = {'status': 'pending', 'token': token, 'chat_id': chat_id, 'start': start.isoformat(),
              'end': end.isoformat(), 'destination_start': destination.isoformat(), 'calendar_moves': moves,
-             'blocked_events': blocked,
-             'focus_reservation': {'start':start.isoformat(),'end':end.isoformat(),'title':focus[1].strip(),'chat_id':chat_id} if focus else None,
+             'blocked_events': blocked, 'focus_kept':focus_kept,
+             'focus_reservation': {'start':start.isoformat(),'end':end.isoformat(),'title':focus_title,'chat_id':chat_id} if focus_title else None,
+             'focus_task': {'id':focus_task['id'],'snapshot':task_fields(focus_task)} if focus_task else None,
              'window_replan': True, 'minutes': 0, 'expires_at': (now + timedelta(hours=2)).isoformat()}
     def save(old):
         return old if old and old.get('status') == 'creating' else state

@@ -392,6 +392,7 @@ class ExternalAI:
             "study_replan revises a study agenda after duration corrections or unfinished chapters; use it for bounded multi-task scheduling with different durations and breaks, including DB03,04,05 plus DB past-paper preparation from now until 09:00. Preserve every bound and task duration in instruction. A clear followup about break length retains the previous scheduling request and bounds. Use it for "
             "ISPM need at least 120 min per chapter and I did not finish ch1 ch2, replan. "
             "Do not use replan for study-plan corrections. "
+            "Whole-window allocation to an existing task, e.g. 下午的時間都用來完成 task 2, is replan: reserve the afternoon for that task and move other study bookings. It is neither a duplicate plan_request nor a completion report. "
             "replan frees a calendar window by previewing moves, never deletes tasks/events. 今天下午的時間留給 competition programming midterm 準備，移除該時段現有的讀書計畫 is replan: move study bookings out of the afternoon, preserve the exam and other fixed activities, keep the preparation purpose in instruction. It is not clear_tasks or task_edit. "
             "clear_tasks means explicitly deleting ALL tasks, not freeing time. Individual task deletion is unsupported. "
             "reminder_create is a one-time notification without completion tracking; a deadline for deliverable work "
