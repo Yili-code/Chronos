@@ -218,6 +218,9 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
             focus_target = by_id[intent.task_ids[0]]
             focus_request = focus_scope
             intent = Intent(action='replan', task_ids=[focus_target['id']], instruction=text)
+    if (intent.action in {'plan_request','plan_edit'} and len(intent.task_ids)>1
+            and study_revision.is_correction(text)):
+        intent.action='study_replan'
 
     # A date-only answer to the just-created task cannot create a duplicate,
     # even if the classifier chooses task_create. Explicit new work stays model-routed.
@@ -374,6 +377,14 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
             if intent.assignment_course is not None:
                 return lambda: assignment_access.query(app.db, app.settings, course=intent.assignment_course, page=intent.page)
             action = lambda: assignment_access.request_refresh(app.db, app.settings, chat_id, update_id)
+        elif intent.action=='free' and (intent.start is not None or intent.end is not None):
+            if (intent.start is None or intent.end is None or intent.start.utcoffset() is None
+                    or intent.end.utcoffset() is None or not timedelta(0)<intent.end-intent.start<=timedelta(days=7)
+                    or intent.end>now+timedelta(days=7)):
+                return clarify('想查哪一天、哪個時段的空檔？請提供未來七天內的範圍。')
+            from .free_time import bounded_free_message
+            result=await bounded_free_message(app.db,app.google_calendar,app.settings,intent.start,intent.end,now)
+            action=lambda:result
         elif intent.action in simple:
             action = await app.prepare_message(simple[intent.action], update_id=update_id, chat_id=chat_id)
         elif intent.action == 'task_schedule':
