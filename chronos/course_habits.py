@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .ai import AIError
 
-from .course_tracking import COURSE_SCHEDULE
+from .course_tracking import COURSE_SCHEDULE, ProgressStatus, progress_is_exam_day
 
 PREFIX = 'course-habit:'
 DEFAULTS = {'competitive-programming': ['學習本週上課內容', '完成至少六題程式設計題目']}
@@ -53,11 +53,22 @@ HABIT_PROMPT = (
 )
 
 
-async def prepare_reply(db, ai, prompt_id, text):
+async def prepare_reply(db, ai, prompt_id, text, *, message_id=0, local_date=None):
     """Resolve semantics before the receipt transaction; recheck preference snapshots on save."""
     session = db.get_course_session_by_prompt(prompt_id)
     if session is None:
         return None
+    if progress_is_exam_day(text):
+        def record_exam():
+            current = db.get_course_session_by_prompt(prompt_id)
+            proposal = db.get_task_action_state('course-proposal:' + token_for(session))
+            reply = db.record_course_reply(prompt_id, message_id, text, local_date=local_date)
+            if current and current.status not in {ProgressStatus.ANSWERED, ProgressStatus.MISSED} and proposal:
+                items = [{**item, 'status': 'skipped'} if item.get('status') == 'pending' else item
+                         for item in proposal['items']]
+                db._save_task_action_state('course-proposal:' + token_for(session), {**proposal, 'items': items})
+            return reply
+        return record_exam
     # Ordinary progress retains the original route and does not spend an AI call.
     if not re.search(r'通常|平常|每週|每次|以後|往後|固定|習慣|記住|第一項|第二項|照.{0,30}做|'
                      r'\b(?:every|usually|routine|remember|from now|instead)\b', text, re.I):

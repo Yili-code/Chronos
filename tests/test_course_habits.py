@@ -131,3 +131,51 @@ def test_webhook_accepts_only_after_click_and_replays_receipt(system, monkeypatc
     assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 200
     assert len(tasks.list_open()) == 1
     assert bot.send_message.await_count == 1
+
+
+def test_exam_report_skips_only_pending_day_proposals_without_changing_habits(db):
+    start(db)
+    before=habits.preference(db,'competitive-programming')
+    ai=AsyncMock()
+    text='今天期中考，期中考結束通常不用做事'
+    action=asyncio.run(habits.prepare_reply(db,ai,81,text,message_id=99,local_date=NOW.date()))
+    assert action is not None
+    reply=db.process_update(90,action)
+    assert '今天無課或沒有進度' in reply['reply']
+    session=db.get_course_session_by_prompt(81)
+    assert session.report_kind.value=='no_progress' and session.reply_message_id==99
+    assert habits.preference(db,'competitive-programming')==before
+    ai._generate_output.assert_not_awaited()
+    click(db,0,update=91)
+    click(db,1,update=92)
+    assert not db.list_open_tasks()
+    assert session.session_id not in {item.session_id for item in db.list_pending_course_sessions()}
+    assert db.process_update(90,action)['reply']==reply['reply']
+
+
+def test_exam_report_preserves_already_accepted_work(db):
+    start(db)
+    click(db,0)
+    before=db.list_open_tasks()
+    action=asyncio.run(habits.prepare_reply(db,AsyncMock(),81,'今天期中考',message_id=99,local_date=NOW.date()))
+    db.process_update(90,action)
+    assert db.list_open_tasks()==before
+    click(db,1,update=91)
+    assert db.list_open_tasks()==before
+
+
+def test_webhook_exam_report_bypasses_recurring_habit_classifier(system,monkeypatch):
+    from chronos.course_tracking import ProgressReportKind
+    client,_,_,_=system
+    session=new_session(COURSE_SCHEDULE[0],datetime.now(TAIPEI).date(),81)
+    main.db.create_course_session(session)
+    ai=AsyncMock()
+    monkeypatch.setattr(main,'ai',ai)
+    payload={'update_id':99801,'message':{'message_id':99,'chat':{'id':123},
+        'text':'今天期中考，期中考結束通常不用做事',
+        'reply_to_message':{'message_id':81,'chat':{'id':123},'text':'請簡述今天的進度'}}}
+    assert client.post('/telegram/webhook',json=payload,headers={'X-Telegram-Bot-Api-Secret-Token':'test-hook'}).status_code==200
+    saved=main.db.get_course_session_by_prompt(81)
+    assert saved.report_kind is ProgressReportKind.NO_PROGRESS and saved.reply_message_id==99
+    ai._generate_output.assert_not_awaited()
+    assert not main.db.list_open_tasks()
