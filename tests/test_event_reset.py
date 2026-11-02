@@ -114,11 +114,9 @@ def test_historical_question_keeps_category_and_short_answer_rebuilds_that_type(
     planner,events,controls=initialize(setup,'workout',past=True)
     controls['include_past']=None
     assert '是否包含' in rebuild(planner,'workout')
-    controls['include_past']=True
     assert '已重新安排好' in asyncio.run(reset.resume(planner,123,'包含',2,NOW))
     assert planner.db.get_task_action_state(core.KEY)['event_type']=='workout'
-    context=planner.ai.parse_event_reset.call_args.args[3]
-    assert context['clarification']['event_type']=='workout'
+    assert planner.ai.parse_event_reset.await_count==1
 
 
 @pytest.mark.parametrize('lost',['insert','delete'])
@@ -277,14 +275,13 @@ def test_real_webhook_category_reset_replay_and_short_scope_answer(setup,monkeyp
             assert (await client.post('/telegram/webhook',json={'update_id':1,'message':message})).status_code==200
             if historical:
                 assert 'old0' in events and planner.calendar.insert.await_count==0
-                controls['include_past']=True
                 assert (await client.post('/telegram/webhook',json={'update_id':2,'message':{'message_id':2,'chat':{'id':123},'text':'包含'}})).status_code==200
             assert (await client.post('/telegram/webhook',json={'update_id':1,'message':message})).status_code==200
             assert (await client.post('/telegram/webhook',json={'update_id':3,'edited_message':message})).status_code==200
     asyncio.run(send())
     assert 'old0' not in events and 'old1' not in events and 'old2' in events
     assert planner.calendar.insert.await_count==2
-    assert planner.ai.parse_event_reset.await_count==2 if historical else planner.ai.parse_event_reset.await_count==1
+    assert planner.ai.parse_event_reset.await_count==1
 
 
 def test_natural_type_request_uses_generic_intent(store,monkeypatch):
@@ -335,3 +332,28 @@ def test_long_event_titles_cannot_overflow_receipt_pages():
     assert isinstance(reply,dict)
     assert all(0<len(m['text'])<=3500 and m['event_reset_result'] for m in reply['messages'])
     assert all(s['title']==title for s in state['sessions'])
+
+
+@pytest.mark.parametrize('text,include',[('包含',True),('只排未來',False)])
+def test_category_scope_reuses_original_output_without_model_reinterpretation(setup,text,include):
+    planner,events,controls=initialize(setup,'workout',past=True)
+    controls['include_past']=None
+    rebuild(planner,'workout',text='重排所有運動行程')
+    other=deepcopy(events['old2'])
+    reply=asyncio.run(reset.resume(planner,123,text,2,NOW))
+    assert '已重新安排好' in reply, planner.db.get_task_action_state(core.KEY).get('error',reply)
+    assert ('old0' not in events) is include
+    assert events['old2']==other
+    assert planner.ai.parse_event_reset.await_count==1
+
+
+def test_changed_candidate_order_requires_new_request_without_writes(setup):
+    planner,events,controls=initialize(setup,'workout',past=True)
+    controls['include_past']=None
+    rebuild(planner,'workout')
+    events['old0']=events.pop('old0')
+    before=deepcopy(events)
+    assert '清單已變更' in asyncio.run(reset.resume(planner,123,'包含',2,NOW))
+    assert events==before
+    planner.calendar.delete_event.assert_not_awaited()
+    planner.calendar.insert.assert_not_awaited()

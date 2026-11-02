@@ -149,7 +149,7 @@ async def run(planner, chat_id, event_type, instruction, update_id, now=None):
         return '另一個對話的重建尚未完成。'
     if prior.get('token')==token and prior.get('status')=='completed':
         return core.result(prior)
-    if prior.get('status')=='question' and instruction.strip().lower() in {'cancel','/cancel','取消'}:
+    if prior.get('status')=='question' and core.answer(instruction) in {'cancel','/cancel','取消'}:
         core.save(planner,{**prior,'status':'cancelled'})
         return '已取消，行程未變更。'
     from .calendar_replan import key
@@ -168,11 +168,11 @@ async def run(planner, chat_id, event_type, instruction, update_id, now=None):
             state=prior
         else:
             state={'status':'planning','token':token,'chat_id':chat_id,'event_type':event_type,
-                'instruction':instruction,'updated_at':now.isoformat()}
+                'instruction':prior['instruction'] if prior.get('pending_output') and core.pending_reply(prior,instruction) else instruction,'updated_at':now.isoformat()}
             db.mutate_task_action_state(core.KEY,lambda old:state)
             await planner.calendar.verify_owner()
             stop=now+timedelta(days=30)
-            future_only=bool(re.search(r'只排未來|只排未来|不含過去|不含过去|future only',instruction,re.I)
+            future_only=not bool(prior.get('pending_output') and core.pending_reply(prior,instruction)) and bool(re.search(r'只排未來|只排未来|不含過去|不含过去|future only',instruction,re.I)
                 or prior.get('status')=='question' and instruction.strip().lower() in {'no','不要過去的','不要过去的'})
             agenda=await planner.calendar.agenda(now if future_only else now-timedelta(days=30),stop)
             tagged=(await planner.calendar.category_events(event_type,start=now,end=stop) if future_only else
@@ -191,8 +191,17 @@ async def run(planner, chat_id, event_type, instruction, update_id, now=None):
                 **({'event':{**{k:t['_event'].get(k) for k in ('id','summary','start','end')},
                     'category':t['_event'].get('extendedProperties',{}).get('private',{}).get('chronosEventCategory')},
                     'can_reset':bool(core.deletable(t['_event'],cfg))} if t.get('_event') else {})} for i,t in candidates.items()]
-            output=ResetOutput.model_validate(await planner.ai.parse_event_reset(event_type,instruction,payload,
-                {'clarification':context,'constraints':core.constraints(planner)},now))
+            output=core.scope_output(context,instruction,now,ResetOutput)
+            if output is not None:
+                original=context.get('candidate_identity')
+                current={str(i):t.get('_event',{}).get('id') for i,t in candidates.items()}
+                if original != current:
+                    raise ValueError('行程清單已變更，請重新傳送完整的重排要求。')
+            if output is None:
+                output=ResetOutput.model_validate(await planner.ai.parse_event_reset(event_type,instruction,payload,
+                    {'clarification':context,'constraints':core.constraints(planner)},now))
+            if context and core.past_choice(instruction) is not None:
+                output.include_past=core.past_choice(instruction)
             if not output.actionable or output.question:
                 raise ValueError(output.question or '請補充要重排的活動與範圍。')
             if future_only:
@@ -263,6 +272,9 @@ async def run(planner, chat_id, event_type, instruction, update_id, now=None):
             items={i:items[i] for i in choices if str(i) in snapshots}
             choices={i:choices[i] for i in items}
             if past and output.include_past is None:
+                state['pending_output']=output.model_dump(mode='json')
+                state['candidate_identity']={str(i):t.get('_event',{}).get('id') for i,t in candidates.items()}
+                core.save(planner,state)
                 raise ValueError('是否包含已過期、但未確認完成的 '+event_type+' 活動？請回答「包含」或「只排未來」。')
             if not items or len(removed)>100:
                 raise ValueError('沒有可重建活動，或舊行程超過 100 個；請縮小範圍。')
@@ -308,7 +320,7 @@ async def run(planner, chat_id, event_type, instruction, update_id, now=None):
             state={**state,'status':'partial','error':str(error)}
             core.save(planner,state)
             return core.result(state)
-        core.save(planner,{**state,'status':'question','question':core.replies.question(error)})
+        core.save(planner,{**state,'status':'failed' if isinstance(error,core.ScopeExpired) else 'question','question':core.replies.question(error)})
         return core.replies.unchanged(error)
     finally:
         db.mutate_task_action_state('learning:tick',lambda old:{**old,'until':now.isoformat()} if old and old.get('claim')==lease else old)
