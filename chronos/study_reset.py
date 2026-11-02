@@ -80,10 +80,42 @@ def looks_reset(text):
     return bool(study and bulk and rebuild and not negative and not re.search(r'[「」『』"{}]', text))
 
 
+def answer(text):
+    return text.strip().rstrip('。.!！?？').strip().casefold()
+
+
+def past_choice(text):
+    value = answer(text)
+    if value in {'是', '要', '包含', '全部', '也要', '包括過期的', '包括过期的',
+                 'yes', 'include past'}:
+        return True
+    if value in {'no', '不要過去的', '不要过去的', '只排未來', '只排未来',
+                 '不含過去', '不含过去', 'future only'}:
+        return False
+    return None
+
+
 def pending_reply(state, text):
-    return bool(state and state.get('status') == 'question' and re.fullmatch(
-        r'\s*(?:是|要|包含|全部|也要|包括過期的|包括过期的|不要過去的|不要过去的|只排未來|只排未来|'
-        r'不含過去|不含过去|yes|no|include past|future only|取消|/?cancel)[。.!！\s]*', text, re.I))
+    return bool(state and state.get('status') == 'question' and
+                (past_choice(text) is not None or answer(text) in {'取消', 'cancel', '/cancel'}))
+
+
+class ScopeExpired(ValueError):
+    """An expired clarification requires a fresh complete owner request."""
+
+
+def scope_output(prior, instruction, now, model):
+    """Resolve only the explicit historical question, retaining its parsed scope."""
+    choice = past_choice(instruction)
+    if not prior or prior.get('status') != 'question' or choice is None:
+        return None
+    # Legacy questions still use the model, with the explicit choice enforced below.
+    if not prior.get('pending_output'):
+        return None
+    updated = datetime.fromisoformat(prior['updated_at'])
+    if updated.tzinfo is None or now - updated > timedelta(hours=2):
+        raise ScopeExpired('這則重排要求已過期，請重新描述要重排的行程與期間。')
+    return model.model_validate({**prior['pending_output'], 'include_past': choice})
 
 
 def ordered(tasks, dependencies):
@@ -269,7 +301,7 @@ async def run(planner, chat_id, instruction, update_id, now=None):
         return '上一個讀書重排還沒完成，我需要先核對那次的進度。'
     if prior and prior.get('status') == 'completed' and prior.get('token') == token:
         return result(prior)
-    if prior and prior.get('status') == 'question' and instruction.strip().lower() in {'cancel', '/cancel', '取消'}:
+    if prior and prior.get('status') == 'question' and answer(instruction) in {'cancel', '/cancel', '取消'}:
         db.mutate_task_action_state(KEY, lambda old: {**old, 'status': 'cancelled'}
             if old and old.get('token') == prior['token'] and old.get('status') == 'question' else old)
         return '已取消，行程未變更。'
@@ -285,7 +317,7 @@ async def run(planner, chat_id, instruction, update_id, now=None):
         if prior and prior.get('status') in {'applying', 'partial'}:
             state = prior
         else:
-            state = {'status': 'planning', 'token': token, 'chat_id': chat_id, 'instruction': instruction, 'event_type': 'study',
+            state = {'status': 'planning', 'token': token, 'chat_id': chat_id, 'instruction': prior['instruction'] if prior and prior.get('pending_output') and pending_reply(prior, instruction) else instruction, 'event_type': 'study',
                      'updated_at': now.isoformat()}
             db.mutate_task_action_state(KEY, lambda old: state)
             tasks = {t['id']: t for t in db.list_open_tasks()}
@@ -295,11 +327,15 @@ async def run(planner, chat_id, instruction, update_id, now=None):
             horizon = now + timedelta(days=30)
             agenda = await planner.calendar.agenda(now, horizon)
             context = prior if prior and prior.get('status') == 'question' and prior.get('event_type','study') == 'study' else None
-            output = ResetOutput.model_validate(await planner.ai.parse_study_reset(instruction,
-                [{'id': i, **task_fields(t), 'effort': {k: (planner.get(i) or {}).get(k)
-                    for k in ('minutes', 'requested_minutes', 'duration_estimate', 'progress_note')}} for i, t in tasks.items()],
-                [{'id': e['id'], 'title': e.get('summary', ''), 'start': e.get('start'), 'end': e.get('end')}
-                for e in agenda], {'clarification': context, 'constraints': constraints(planner)}, now))
+            output = scope_output(context, instruction, now, ResetOutput)
+            if output is None:
+                output = ResetOutput.model_validate(await planner.ai.parse_study_reset(instruction,
+                    [{'id': i, **task_fields(t), 'effort': {k: (planner.get(i) or {}).get(k)
+                        for k in ('minutes', 'requested_minutes', 'duration_estimate', 'progress_note')}} for i, t in tasks.items()],
+                    [{'id': e['id'], 'title': e.get('summary', ''), 'start': e.get('start'), 'end': e.get('end')}
+                        for e in agenda], {'clarification': context, 'constraints': constraints(planner)}, now))
+            if context and past_choice(instruction) is not None:
+                output.include_past = past_choice(instruction)
             if not output.actionable or output.question:
                 raise ValueError(output.question or '要重新安排哪段期間的讀書行程？過去還沒完成的部分也要包含嗎？')
             ids = [c.task_id for c in output.tasks]
@@ -352,6 +388,8 @@ async def run(planner, chat_id, instruction, update_id, now=None):
                     if len(removed) > 100:
                         raise ValueError('舊讀書行程超過 100 個，請指定課程或縮小重排範圍。')
             if historical and output.include_past is None:
+                state['pending_output'] = output.model_dump(mode='json')
+                save(planner, state)
                 raise ValueError('過去的讀書時段也要一起重排嗎？它們還沒被確認為完成。\n\n請回答「包含」或「只排未來」。')
             # Independently preserve obvious same-subject exam deadlines if the model omits an anchor.
             for i, task in tasks.items():
@@ -398,7 +436,7 @@ async def run(planner, chat_id, instruction, update_id, now=None):
             save(planner, state)
             return result(state)
         if state.get('status') == 'planning':
-            save(planner, {**state, 'status': 'question', 'question': replies.question(error),
+            save(planner, {**state, 'status': 'failed' if isinstance(error, ScopeExpired) else 'question', 'question': replies.question(error),
                            'previous': prior.get('instruction') if prior else None})
         return replies.unchanged(error)
     except CalendarError as error:
@@ -444,7 +482,8 @@ async def execute(planner, state, now, lease, deadline):
     # Refresh every replacement conflict before any deletion; old selected events are the only exclusions.
     selected = {e['id'] for e in state['removed']}
     sessions = state['sessions']
-    agenda = await planner.calendar.agenda(now, max(datetime.fromisoformat(s['end']) for s in [*sessions,
+    agenda_start = min([now, *(bounds(e, cfg.tz)[0] for e in state['exams'])])
+    agenda = await planner.calendar.agenda(agenda_start, max(datetime.fromisoformat(s['end']) for s in [*sessions,
         *({'end': bounds(e, cfg.tz)[1].isoformat()} for e in state['exams'])]))
     busy = [bounds(e, cfg.tz) for e in agenda if e.get('transparency') != 'transparent' and
         not ((e['id'] in selected or e['id'] in state['inserted'] or

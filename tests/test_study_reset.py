@@ -97,10 +97,9 @@ def test_past_unknown_scope_asks_once_and_answer_retains_request(setup):
     assert '過去的讀書時段也要一起重排嗎' in rebuild(planner)
     assert planner.db.get_task_action_state(reset.KEY)['status'] == 'question'
     planner.calendar.delete_event.assert_not_awaited()
-    output.include_past = True
     assert '已重新安排好' in rebuild(planner, '包含', 2)
-    context = planner.ai.parse_study_reset.call_args.args[3]
-    assert context['clarification']['instruction'] == INPUTS[0]
+    assert planner.ai.parse_study_reset.await_count == 1
+    assert planner.db.get_task_action_state(reset.KEY)['instruction'] == INPUTS[0]
 
 
 def test_future_only_retains_expired_event(setup):
@@ -415,3 +414,51 @@ def test_dedicated_command_disabled_and_unbound_do_not_execute(store, monkeypatc
     reply = asyncio.run(main.prepare_message('/studyreset'))()
     assert 'Telegram' in reply
     execute.assert_not_awaited()
+
+
+@pytest.mark.parametrize('text,choice', [('包含',True),(' 包含！ ',True),('YES',True),
+    ('include past',True),('只排未來',False),('no',False),('future only.',False)])
+def test_scope_answer_overrides_unchanged_model_and_replay_is_safe(setup,text,choice):
+    planner,events,output,*_=initialize(setup,past=True)
+    output.include_past=None
+    output.start=(NOW+timedelta(days=1)).isoformat()
+    output.end=(NOW+timedelta(days=3)).isoformat()
+    rebuild(planner)
+    before=deepcopy(events)
+    assert reset.pending_reply(planner.db.get_task_action_state(reset.KEY),text)
+    assert events==before
+    reply=rebuild(planner,text,2)
+    assert '已重新安排好' in reply
+    assert ('oldstudy' not in events) is choice
+    state=planner.db.get_task_action_state(reset.KEY)
+    assert state['instruction']==INPUTS[0]
+    assert all(output.start<=s['start']<s['end']<=output.end for s in state['sessions'])
+    assert planner.ai.parse_study_reset.await_count==1
+    after=deepcopy(events)
+    assert rebuild(planner,text,2)==reply
+    assert events==after
+
+
+@pytest.mark.parametrize('text',['取消！','/cancel','Cancel.'])
+def test_cancel_scope_without_calendar_write(setup,text):
+    planner,events,output,*_=initialize(setup,past=True)
+    output.include_past=None
+    rebuild(planner)
+    before=deepcopy(events)
+    assert '取消' in rebuild(planner,text,2)
+    assert planner.db.get_task_action_state(reset.KEY)['status']=='cancelled'
+    assert events==before
+    planner.calendar.delete_event.assert_not_awaited()
+    planner.calendar.insert.assert_not_awaited()
+
+
+def test_expired_scope_answer_cannot_change_calendar(setup):
+    planner,events,output,*_=initialize(setup,past=True)
+    output.include_past=None
+    rebuild(planner)
+    before=deepcopy(events)
+    assert '過期' in rebuild(planner,'包含',2,NOW+timedelta(hours=3))
+    assert not reset.pending_reply(planner.db.get_task_action_state(reset.KEY),'包含')
+    assert events==before
+    planner.calendar.delete_event.assert_not_awaited()
+    planner.calendar.insert.assert_not_awaited()
