@@ -110,7 +110,12 @@ def test_approval_and_receipt_roll_back_together(db, monkeypatch):
     assert len(db.list_open_tasks()) == 1
 
 
-def test_webhook_accepts_only_after_click_and_replays_receipt(system):
+def test_webhook_accepts_only_after_click_and_replays_receipt(system, monkeypatch):
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return NOW.astimezone(tz)
+    monkeypatch.setattr(main, 'datetime', Clock)
     client, tasks, bot, cfg = system
     db = main.db
     start(db)
