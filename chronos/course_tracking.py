@@ -37,6 +37,16 @@ def _normalized_reply(text: str) -> str:
     return re.sub(r"[\s，。！？,.!?、'’]", "", normalized)
 
 
+def progress_is_exam_day(text: str) -> bool:
+    """Recognize attendance/no-work reports, not exam preparation or follow-up work."""
+    value = _normalized_reply(text)
+    exam = r'(?:期中考(?:試)?|期末考(?:試)?|考試)'
+    return bool(re.fullmatch(
+        rf'(?:今天|今日|這次|本次)?(?:是)?{exam}(?:已經|已)?(?:結束了?|考完了?|完了)?'
+        rf'(?:{exam}?(?:結束|考完)(?:後)?(?:通常)?(?:不用|不需要)(?:再)?(?:做事|安排任務|新增任務))?', value)
+        or re.fullmatch(r'(?:todaywas|todayis)?(?:the)?(?:midterm|final)(?:exam)?(?:isover|finished)?', value))
+
+
 def progress_is_no_progress(text: str) -> bool:
     """Recognize only whole replies that explicitly report no class/progress."""
     normalized = _normalized_reply(text)
@@ -61,7 +71,7 @@ def progress_is_unknown(text: str) -> bool:
 
 
 def classify_progress(text: str) -> ProgressReportKind:
-    if progress_is_no_progress(text):
+    if progress_is_exam_day(text) or progress_is_no_progress(text):
         return ProgressReportKind.NO_PROGRESS
     if progress_is_unknown(text):
         return ProgressReportKind.UNKNOWN_SCOPE

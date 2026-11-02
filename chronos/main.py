@@ -1204,7 +1204,8 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                 received_at = datetime.now(settings.tz)
                 received_date = received_at.date()
                 habit_action = await course_habits.prepare_reply(
-                    db, ai, source_message.reply_to_message.message_id, text)
+                    db, ai, source_message.reply_to_message.message_id, text,
+                    message_id=source_message.message_id, local_date=received_date)
                 action = habit_action or (lambda: db.record_course_reply(
                     source_message.reply_to_message.message_id, source_message.message_id, text,
                     local_date=received_date,
