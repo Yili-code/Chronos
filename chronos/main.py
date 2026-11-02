@@ -57,7 +57,7 @@ from .study_scheduler import tick_study, notify_study_failures
 from .gmail import GmailClient, GmailError
 from .mail_workflow import MailWorkflow
 from .google_calendar import GoogleCalendar, CalendarError
-from .learning_calendar import LearningCalendar, study_window
+from .learning_calendar import LearningCalendar, study_window, PROGRESS_COMPLETED_ACK
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("chronos")
@@ -361,7 +361,7 @@ async def deliver_learning_reply(chat_id, update_id, receipt):
     db.mark_update_delivered(update_id)
     if cleanup_ids:
         await delete_telegram_messages(chat_id, *cleanup_ids)
-    if message.get('delete_after_seconds') == 7 or message['text'].startswith('Updated. Review the new execution plan'):
+    if message.get('delete_after_seconds') == 7 or message['text'] == PROGRESS_COMPLETED_ACK or message['text'].startswith('Updated. Review the new execution plan'):
         message_id = result.get('result', {}).get('message_id')
         if message_id is not None:
             await asyncio.sleep(7)
@@ -1246,10 +1246,10 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             db.mark_update_message_delivered(update_id, 1)
         else:
             db.mark_update_delivered(update_id)
-    elif not receipt["delivered"] and any(
-        any(message.get(key) for key in ("backward_plan", "learning_edit", "learning_menu", "learning_proposal", "learning_recovery"))
+    elif not receipt["delivered"] and (receipt.get("reply") == PROGRESS_COMPLETED_ACK or any(
+        message.get("text") == PROGRESS_COMPLETED_ACK or any(message.get(key) for key in ("backward_plan", "learning_edit", "learning_menu", "learning_proposal", "learning_recovery"))
         for message in receipt.get("messages", [])
-    ):
+    )):
         await deliver_learning_reply(chat_id, update_id, receipt)
     elif not receipt["delivered"]:
         messages = receipt.get("messages") or [{
