@@ -15,6 +15,8 @@ from .task_actions import task_fields
 from .task_timing import display_time
 from .tasks import is_course_scope_task, task_title_lines
 
+PROGRESS_COMPLETED_ACK = '已記下這次完成的進度。'
+
 COURSE_SCOPE_MINUTES = 10
 
 
@@ -1175,7 +1177,7 @@ class LearningCalendar:
             if outcome == 'skipped':
                 from .session_recovery import card
                 return card(self, live, recorded, datetime.now(self.settings.tz))
-            return ('已記下這次完成的進度。' if outcome == 'done'
+            return (PROGRESS_COMPLETED_ACK if outcome == 'done'
                     else (f"已記下這次投入 {actual_minutes} 分鐘，下次從第 {progress['next_page']} 頁繼續。" if progress else '已記下這次進度，剩下的部分會接著安排。') if outcome == "partial"
                     else "Recorded. Use /plan to request another execution plan; writing still requires approval.")
         return self.db._run_task_action(record)
