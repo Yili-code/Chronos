@@ -11,7 +11,7 @@ from test_mail_workflow import workflow
 
 def outgoing():
     messages = thread()
-    messages[-1].update(sender="owner@example.com", labels=["SENT"])
+    messages.append({**messages[0], "id": "sentnew", "received_at": 3, "to": ["client@example.org"]})
     return messages
 
 

@@ -39,7 +39,7 @@ def test_draft_tracking_and_actual_owner_response_resolve_without_sending(system
     token = mail.get("reply:ab12")["version"]
     assert post(client, 23002, text="儲存 Gmail 草稿 " + token, card=700).status_code == 200
     assert post(client, 23003, text="追蹤回覆：1 天").status_code == 200
-    gmail.thread.return_value = thread() + [{**thread()[-1], "id": "sent1", "sender": "owner@example.com", "labels": ["SENT"]}]
+    gmail.thread.return_value = thread() + [{**thread()[-1], "id": "sent1", "sender": "owner@example.com", "labels": ["SENT"], "to": ["client@example.org"]}]
     import asyncio
     asyncio.run(MailFollowups(mail).refresh(datetime.now(main.settings.tz) + timedelta(days=2)))
     assert mail.get("followups")["ab12"]["status"] == "resolved"
