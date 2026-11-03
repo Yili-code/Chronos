@@ -22,6 +22,8 @@ Definite authorization/validation/quota rejection returns to the saved draft and
 
 ## Validation boundaries
 
+Authenticated `/internal/mail/status` reports `send_enabled=true` for this implemented capability, `send_requires_confirmation=true`, and `automatic_send_enabled=false`. The endpoint performs account/owner-chat read checks only. It does not send a test message or independently establish provider write permission or recipient delivery.
+
 Automated tests use synthetic transports exclusively. They verify the actual MIME/API payload, hidden-recipient and native-edit rejection, account/card binding, source changes, expired/cancelled codes, concurrent confirmations, cancel-during-send, provider failure states and webhook receipt replay. No real contact received a test email.
 
 Synthetic live Gemini checks validate the structured reply/candidate schemas separately; they do not send mail and do not establish real-mail factual accuracy. No production delivery claim follows from mock tests.

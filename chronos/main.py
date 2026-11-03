@@ -409,7 +409,8 @@ async def mail_status(x_chronos_scheduler_secret: str | None = Header(default=No
         if not chat.get("ok") or chat.get("result", {}).get("id") != settings.telegram_chat_id:
             raise GmailError("Telegram owner chat could not be verified")
         return {"enabled": True, "gmail_account": account, "telegram_connected": True,
-                "send_enabled": False, "timezone": "Asia/Taipei"}
+                "send_enabled": True, "send_requires_confirmation": True,
+                "automatic_send_enabled": False, "timezone": "Asia/Taipei"}
     except GmailError as error:
         raise HTTPException(status_code=503, detail=str(error)) from None
 

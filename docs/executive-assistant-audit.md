@@ -10,6 +10,8 @@ Reviewed meeting candidates and private tentative calendar holds are documented 
 
 Later [explicitly authorized Gmail reply sending](authorized-mail-send.md) adds a separate per-message send confirmation. Baseline claims of no send transport below are historical, not a description of this later implementation.
 
+[Combined validation evidence](evidence/secretary-integration-2026-11-03.json) records integration with the independently published main baseline, locked dependencies, actual full-suite results and current read-only Production observations. These observations do not mean PR124 was deployed.
+
 ## Scope and capability evidence
 
 | Domain | Current owning implementation | Supported behavior and remaining gap |
