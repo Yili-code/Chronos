@@ -87,3 +87,49 @@ async def test_incomplete_thread_response_rejected(payload):
     gmail = client(lambda request: httpx.Response(200, json=payload))
     with pytest.raises(GmailError):
         await gmail.thread("th1")
+
+
+@pytest.mark.asyncio
+async def test_send_uses_immutable_approved_mime_instead_of_mutable_native_recipient():
+    def handler(request):
+        assert request.url.path.endswith("drafts/send") and request.method == "POST"
+        data = json.loads(request.content)
+        assert data["id"] == "dr1"
+        mime = BytesParser(policy=policy.default).parsebytes(base64.urlsafe_b64decode(data["message"]["raw"]))
+        assert str(mime["To"]) == "approved@example.org" and not mime.get("Bcc")
+        assert "Approved body" in mime.get_content()
+        return httpx.Response(200, json={"id": "sent1", "threadId": "th1", "labelIds": ["SENT"]})
+    gmail = client(handler)
+    assert await gmail.send_reviewed_draft("dr1", "th1", "approved@example.org", "Proposal", "Approved body", "<parent@example.org>") == "sent1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["bcc", "multipart", "recipient", "sent"])
+async def test_native_raw_draft_inspection_rejects_hidden_or_unsupported_content(change):
+    from email.message import EmailMessage
+    mime = EmailMessage()
+    mime["To"], mime["Subject"] = "approved@example.org", "Proposal"
+    mime.set_content("Body")
+    if change == "bcc":
+        mime["Bcc"] = "hidden@example.org"
+    if change == "multipart":
+        mime.add_attachment(b"private", maintype="application", subtype="octet-stream", filename="private.bin")
+    if change == "recipient":
+        mime.replace_header("To", "one@example.org,two@example.org")
+    labels = ["SENT"] if change == "sent" else ["DRAFT"]
+    raw = base64.urlsafe_b64encode(mime.as_bytes()).decode()
+    gmail = client(lambda request: httpx.Response(200, json={"id": "dr1", "message": {"id": "native1", "threadId": "th1", "raw": raw, "labelIds": labels}}))
+    with pytest.raises(GmailError):
+        await gmail.read_plain_draft("dr1")
+
+
+@pytest.mark.asyncio
+async def test_native_raw_draft_inspection_preserves_unicode_and_lines():
+    from email.message import EmailMessage
+    mime = EmailMessage()
+    mime["To"], mime["Subject"], mime["In-Reply-To"] = "approved@example.org", "中文主旨", "<parent@example.org>"
+    mime.set_content("第一行\n第二行")
+    raw = base64.urlsafe_b64encode(mime.as_bytes()).decode()
+    gmail = client(lambda request: httpx.Response(200, json={"id": "dr1", "message": {"id": "native1", "threadId": "th1", "raw": raw, "labelIds": ["DRAFT"]}}))
+    parsed = await gmail.read_plain_draft("dr1")
+    assert parsed["subject"] == "中文主旨" and parsed["body"] == "第一行\n第二行\n"

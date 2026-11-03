@@ -8,9 +8,8 @@ import json
 import time
 import uuid
 from datetime import date, datetime
-from email.utils import parseaddr
 
-from .gmail import GmailError
+from .gmail import GmailError, email_address
 
 
 FIELDS = {"姓名": "name", "公司": "company", "職稱": "role"}
@@ -37,7 +36,7 @@ class ContactRelationships:
 
     def source_address(self, identifier):
         source = (self.mail.get("message:" + identifier) or {}).get("mail", {})
-        address = parseaddr(source.get("sender", ""))[1].lower()
+        address = email_address(source.get("sender", ""))
         return address if re.fullmatch(r"[^\s<>@,;]+@[^\s<>@,;]+\.[^\s<>@,;]+", address) else None
 
     def display(self, contact):
@@ -69,7 +68,7 @@ class ContactRelationships:
         if create:
             fields, address = self.parse_fields(create[1]), self.source_address(identifier)
             if (not fields or not fields.get("name") or not address
-                    or address == self.mail.settings.gmail_account.strip().lower()):
+                    or address.lower() == self.mail.settings.gmail_account.strip().lower()):
                 return answer("請指定姓名，並使用有明確寄件者的郵件卡片。例如：新增聯絡人：Alex；公司：Acme；職稱：工程師。")
             contact_id = uuid.uuid4().hex[:12]
             contact = {"id": contact_id, **fields, "emails": [address], "version": uuid.uuid4().hex[:8],

@@ -9,7 +9,7 @@
 - Telegram 逐封簡短回報移到垃圾桶的主旨、寄件者及原因；其他信提供繁體中文摘要、建議下一步與 Gmail 連結。摘要使用既有 Gemini，失敗時顯示原文摘錄。不會開啟郵件內連結或讀取附件。
 - 直接按郵件卡片按鈕或回覆 `刪除`、`保留`、`已讀`、`新增任務：要做的事`。使用現有 Telegram webhook 立即處理，不等隔天。
 - 新增任務必須由使用者要求。每封信最多建立一個 task，保留原信連結；重複點擊、Telegram 重送與併發更新不會重複建立。後續修改沿用 `/edit`。
-- **沒有寄信、轉寄或永久刪除入口**。即使回覆「寄出」也不寄信。未來若新增寄信功能，必須先呈現收件人、主旨、正文並取得使用者對該封內容的明確同意，不能把 Gmail 讀寫授權視為寄信許可。
+- 支援[完整郵件串回覆草擬與回覆追蹤](mail-correspondence.md)。保存 Gmail 草稿不會寄送；只有透過[獨立的逐封寄送確認](authorized-mail-send.md)，核對收件者、主旨與正文後，才會提交寄送。單獨回覆「寄出」不會寄信。沒有轉寄或永久刪除入口；OAuth 權限不是逐封寄送許可。
 - 目前只支援既有的私人 Telegram chat（正數 chat ID），且必須設定 webhook secret。群組使用尚未支援。
 
 ## 第一次授權
@@ -26,7 +26,7 @@ New-Item -ItemType Directory -Force .gmail | Out-Null
 
 瀏覽器會開啟 Google 同意頁。確認正確帳號並授權後，工具會用 PKCE 與隨機 state 驗證本機回呼，再確認 Gmail 帳號符合 `--account`。client ID、secret、refresh token 與帳號存入 `.env`；不會輸出憑證、不會改信、不會開啟郵件功能。Google 同意或重新登入必須由帳號持有人完成。
 
-Gmail 的垃圾桶 API 需要 `gmail.modify`。該 Google scope 也涵蓋寄信能力，**Google 沒有在此 scope 內拆出「寄信前詢問」**；本程式藉由不提供寄信入口限制行為。不要將此 OAuth token 用於未受控的其他程式。參考 [Gmail scopes](https://developers.google.com/workspace/gmail/api/auth/scopes)、[trash](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/trash)、[Desktop OAuth](https://developers.google.com/identity/protocols/oauth2/native-app)。
+Gmail 的垃圾桶 API 需要 `gmail.modify`。該 Google scope 也涵蓋寄信能力，**Google 沒有在此 scope 內拆出「寄信前詢問」**；本程式透過 owner/card 綁定、逐封內容審查、獨立確認與不確定結果禁止重播限制行為。不要將此 OAuth token 用於未受控的其他程式。參考 [Gmail scopes](https://developers.google.com/workspace/gmail/api/auth/scopes)、[trash](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/trash)、[Desktop OAuth](https://developers.google.com/identity/protocols/oauth2/native-app)。
 
 External + Testing 的 refresh token 可能有短期有效期限；長期運作前依 Google 對應用發布狀態與帳號的規定完成設定。授權失效時會停止處理，須重新授權，不會退回其他帳號。
 

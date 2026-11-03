@@ -443,4 +443,4 @@ class MailWorkflow:
                 state = self.db.mutate_mail_state(self.key("message:" + identifier), transition)
                 return f"Added task #{state['task_id']}: {parsed.title}"
             return create
-        return lambda: "請回覆「刪除」「保留」「已讀」或「新增任務：要做的事」。寄信未啟用，不會自動寄出。"
+        return lambda: "請回覆「刪除」「保留」「已讀」「草擬回覆：內容」或「新增任務：要做的事」。寄送需先核對草稿並明確確認，不會自動寄出。"

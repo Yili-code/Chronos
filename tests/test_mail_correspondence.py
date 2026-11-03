@@ -198,3 +198,13 @@ async def test_other_account_cannot_access_saved_draft(workflow):
     other = MailWorkflow(workflow.db, workflow.gmail, workflow.telegram, workflow.ai, settings)
     assert not other.get("reply:ab12")
     assert "找不到" in (await other.prepare_action("ab12", "查看回覆草稿"))()
+
+
+@pytest.mark.asyncio
+async def test_recipient_local_part_is_preserved_from_the_bound_sender(workflow):
+    setup(workflow)
+    messages = thread()
+    messages[-1]["sender"] = "Client <CaseSensitive@Example.ORG>"
+    workflow.gmail.thread.return_value = messages
+    state = await propose(workflow)
+    assert state["recipient"] == "CaseSensitive@example.org"

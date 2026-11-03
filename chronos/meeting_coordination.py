@@ -10,7 +10,6 @@ import re
 import time
 import uuid
 from datetime import datetime, timedelta
-from email.utils import parseaddr
 from typing import Annotated
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -18,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .ai import AIError
 from .google_calendar import CalendarError
+from .gmail import email_address
 from .mail_correspondence import MailCorrespondence, fingerprint
 
 
@@ -149,8 +149,8 @@ class MeetingCoordination:
         _, messages = await MailCorrespondence(self.mail).context(identifier)
         if any(m.get("body_incomplete") or m.get("body_truncated") for m in messages):
             return blocked("郵件內容或附件不完整；請先核對，尚未建立候選時間。")
-        recipient = parseaddr(messages[-1].get("sender", ""))[1].lower()
-        if not recipient or recipient == self.mail.settings.gmail_account.strip().lower() or messages[-1].get("automatic"):
+        recipient = email_address(messages[-1].get("sender", ""))
+        if not recipient or recipient.lower() == self.mail.settings.gmail_account.strip().lower() or messages[-1].get("automatic"):
             return blocked("會面對象不明，請先選擇對方寄來的郵件。")
         contacts = (self.mail.get("contacts") or {}).get("items", {})
         if any(recipient in c["emails"] and c.get("do_not_contact") for c in contacts.values()):

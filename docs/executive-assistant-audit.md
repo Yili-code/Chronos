@@ -8,6 +8,8 @@ Local contact/relationship functionality is separately documented in [Contact re
 
 Reviewed meeting candidates and private tentative calendar holds are documented in [Meeting coordination](meeting-coordination.md). They are not attendee coordination or invitation delivery.
 
+Later [explicitly authorized Gmail reply sending](authorized-mail-send.md) adds a separate per-message send confirmation. Baseline claims of no send transport below are historical, not a description of this later implementation.
+
 ## Scope and capability evidence
 
 | Domain | Current owning implementation | Supported behavior and remaining gap |

@@ -1,7 +1,7 @@
 """Account-bound reply review and explicit unsent Gmail drafts.
 
-No AI-selected recipients, attachments or send operation. Remote writes are
-claimed outside the webhook receipt transaction and ambiguous results persist.
+No AI-selected recipients or attachments. Sending uses a separate explicit
+authorization workflow; ambiguous native writes persist without replay.
 """
 import asyncio
 import hashlib
@@ -9,13 +9,14 @@ import json
 import re
 import time
 import uuid
-from email.utils import parseaddr
 from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from .ai import AIError
-from .gmail import GmailError
+from .gmail import GmailError, email_address
+
+NATIVE_STATES = {"saving", "uncertain", "gmail_draft", "send_review", "sending", "send_uncertain", "sent"}
 
 
 class ReplyText(BaseModel):
@@ -30,7 +31,8 @@ def requires_mail_context(text):
         r"儲存\s*gmail\s*草稿|save\s+gmail\s+draft|查看回覆草稿|取消回覆草稿|追蹤回覆|track\s+reply|"
         r"查看郵件追蹤|取消郵件追蹤|新增聯絡人|加入聯絡人|記住聯絡人|查看聯絡人|更新聯絡人|"
         r"刪除聯絡人|合併聯絡人|確認聯絡人操作|記錄互動|聯絡偏好|關係建議|關係紀錄|"
-        r"協調會面|會面邀約|plan\s+meeting|暫留會面時段|取消會面暫留|查看會面狀態)", text.strip(), re.I))
+        r"協調會面|會面邀約|plan\s+meeting|暫留會面時段|取消會面暫留|查看會面狀態|"
+        r"準備寄出回覆草稿|確認寄出回覆|取消寄送回覆)", text.strip(), re.I))
 
 
 def fingerprint(messages):
@@ -63,6 +65,10 @@ class MailCorrespondence:
         return source["thread_id"], messages
 
     async def prepare(self, identifier, instruction):
+        from .mail_send import MailSend
+        sending = await MailSend(self.mail).prepare(identifier, instruction)
+        if sending is not None:
+            return sending
         draft_match = re.fullmatch(
             r"(?:(?:請|幫我)\s*)?(?:草擬(?:郵件)?回覆|起草回覆|撰寫回覆|draft\s+(?:a\s+)?reply)\s*[:：]?\s*(.*)",
             instruction, re.I | re.S)
@@ -77,19 +83,25 @@ class MailCorrespondence:
         if instruction.lower() in {"取消回覆草稿", "cancel reply draft"}:
             def cancel():
                 def transition(old):
-                    if old and old.get("status") in {"saving", "uncertain", "gmail_draft"}:
+                    if old and old.get("status") in NATIVE_STATES:
                         return old
                     return {**(old or {}), "status": "cancelled", "version": uuid.uuid4().hex[:8]}
                 state = self.mail.db.mutate_mail_state(self.mail.key("reply:" + identifier), transition)
-                if state["status"] in {"saving", "uncertain", "gmail_draft"}:
+                if state["status"] in NATIVE_STATES:
                     return "回覆草稿\nGmail 儲存已開始或已有結果；請在 Gmail 核對，這裡沒有刪除任何 Gmail 草稿。"
                 return "回覆草稿\n已取消本機草稿，沒有寄出郵件。"
             return cancel
         return None
 
     def preview(self, state):
+        if state.get("status") == "sent":
+            return "Gmail 已接受寄送並回傳 SENT 記錄；這不代表收件者已讀或已確認。"
+        if state.get("status") in {"sending", "send_uncertain"}:
+            return "寄送已開始或結果不確定；請核對寄件備份，不會自動重寄。"
+        if state.get("status") == "send_review":
+            return "等待寄送確認，尚未寄出。可回覆「取消寄送回覆」保留 Gmail 草稿。"
         if state.get("status") == "gmail_draft":
-            return "已儲存至 Gmail 草稿，尚未寄出。"
+            return f"已儲存至 Gmail 草稿，尚未寄出。若要寄送，請先回覆：準備寄出回覆草稿 {state['version']}"
         if state.get("status") in {"saving", "uncertain"}:
             return "Gmail 儲存結果待核對；不會自動重試，請先在 Gmail 檢查是否已有草稿。"
         if state.get("status") in {"stale", "cancelled"}:
@@ -107,16 +119,16 @@ class MailCorrespondence:
             return text_result("目前可草擬給原寄件者的純文字回覆；多人收件者、附件與寄送需另外處理，尚未執行。")
         key = "reply:" + identifier
         previous = self.mail.get(key) or {}
-        if previous.get("status") in {"saving", "uncertain", "gmail_draft"}:
+        if previous.get("status") in NATIVE_STATES:
             return text_result(self.preview(previous))
         thread_id, messages = await self.context(identifier)
         if any(m.get("body_incomplete") or m.get("body_truncated") for m in messages):
             return text_result("郵件串有未讀取的內容或附件，請先在 Gmail 核對完整內容；尚未草擬。")
         owner = self.mail.settings.gmail_account.strip().lower()
         latest = messages[-1]
-        recipient = parseaddr(latest.get("sender", ""))[1].lower()
-        reply_to = parseaddr(latest.get("reply_to", ""))[1].lower()
-        if (not recipient or recipient == owner or "SENT" in latest.get("labels", [])
+        recipient = email_address(latest.get("sender", ""))
+        reply_to = email_address(latest.get("reply_to", ""))
+        if (not recipient or recipient.lower() == owner or "SENT" in latest.get("labels", [])
                 or (reply_to and reply_to != recipient) or latest.get("automatic")):
             return text_result("最新郵件的回覆對象不明、Reply-To 不一致，或是自動回覆；請先確認收件者。")
         if not re.fullmatch(r"<[^<>\s]+@[^<>\s]+>", latest.get("rfc_message_id", "")):
@@ -158,7 +170,7 @@ class MailCorrespondence:
         saved = self.mail.get(key) or {}
         if not token or token != saved.get("version"):
             return text_result("請使用最新草稿顯示的確認碼；沒有建立 Gmail 草稿。")
-        if saved.get("status") in {"gmail_draft", "saving", "uncertain"}:
+        if saved.get("status") in NATIVE_STATES:
             return text_result(self.preview(saved))
         if saved.get("status") != "review" or time.time() - saved.get("created_at", 0) > 86400:
             return text_result("草稿尚缺資料、已取消或已過期；請重新草擬。")
@@ -187,4 +199,4 @@ class MailCorrespondence:
             return text_result("Gmail 拒絕儲存，尚未確認建立；請處理權限或稍後重試。" if definite
                                else "儲存結果不確定；請先在 Gmail 核對，不會自動重試或寄出。")
         self.mail.patch(key, status="gmail_draft", gmail_draft_id=draft_id)
-        return text_result("已儲存至 Gmail 草稿，尚未寄出。")
+        return text_result(self.preview({**state, "status": "gmail_draft"}))

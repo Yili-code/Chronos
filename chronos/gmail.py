@@ -1,11 +1,13 @@
-"""Small Gmail transport. Deliberately exposes neither send nor permanent delete."""
+"""Narrow Gmail transport; outbound mail requires the reviewed-draft workflow."""
 import asyncio
 import base64
 import re
 import time
 from html import unescape
 from email.message import EmailMessage
-from email.utils import parseaddr
+from email.utils import parseaddr, getaddresses
+from email import policy
+from email.parser import BytesParser
 
 import httpx
 
@@ -26,6 +28,13 @@ def message_id(value):
 
 def clean(value, limit=2000):
     return re.sub(r"\s+", " ", unescape(str(value))).strip()[:limit]
+
+
+def email_address(value):
+    """Preserve the recipient local part; only normalize its domain."""
+    address = parseaddr(str(value))[1]
+    local, separator, domain = address.rpartition("@")
+    return local + separator + domain.lower() if separator else address
 
 
 def decode_message(raw):
@@ -171,8 +180,8 @@ class GmailClient:
             raise GmailError("Gmail thread is too large or inconsistent; review in Gmail")
         return sorted(messages, key=lambda m: m["received_at"])
 
-    async def create_reply_draft(self, thread_id, recipient, subject, body, parent_id, references=""):
-        """Create an unsent plain-text reply; exposes no send or attachment API."""
+    def reply_payload(self, thread_id, recipient, subject, body, parent_id, references=""):
+        """Build immutable, single-recipient plain MIME with no hidden recipients."""
         if (not isinstance(recipient, str) or re.search(r"[\r\n]", recipient)
                 or not re.fullmatch(r"[^\s<>@,;]+@[^\s<>@,;]+\.[^\s<>@,;]+", recipient)
                 or parseaddr(recipient)[1] != recipient):
@@ -192,7 +201,11 @@ class GmailClient:
         message["In-Reply-To"], message["References"] = parent_id, " ".join(ids)
         message.set_content(body)
         raw = base64.urlsafe_b64encode(message.as_bytes()).decode("ascii")
-        result = await self._request("POST", "drafts", json={"message": {"threadId": message_id(thread_id), "raw": raw}})
+        return {"threadId": message_id(thread_id), "raw": raw}
+
+    async def create_reply_draft(self, thread_id, recipient, subject, body, parent_id, references=""):
+        payload = self.reply_payload(thread_id, recipient, subject, body, parent_id, references)
+        result = await self._request("POST", "drafts", json={"message": payload})
         if (not isinstance(result, dict) or not isinstance(result.get("message"), dict)
                 or "DRAFT" not in result["message"].get("labelIds", [])
                 or "SENT" in result["message"].get("labelIds", [])
@@ -200,6 +213,38 @@ class GmailClient:
             raise GmailError("Gmail draft result is incomplete; outcome may be unknown")
         message_id(result.get("id"))
         return result["id"]
+
+    async def read_plain_draft(self, identifier):
+        result = await self._request("GET", f"drafts/{message_id(identifier)}", params={"format": "raw"})
+        try:
+            message = result["message"]
+            if (result["id"] != identifier or "DRAFT" not in message["labelIds"]
+                    or "SENT" in message["labelIds"]):
+                raise ValueError("Invalid draft state")
+            raw = message["raw"]
+            if not isinstance(raw, str) or len(raw) > 60000:
+                raise ValueError("Draft exceeds reviewed-content bounds")
+            mime = BytesParser(policy=policy.default).parsebytes(base64.b64decode(raw + "=" * (-len(raw) % 4), altchars=b"-_", validate=True))
+            if (mime.defects or mime.is_multipart() or mime.get_content_type() != "text/plain" or mime.get_filename()
+                    or mime.get_all("Cc") or mime.get_all("Bcc") or len(mime.get_all("To", [])) != 1
+                    or any(name.lower().startswith("resent-") for name in mime.keys())):
+                raise ValueError("Unsupported draft envelope")
+            addresses = getaddresses([str(mime["To"])])
+            if len(addresses) != 1:
+                raise ValueError("Ambiguous recipient")
+            return {"recipient": email_address(addresses[0][1]), "subject": str(mime.get("Subject", "")),
+                    "body": mime.get_content(), "parent_id": str(mime.get("In-Reply-To", "")),
+                    "thread_id": message_id(message["threadId"]), "message_id": message_id(message["id"])}
+        except (ValueError, TypeError, KeyError, AttributeError, LookupError):
+            raise GmailError("Native draft is incomplete or has unsupported content; sending blocked") from None
+
+    async def send_reviewed_draft(self, identifier, thread_id, recipient, subject, body, parent_id, references=""):
+        payload = self.reply_payload(thread_id, recipient, subject, body, parent_id, references)
+        result = await self._request("POST", "drafts/send", json={"id": message_id(identifier), "message": payload})
+        if (not isinstance(result, dict) or result.get("threadId") != thread_id
+                or "SENT" not in result.get("labelIds", []) or "DRAFT" in result.get("labelIds", [])):
+            raise GmailError("Gmail send result is incomplete; outcome may be unknown")
+        return message_id(result.get("id"))
 
     async def trash(self, identifier):
         await self._request("POST", f"messages/{message_id(identifier)}/trash")
