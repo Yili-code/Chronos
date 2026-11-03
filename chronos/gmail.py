@@ -37,9 +37,52 @@ def email_address(value):
     return local + separator + domain.lower() if separator else address
 
 
+def reviewed_envelope(recipient, *, to=None, cc=(), bcc=()):
+    groups = {"to": [recipient] if to is None else to, "cc": cc, "bcc": bcc}
+    result, seen = {}, set()
+    for role, values in groups.items():
+        if not isinstance(values, (list, tuple)):
+            raise GmailError("Recipient groups must be explicit address lists", 400)
+        result[role] = []
+        for address in values:
+            if (not isinstance(address, str) or not address.isascii() or any(ord(char) < 33 or ord(char) == 127 for char in address)
+                    or not re.fullmatch(r"[^\s<>@,;]+@[^\s<>@,;]+\.[^\s<>@,;]+", address)
+                    or parseaddr(address)[1] != address):
+                raise GmailError("Invalid recipient address", 400)
+            address = email_address(address)
+            if address in seen:
+                raise GmailError("Duplicate recipients require explicit correction", 400)
+            seen.add(address)
+            result[role].append(address)
+    if not result["to"] or result["to"][0] != email_address(recipient) or len(seen) > 10:
+        raise GmailError("Invalid or oversized recipient envelope", 400)
+    try:
+        if sum(len(value.encode("utf-16-le")) // 2 for value in seen) > 900:
+            raise GmailError("Recipient list exceeds complete owner-preview capacity", 400)
+    except UnicodeError:
+        raise GmailError("Invalid recipient encoding", 400) from None
+    return result
+
+
 def decode_message(raw):
+    labels = raw.get("labelIds", [])
+    if not isinstance(labels, list) or any(not isinstance(label, str) for label in labels):
+        raise GmailError("Gmail returned invalid message labels")
     payload = raw.get("payload", {})
     headers = {h["name"].lower(): h["value"] for h in payload.get("headers", [])}
+    counts = {}
+    for header in payload.get("headers", []):
+        name = header["name"].lower()
+        counts[name] = counts.get(name, 0) + 1
+    to = [email_address(address) for _, address in getaddresses([headers.get("to", "")]) if address]
+    cc = [email_address(address) for _, address in getaddresses([headers.get("cc", "")]) if address]
+    sender_invalid = False
+    try:
+        reviewed_envelope(email_address(headers.get("from", "")))
+        if headers.get("reply-to"):
+            reviewed_envelope(email_address(headers["reply-to"]))
+    except GmailError:
+        sender_invalid = True
     plain, html = [], []
     incomplete = False
 
@@ -76,7 +119,7 @@ def decode_message(raw):
     return {
         "received_at": int(raw.get("internalDate", 0)) // 1000,
         "id": message_id(raw["id"]), "thread_id": raw.get("threadId", ""),
-        "labels": raw.get("labelIds", []), "subject": clean(headers.get("subject", "(無主旨)"), 240),
+        "labels": labels, "subject": clean(headers.get("subject", "(無主旨)"), 240),
         "sender": clean(headers.get("from", ""), 240), "date": clean(headers.get("date", ""), 100),
         "snippet": clean(raw.get("snippet", ""), 600), "body": normalized_body[:12000],
         "body_truncated": len(normalized_body) > 12000,
@@ -86,6 +129,11 @@ def decode_message(raw):
         "reply_to": headers.get("reply-to", ""),
         "rfc_message_id": headers.get("message-id", ""),
         "references": headers.get("references", ""),
+        "to": to, "cc": cc,
+        "sender_ambiguous": (sender_invalid or counts.get("from", 0) != 1 or counts.get("reply-to", 0) > 1
+            or len(getaddresses([headers.get("from", "")])) != 1
+            or (bool(headers.get("reply-to")) and len(getaddresses([headers["reply-to"]])) != 1)),
+        "envelope_ambiguous": counts.get("to", 0) > 1 or counts.get("cc", 0) > 1,
         "automatic": headers.get("auto-submitted", "no").lower() != "no" or bool(
             headers.get("x-autoreply") or headers.get("x-autorespond")),
     }
@@ -166,7 +214,11 @@ class GmailClient:
         return list(dict.fromkeys(ids)), bool(page)
 
     async def read(self, identifier):
-        return decode_message(await self._request("GET", f"messages/{message_id(identifier)}", params={"format": "full"}))
+        raw = await self._request("GET", f"messages/{message_id(identifier)}", params={"format": "full"})
+        try:
+            return decode_message(raw)
+        except (ValueError, TypeError, KeyError, AttributeError):
+            raise GmailError("Gmail returned an invalid message") from None
 
     async def thread(self, identifier):
         data = await self._request("GET", f"threads/{message_id(identifier)}", params={"format": "full"})
@@ -180,12 +232,9 @@ class GmailClient:
             raise GmailError("Gmail thread is too large or inconsistent; review in Gmail")
         return sorted(messages, key=lambda m: m["received_at"])
 
-    def reply_payload(self, thread_id, recipient, subject, body, parent_id, references=""):
-        """Build immutable, single-recipient plain MIME with no hidden recipients."""
-        if (not isinstance(recipient, str) or re.search(r"[\r\n]", recipient)
-                or not re.fullmatch(r"[^\s<>@,;]+@[^\s<>@,;]+\.[^\s<>@,;]+", recipient)
-                or parseaddr(recipient)[1] != recipient):
-            raise GmailError("A single validated reply address is required")
+    def reply_payload(self, thread_id, recipient, subject, body, parent_id, references="", *, to=None, cc=(), bcc=()):
+        """Build immutable plain MIME for the explicitly reviewed envelope."""
+        envelope = reviewed_envelope(recipient, to=to, cc=cc, bcc=bcc)
         if (not isinstance(subject, str) or len(subject) > 240 or re.search(r"[\r\n]", subject)
                 or not isinstance(body, str) or not body.strip() or len(body) > 4000):
             raise GmailError("Invalid draft content")
@@ -197,14 +246,17 @@ class GmailClient:
         if parent_id not in ids:
             ids.append(parent_id)
         message = EmailMessage()
-        message["To"], message["Subject"] = recipient, subject
+        message["To"], message["Subject"] = ", ".join(envelope["to"]), subject
+        for role in ("cc", "bcc"):
+            if envelope[role]:
+                message[role.title()] = ", ".join(envelope[role])
         message["In-Reply-To"], message["References"] = parent_id, " ".join(ids)
         message.set_content(body)
         raw = base64.urlsafe_b64encode(message.as_bytes()).decode("ascii")
         return {"threadId": message_id(thread_id), "raw": raw}
 
-    async def create_reply_draft(self, thread_id, recipient, subject, body, parent_id, references=""):
-        payload = self.reply_payload(thread_id, recipient, subject, body, parent_id, references)
+    async def create_reply_draft(self, thread_id, recipient, subject, body, parent_id, references="", **envelope):
+        payload = self.reply_payload(thread_id, recipient, subject, body, parent_id, references, **envelope)
         result = await self._request("POST", "drafts", json={"message": payload})
         if (not isinstance(result, dict) or not isinstance(result.get("message"), dict)
                 or "DRAFT" not in result["message"].get("labelIds", [])
@@ -214,7 +266,7 @@ class GmailClient:
         message_id(result.get("id"))
         return result["id"]
 
-    async def read_plain_draft(self, identifier):
+    async def read_plain_draft(self, identifier, *, expected_envelope=None):
         result = await self._request("GET", f"drafts/{message_id(identifier)}", params={"format": "raw"})
         try:
             message = result["message"]
@@ -226,20 +278,29 @@ class GmailClient:
                 raise ValueError("Draft exceeds reviewed-content bounds")
             mime = BytesParser(policy=policy.default).parsebytes(base64.b64decode(raw + "=" * (-len(raw) % 4), altchars=b"-_", validate=True))
             if (mime.defects or mime.is_multipart() or mime.get_content_type() != "text/plain" or mime.get_filename()
-                    or mime.get_all("Cc") or mime.get_all("Bcc") or len(mime.get_all("To", [])) != 1
+                    or len(mime.get_all("To", [])) != 1 or len(mime.get_all("Cc", [])) > 1 or len(mime.get_all("Bcc", [])) > 1
                     or any(name.lower().startswith("resent-") for name in mime.keys())):
                 raise ValueError("Unsupported draft envelope")
             addresses = getaddresses([str(mime["To"])])
-            if len(addresses) != 1:
+            if not addresses:
                 raise ValueError("Ambiguous recipient")
-            return {"recipient": email_address(addresses[0][1]), "subject": str(mime.get("Subject", "")),
+            envelope = reviewed_envelope(email_address(addresses[0][1]),
+                to=[email_address(address) for _, address in addresses],
+                cc=[email_address(address) for _, address in getaddresses([str(mime.get("Cc", ""))]) if address],
+                bcc=[email_address(address) for _, address in getaddresses([str(mime.get("Bcc", ""))]) if address])
+            if expected_envelope is None:
+                if len(addresses) != 1 or mime.get_all("Cc") or mime.get_all("Bcc"):
+                    raise ValueError("Recipient expansion was not approved")
+            elif envelope != expected_envelope:
+                raise ValueError("Native recipients differ from approved recipients")
+            return {"recipient": envelope["to"][0], **envelope, "subject": str(mime.get("Subject", "")),
                     "body": mime.get_content(), "parent_id": str(mime.get("In-Reply-To", "")),
                     "thread_id": message_id(message["threadId"]), "message_id": message_id(message["id"])}
         except (ValueError, TypeError, KeyError, AttributeError, LookupError):
             raise GmailError("Native draft is incomplete or has unsupported content; sending blocked") from None
 
-    async def send_reviewed_draft(self, identifier, thread_id, recipient, subject, body, parent_id, references=""):
-        payload = self.reply_payload(thread_id, recipient, subject, body, parent_id, references)
+    async def send_reviewed_draft(self, identifier, thread_id, recipient, subject, body, parent_id, references="", **envelope):
+        payload = self.reply_payload(thread_id, recipient, subject, body, parent_id, references, **envelope)
         result = await self._request("POST", "drafts/send", json={"id": message_id(identifier), "message": payload})
         if (not isinstance(result, dict) or result.get("threadId") != thread_id
                 or "SENT" not in result.get("labelIds", []) or "DRAFT" in result.get("labelIds", [])):

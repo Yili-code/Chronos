@@ -133,3 +133,64 @@ async def test_native_raw_draft_inspection_preserves_unicode_and_lines():
     gmail = client(lambda request: httpx.Response(200, json={"id": "dr1", "message": {"id": "native1", "threadId": "th1", "raw": raw, "labelIds": ["DRAFT"]}}))
     parsed = await gmail.read_plain_draft("dr1")
     assert parsed["subject"] == "中文主旨" and parsed["body"] == "第一行\n第二行\n"
+
+
+@pytest.mark.asyncio
+async def test_explicit_roles_survive_native_create_read_and_immutable_send():
+    stored = {}
+    selected = {"to": ["client@example.org", "partner@example.org"], "cc": ["boss@example.org"], "bcc": ["audit@example.net"]}
+    def handler(request):
+        if request.method == "GET":
+            return httpx.Response(200, json={"id": "dr1", "message": {"id": "native1", "threadId": "th1", "labelIds": ["DRAFT"], "raw": stored["raw"]}})
+        data = json.loads(request.content)
+        raw = data["message"]["raw"]
+        mime = BytesParser(policy=policy.default).parsebytes(base64.urlsafe_b64decode(raw))
+        assert str(mime["To"]) == ", ".join(selected["to"])
+        assert str(mime["Cc"]) == "boss@example.org" and str(mime["Bcc"]) == "audit@example.net"
+        if request.url.path.endswith("drafts/send"):
+            assert raw == stored["raw"]
+            return httpx.Response(200, json={"id": "sent1", "threadId": "th1", "labelIds": ["SENT"]})
+        stored["raw"] = raw
+        return httpx.Response(200, json={"id": "dr1", "message": {"id": "native1", "threadId": "th1", "labelIds": ["DRAFT"]}})
+    gmail = client(handler)
+    await gmail.create_reply_draft("th1", "client@example.org", "Proposal", "Approved", "<parent@example.org>", **selected)
+    native = await gmail.read_plain_draft("dr1", expected_envelope=selected)
+    assert all(native[role] == selected[role] for role in selected)
+    assert await gmail.send_reviewed_draft("dr1", "th1", "client@example.org", "Proposal", "Approved", "<parent@example.org>", **selected) == "sent1"
+
+
+@pytest.mark.asyncio
+async def test_unapproved_extra_bcc_is_rejected_even_with_an_approved_cc():
+    from email.message import EmailMessage
+    mime = EmailMessage()
+    mime["To"], mime["Cc"], mime["Bcc"] = "client@example.org", "boss@example.org", "hidden@example.net"
+    mime.set_content("Approved")
+    raw = base64.urlsafe_b64encode(mime.as_bytes()).decode()
+    gmail = client(lambda request: httpx.Response(200, json={"id": "dr1", "message": {"id": "native1", "threadId": "th1", "labelIds": ["DRAFT"], "raw": raw}}))
+    with pytest.raises(GmailError):
+        await gmail.read_plain_draft("dr1", expected_envelope={"to": ["client@example.org"], "cc": ["boss@example.org"], "bcc": []})
+
+
+def test_incoming_decoder_never_exposes_hidden_bcc_to_thread_context():
+    from chronos.gmail import decode_message
+    decoded = decode_message({"id": "ab12", "payload": {"headers": [
+        {"name": "From", "value": "client@example.org"}, {"name": "To", "value": "owner@example.com"},
+        {"name": "Cc", "value": "colleague@example.org"}, {"name": "Bcc", "value": "hidden-only@example.net"}]}})
+    assert decoded["to"] == ["owner@example.com"] and decoded["cc"] == ["colleague@example.org"]
+    assert "hidden-only@example.net" not in json.dumps(decoded)
+
+
+def test_duplicate_sender_and_visible_recipient_headers_are_ambiguous():
+    from chronos.gmail import decode_message
+    decoded = decode_message({"id": "ab12", "payload": {"headers": [
+        {"name": "From", "value": "first@example.org"}, {"name": "From", "value": "second@example.org"},
+        {"name": "To", "value": "owner@example.com"}, {"name": "To", "value": "hidden@example.org"}]}})
+    assert decoded["sender_ambiguous"] and decoded["envelope_ambiguous"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("payload", [[], {"id": "ab12", "labelIds": None}, {"id": "ab12", "payload": None}])
+async def test_malformed_message_response_is_safely_rejected(payload):
+    gmail = client(lambda request: httpx.Response(200, json=payload))
+    with pytest.raises(GmailError):
+        await gmail.read("ab12")

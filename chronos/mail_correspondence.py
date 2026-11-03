@@ -39,7 +39,8 @@ def requires_mail_context(text):
         r"查看郵件追蹤|取消郵件追蹤|新增聯絡人|加入聯絡人|記住聯絡人|查看聯絡人|更新聯絡人|"
         r"刪除聯絡人|合併聯絡人|確認聯絡人操作|記錄互動|聯絡偏好|關係建議|關係紀錄|聯絡方式|"
         r"協調會面|會面邀約|plan\s+meeting|暫留會面時段|取消會面暫留|查看會面狀態|"
-        r"準備寄出回覆草稿|確認寄出回覆|取消寄送回覆|補充回覆草稿|修改回覆草稿|補充會面資料)", text.strip(), re.I))
+        r"準備寄出回覆草稿|確認寄出回覆|取消寄送回覆|補充回覆草稿|修改回覆草稿|補充會面資料|"
+        r"設定回覆收件者|回覆全體草稿|reply\s+all\s+draft)", text.strip(), re.I))
 
 
 def fingerprint(messages):
@@ -72,10 +73,20 @@ class MailCorrespondence:
         return source["thread_id"], messages
 
     async def prepare(self, identifier, instruction):
+        from .mail_recipients import MailRecipients
+        recipients = MailRecipients(self.mail).prepare(identifier, instruction)
+        if recipients is not None:
+            return recipients
         from .mail_send import MailSend
         sending = await MailSend(self.mail).prepare(identifier, instruction)
         if sending is not None:
             return sending
+        save_callback = re.fullmatch(r"save_reply_([a-f0-9]{8})", instruction)
+        if save_callback:
+            return await self.save(identifier, save_callback[1])
+        group = re.fullmatch(r"(?:回覆全體草稿|reply\s+all\s+draft)\s*[:：]\s*(.+)", instruction, re.I | re.S)
+        if group:
+            return await self.propose(identifier, group[1], reply_all=True)
         supplement = re.fullmatch(r"(?:補充回覆草稿|修改回覆草稿)\s*[:：]\s*(.+)", instruction, re.S)
         if supplement:
             state = self.mail.get("reply:" + identifier) or {}
@@ -106,6 +117,14 @@ class MailCorrespondence:
             return cancel
         return None
 
+    def presentation(self, state, preview=None):
+        message = {"text": "回覆草稿\n" + (preview if preview is not None else self.preview(state))}
+        if state.get("status") == "needs_information":
+            message["mail_context"] = {"kind": "reply", "version": state["version"]}
+        elif state.get("status") == "review":
+            message["mail_actions"] = [{"kind": kind, "token": state["version"]} for kind in ("prepare_send", "save_reply")]
+        return {"messages": [message]}
+
     def preview(self, state):
         if state.get("status") == "sent":
             return "Gmail 已接受寄送並回傳 SENT 記錄；這不代表收件者已讀或已確認。"
@@ -122,16 +141,20 @@ class MailCorrespondence:
         questions = state.get("questions", [])
         if questions:
             return "需要補充資料，尚未建立 Gmail 草稿：\n" + "\n".join(questions) + "\n\n請直接回覆補充內容，或回覆「補充回覆草稿：內容」。"
-        return (f"收件者：{state['recipient']}\n主旨：{state['subject']}\n\n{state['body']}\n\n"
+        from .mail_recipients import envelope
+        selected = envelope(state)
+        roles = "\n".join(label + "：" + ", ".join(selected[role]) for role, label in (("to", "收件者"), ("cc", "CC"), ("bcc", "BCC（僅你可見的審查名單）")) if selected[role])
+        notice = "郵件串已變更，先前另設的收件者未沿用，請重新核對名單。\n\n" if state.get("recipient_reset") else ""
+        return (f"{notice}{roles}\n主旨：{state['subject']}\n\n{state['body']}\n\n"
                 f"這是待確認的本機草稿，沒有寄出。核對內容後回覆：儲存 Gmail 草稿 {state['version']}")
 
-    async def propose(self, identifier, request):
+    async def propose(self, identifier, request, *, reply_all=None):
         if len(request) > 4000:
             return text_result("累積要求超過 4,000 字元，請整理成較短的完整要求，避免遺失限制。")
         if not request.strip():
             return text_result("請補充回覆內容、語氣或語言；不會猜測你的承諾。")
         if re.search(r"reply[ -]?all|\bcc\b|\bbcc\b|副本|密件|附件|attach|寄出|send\b", request, re.I):
-            return text_result("目前可草擬給原寄件者的純文字回覆；多人收件者、附件與寄送需另外處理，尚未執行。")
+            return text_result("Reply All 請使用「回覆全體草稿：內容」；明確 CC/BCC 可在本機草稿以「設定回覆收件者」指定。附件與寄送需要各自確認，尚未執行。")
         key = "reply:" + identifier
         previous = self.mail.get(key) or {}
         if previous.get("status") in NATIVE_STATES:
@@ -141,11 +164,23 @@ class MailCorrespondence:
             return text_result("郵件串有未讀取的內容或附件，請先在 Gmail 核對完整內容；尚未草擬。")
         owner = self.mail.settings.gmail_account.strip().lower()
         latest = messages[-1]
-        recipient = email_address(latest.get("sender", ""))
         reply_to = email_address(latest.get("reply_to", ""))
-        if (not recipient or recipient.lower() == owner or "SENT" in latest.get("labels", [])
-                or (reply_to and reply_to != recipient) or latest.get("automatic")):
+        sender = email_address(latest.get("sender", ""))
+        if (reply_to and reply_to != sender) or latest.get("automatic"):
             return text_result("最新郵件的回覆對象不明、Reply-To 不一致，或是自動回覆；請先確認收件者。")
+        from .mail_recipients import envelope, thread_envelope, preferences_allow
+        source = fingerprint(messages)
+        try:
+            if reply_all is None and previous.get("source") == source:
+                selected = envelope(previous)
+                reply_all = previous.get("reply_all", False)
+            else:
+                selected = thread_envelope(messages, owner, bool(reply_all))
+        except GmailError:
+            return text_result("收件者或角色無法完整確認；請核對郵件標頭，尚未草擬。")
+        if not preferences_allow(self.mail, selected):
+            return text_result("名單中有不主動聯絡的對象，請先核對偏好；尚未草擬或寄送。")
+        recipient = selected["to"][0]
         if not re.fullmatch(r"<[^<>\s]+@[^<>\s]+>", latest.get("rfc_message_id", "")):
             return text_result("原信缺少有效 Message-ID；請在 Gmail 手動回覆，避免回錯郵件串。")
         try:
@@ -165,10 +200,14 @@ class MailCorrespondence:
         subject = latest["subject"]
         state = {"status": "needs_information" if generated.questions else "review",
                  "owner_request": request,
+                 "recipient_reset": bool(previous.get("source") and previous["source"] != source and
+                                         (previous.get("cc") or previous.get("bcc") or len(previous.get("to", [])) > 1)),
                  "version": version, "created_at": time.time(), "thread_id": thread_id,
-                 "source": fingerprint(messages), "recipient": recipient, "subject": subject,
+                 "source": source, "recipient": recipient, "subject": subject, **selected, "reply_all": bool(reply_all),
                  "body": generated.body, "questions": generated.questions,
                  "parent_id": latest["rfc_message_id"], "references": latest.get("references", "")}
+        if not state["questions"] and len(self.preview(state).encode("utf-16-le")) // 2 > 3600:
+            state.update(status="needs_information", questions=["請縮短回覆內容，讓全部收件者與正文能完整預覽。"])
         def apply():
             def transition(old):
                 if ((old or {}).get("version") != previous.get("version")
@@ -178,10 +217,7 @@ class MailCorrespondence:
             current = self.mail.db.mutate_mail_state(self.mail.key(key), transition)
             if current.get("version") != version:
                 return "回覆草稿\n草稿已被另一個操作更新；請先查看目前草稿。"
-            text = "回覆草稿\n" + self.preview(current)
-            if current["status"] == "needs_information":
-                return {"messages": [{"text": text, "mail_context": {"kind": "reply", "version": version}}]}
-            return text
+            return self.presentation(current)
         return apply
 
     async def save(self, identifier, token):
@@ -210,8 +246,9 @@ class MailCorrespondence:
         if state.get("claim") != claim_id:
             return text_result("另一個操作已處理草稿；請先查看目前狀態。")
         try:
+            from .mail_recipients import transport_options
             draft_id = await self.mail.gmail.create_reply_draft(state["thread_id"], state["recipient"],
-                state["subject"], state["body"], state["parent_id"], state["references"])
+                state["subject"], state["body"], state["parent_id"], state["references"], **transport_options(state))
         except GmailError as error:
             definite = error.status in {400, 401, 403, 404, 429}
             self.mail.patch(key, status="review" if definite else "uncertain")

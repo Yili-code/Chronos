@@ -1059,7 +1059,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         if mail is None:
             raise HTTPException(status_code=503, detail="Mail integration is disabled")
         callback_match = (re.fullmatch(
-            r"mail:(trash|task|keep|read|(?:confirm|edit|cancel)_[a-f0-9]{8}):([A-Za-z0-9_-]{1,32})",
+            r"mail:(trash|task|keep|read|(?:confirm|edit|cancel|save_reply|prepare_send|send_reply|stop_send)_[a-f0-9]{8}):([A-Za-z0-9_-]{1,32})",
             update.callback_query.data or "",
         ) if mail_callback else None)
         active_binding = (mail.binding(chat_id, source_message.message_id) if mail_callback else mail_binding)
@@ -1122,6 +1122,13 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                     markup = {"force_reply": True, "input_field_placeholder": "Enter a task title"}
                 elif question_kind and question_current.get("version") == question_version:
                     markup = {"force_reply": True, "input_field_placeholder": "補充資料或回覆取消"}
+                elif is_correspondence and len(identifier) <= 32:
+                    actions = (receipt.get("messages") or [{}])[0].get("mail_actions") or []
+                    labels = {"save_reply": "Gmail 草稿", "prepare_send": "寄送準備", "send_reply": "確認寄送", "stop_send": "取消寄送"}
+                    buttons = [{"text": labels[item["kind"]], "callback_data": f"mail:{item['kind']}_{item['token']}:{identifier}"}
+                               for item in actions if item.get("kind") in labels and re.fullmatch(r"[a-f0-9]{8}", item.get("token", ""))]
+                    if buttons:
+                        markup = {"inline_keyboard": [buttons]}
                 response_text = receipt["reply"]
                 if question_kind and question_current.get("version") != question_version:
                     response_text = "補充提示已過期，請使用最新提示；沒有重新執行原操作。"

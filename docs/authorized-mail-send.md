@@ -1,12 +1,12 @@
 # Explicitly authorized reply sending
 
-This builds on the reviewed single-recipient plain-text draft workflow. Creating a local proposal or saving a Gmail draft never sends it. Incoming email, AI output and OAuth scope do not grant permission to send.
+This builds on the reviewed plain-text draft workflow with explicit To/CC/BCC roles. Creating a local proposal or saving a Gmail draft never sends it. Incoming email, AI output and OAuth scope do not grant permission to send.
 
 ## Owner confirmation
 
-1. Review the local reply and explicitly save it as a Gmail draft using its current code.
-2. Reply `準備寄出回覆草稿 <draft-code>` to the bound card/preview. Chronos verifies the account, reloads the source thread and reads the native draft. Known changes to the recipient, subject, parent message, thread or body block sending. Hidden CC/BCC, multiple recipients and attachments are rejected.
-3. Review the displayed recipient, subject and full body, then reply `確認寄出回覆 <send-code>`. This independent confirmation expires after 15 minutes. The source and native snapshot are rechecked, and the send state is atomically claimed before the API call.
+1. Review the local reply and its complete recipient envelope. You may explicitly save it as a Gmail draft using its current code.
+2. Reply `準備寄出回覆草稿 <draft-code>` to the bound card/preview. The private preview also provides a bound preparation button. For a local reviewed draft, preparation first creates an unsent native Gmail draft. Chronos verifies the account, reloads the source thread and reads the native draft. Known changes to the recipient, subject, parent message, thread or body block sending. Native To/CC/BCC must exactly match the explicitly reviewed envelope. Unapproved recipient expansion and attachments are rejected. Contact opt-out preferences are checked again during the atomic send claim.
+3. Review the displayed recipient, subject and full body, then reply `確認寄出回覆 <send-code>`. Use the separate send button or text command; preparation never sends. This independent confirmation expires after 15 minutes. The source and native snapshot are rechecked, and the send state is atomically claimed before the API call.
 
 `取消寄送回覆` cancels a pending confirmation while retaining the native draft. It does not claim to recall a send that already started. A repeated receipt or repeated confirmation does not submit another send request.
 

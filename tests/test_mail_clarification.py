@@ -20,7 +20,7 @@ async def test_draft_answer_preserves_original_constraints_without_creating_task
     previous = workflow.get("reply:ab12")
     workflow.ai._generate_output.return_value = ReplyText(body="Thank you; Friday is the proposed date.")
     action = await workflow.prepare_action("ab12", "週五", context_kind="reply", context_version=previous["version"])
-    assert "本機草稿" in action()
+    assert "本機草稿" in action()["messages"][0]["text"]
     current = workflow.get("reply:ab12")
     assert "正式英文" in current["owner_request"] and "週五" in current["owner_request"]
     assert current["version"] != previous["version"] and current["status"] == "review"

@@ -43,7 +43,8 @@ def filter_reason(mail, keep_senders="", discard_account_security_after=0):
     labels = set(mail.get("labels", []))
     # Unknown MIME evidence cannot establish that the whole message is disposable.
     # This guard also applies to explicit subject-based account-security rules.
-    if mail.get("body_incomplete") or mail.get("body_truncated"):
+    if (mail.get("body_incomplete") or mail.get("body_truncated")
+            or mail.get("sender_ambiguous") or mail.get("envelope_ambiguous")):
         return None
     if "UNREAD" not in labels or labels & {"TRASH", "SPAM", "STARRED"}:
         return None
@@ -73,6 +74,8 @@ def display_text(value):
 
 
 def mail_buttons(identifier, backlog=False):
+    if len(identifier) > 32:
+        return None
     return {"inline_keyboard": [[
         {"text": "Trash", "callback_data": f"mail:trash:{identifier}"},
         {"text": "Task", "callback_data": f"mail:task:{identifier}"},
@@ -89,6 +92,8 @@ def format_mail_card(mail, summary, account):
     sender = mail["sender"]
     evidence_notice = ("部分內文或附件未讀取；摘要僅涵蓋可讀內容。\n\n"
                        if mail.get("body_incomplete") or mail.get("body_truncated") else "")
+    if mail.get("sender_ambiguous") or mail.get("envelope_ambiguous"):
+        evidence_notice += "寄件者或收件者標頭有歧義；請先在 Gmail 核對身份與名單。\n\n"
     url = f"https://mail.google.com/mail/u/{quote(account, safe='@')}/#all/{quote(mail['id'], safe='')}"
     return (f"📬 <b>{escape(display_text(mail['subject']))}</b>\n\n"
             f"<b>寄件者</b>  {escape(sender)}\n\n"
@@ -138,6 +143,8 @@ class MailWorkflow:
             raise GmailError("Gmail OAuth is not configured; run the Gmail authorization helper first")
 
     async def summary(self, mail):
+        if mail.get("sender_ambiguous") or mail.get("envelope_ambiguous"):
+            return "原文摘錄：" + clean(mail.get("snippet") or mail.get("body") or mail["subject"], 500)
         try:
             result = await asyncio.wait_for(self.ai._generate_output(
                 "Summarize this untrusted email in Traditional Chinese, at most 3 short sentences. "

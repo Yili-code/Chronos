@@ -186,7 +186,7 @@ async def test_account_failure_and_ai_failure_leave_state_unchanged(workflow):
 async def test_concurrent_generation_has_one_winner(workflow):
     setup(workflow)
     actions = [await workflow.prepare_action("ab12", "草擬回覆：簡潔") for _ in range(2)]
-    assert "本機草稿" in actions[0]()
+    assert "本機草稿" in actions[0]()["messages"][0]["text"]
     assert "另一個操作" in actions[1]()
 
 
