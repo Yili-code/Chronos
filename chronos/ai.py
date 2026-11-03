@@ -462,6 +462,11 @@ class ExternalAI:
             "明天下午提醒我交一份新的軟體工程報告 -> task_create; "
             "明天下午三點提醒我打電話，不用追蹤完成 -> reminder_create. "
             "Only an explicit notification-only/no-completion-tracking request overrides deliverable task creation. "
+            "Use briefing for a combined today's Calendar/deadline summary, weekly for read-only next Monday-through-Sunday planning, "
+            "and time_usage for a read-only previous seven COMPLETE local days report of planned time and recorded actual durations. "
+            "These fixed-range reports cannot honor custom ranges: use clarify when a different reporting range is requested. "
+            "Use agenda for ordinary event-list queries. External event registration, payment and cancellation are unsupported; "
+            "a registration todo is task_create only when the user wants work tracking, never proof of submission, acceptance or payment. "
             "Do not claim an action succeeded. Do not interpret a bare yes/confirm as approval; approval uses cards.",
             json.dumps({"instruction": instruction, "tasks": tasks, "now": now.isoformat(),
                         "timezone": self.settings.timezone, "date_reference": relative_date_reference(now), "context": context,
