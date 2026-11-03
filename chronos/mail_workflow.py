@@ -350,6 +350,10 @@ class MailWorkflow:
             current = self.get(context_kind + ":" + identifier) or {}
             if current.get("version") != context_version:
                 return lambda: "補充提示已過期，請回覆最新提示或原郵件卡片；沒有執行任何動作。"
+        from .mail_attachments import MailAttachments
+        attachment = await MailAttachments(self).prepare(identifier, instruction)
+        if attachment is not None:
+            return attachment
         from .meeting_coordination import MeetingCoordination
         from .google_calendar import CalendarError
         try:

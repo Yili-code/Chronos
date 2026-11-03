@@ -84,11 +84,12 @@ def decode_message(raw):
     except GmailError:
         sender_invalid = True
     plain, html = [], []
+    attachments = []
     incomplete = False
     visited = 0
     encoded_size = 0
 
-    def visit(part, depth=0):
+    def visit(part, depth=0, path="0"):
         nonlocal incomplete, visited, encoded_size
         if depth > 20 or visited >= 100:
             incomplete = True
@@ -99,6 +100,10 @@ def decode_message(raw):
         if (part.get("filename") or part.get("body", {}).get("attachmentId")
                 or mime == "message/rfc822"):
             incomplete = True
+            if len(attachments) < 20:
+                size = part.get("body", {}).get("size")
+                attachments.append({"path": path, "filename": clean(part.get("filename") or "(內文區塊)", 160),
+                    "mime_type": clean(mime, 100), "size": size if type(size) is int and 0 <= size <= 26214400 else None})
             return
         data = part.get("body", {}).get("data", "")
         if data and mime in {"text/plain", "text/html"}:
@@ -124,8 +129,8 @@ def decode_message(raw):
         remaining = max(0, 100 - visited)
         if len(children) > remaining:
             incomplete = True
-        for child in children[:remaining]:
-            visit(child, depth + 1)
+        for index, child in enumerate(children[:remaining]):
+            visit(child, depth + 1, path + "." + str(index))
 
     visit(payload)
     plain_body = clean("\n".join(plain), 1000000)
@@ -141,6 +146,7 @@ def decode_message(raw):
         "snippet": clean(raw.get("snippet", ""), 600), "body": normalized_body[:12000],
         "body_truncated": len(normalized_body) > 12000 or len(alternative_body) > 12000,
         "alternative_body": alternative_body[:12000],
+        "attachments": attachments,
         "body_incomplete": incomplete,
         "unsubscribe": bool(headers.get("list-unsubscribe")),
         "has_reply": bool(headers.get("in-reply-to") or headers.get("references")),
@@ -237,6 +243,39 @@ class GmailClient:
             return decode_message(raw)
         except (ValueError, TypeError, KeyError, AttributeError):
             raise GmailError("Gmail returned an invalid message") from None
+
+    async def read_attachment(self, identifier, path):
+        """Read one provider part in memory; never open URLs, files or executable content."""
+        if (not isinstance(path, str) or not re.fullmatch(r"0(?:\.[0-9]{1,2}){0,20}", path)
+                or any(int(index) >= 100 for index in path.split(".")[1:])):
+            raise GmailError("Invalid attachment selection", 400)
+        identifier = message_id(identifier)
+        raw = await self._request("GET", f"messages/{identifier}", params={"format": "full"})
+        try:
+            if raw["id"] != identifier:
+                raise ValueError("Message mismatch")
+            part = raw["payload"]
+            for index in path.split(".")[1:]:
+                part = part["parts"][int(index)]
+            body = part.get("body", {})
+            declared = body.get("size", 0)
+            if type(declared) is not int or declared < 0 or declared > 1048576:
+                raise ValueError("Attachment size is unsupported")
+            if body.get("attachmentId"):
+                remote = body["attachmentId"]
+                if not isinstance(remote, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,4096}", remote):
+                    raise ValueError("Invalid provider attachment id")
+                body = await self._request("GET", f"messages/{identifier}/attachments/{remote}")
+            data = body.get("data", "")
+            if not isinstance(data, str) or len(data) > 1398104:
+                raise ValueError("Attachment exceeds read budget")
+            decoded = base64.b64decode(data + "=" * (-len(data) % 4), altchars=b"-_", validate=True)
+            if len(decoded) > 1048576 or (declared and len(decoded) != declared):
+                raise ValueError("Attachment size does not match metadata")
+            return {"filename": clean(part.get("filename") or "(內文區塊)", 160),
+                "mime_type": clean(part.get("mimeType", ""), 100), "data": decoded}
+        except (ValueError, TypeError, KeyError, IndexError, AttributeError):
+            raise GmailError("Attachment could not be safely read; no content was executed") from None
 
     async def thread(self, identifier):
         data = await self._request("GET", f"threads/{message_id(identifier)}", params={"format": "full"})
