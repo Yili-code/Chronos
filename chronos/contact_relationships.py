@@ -8,8 +8,9 @@ import json
 import time
 import uuid
 from datetime import date, datetime
+from email.utils import getaddresses
 
-from .gmail import GmailError, email_address
+from .gmail import GmailError, email_address, reviewed_envelope
 
 
 FIELDS = {"姓名": "name", "公司": "company", "職稱": "role"}
@@ -36,8 +37,15 @@ class ContactRelationships:
 
     def source_address(self, identifier):
         source = (self.mail.get("message:" + identifier) or {}).get("mail", {})
-        address = email_address(source.get("sender", ""))
-        return address if re.fullmatch(r"[^\s<>@,;]+@[^\s<>@,;]+\.[^\s<>@,;]+", address) else None
+        sender = source.get("sender", "")
+        if not isinstance(sender, str) or source.get("sender_ambiguous") or len(getaddresses([sender])) != 1:
+            return None
+        address = email_address(sender)
+        try:
+            reviewed_envelope(address)
+        except GmailError:
+            return None
+        return address
 
     def display(self, contact, page=1):
         addresses = contact["emails"][(page - 1) * 3:page * 3]
@@ -77,19 +85,24 @@ class ContactRelationships:
                        "notes": [], "do_not_contact": False, "created_at": reference.isoformat()}
             def apply():
                 def transition(old):
-                    if len(old["items"]) >= 100 or any(address in c["emails"] for c in old["items"].values()):
+                    if (self.source_address(identifier) != address or len(old["items"]) >= 100
+                            or any(address in c["emails"] for c in old["items"].values())):
                         return old
                     return {**old, "items": {**old["items"], contact_id: contact}}
                 state = self.mutate(transition)
                 if contact_id not in state["items"]:
-                    return "聯絡人\n這個 Email 已有紀錄，或已達 100 人上限；沒有重複建立或自動合併。"
+                    return "聯絡人\n來源身份已變更、這個 Email 已有紀錄，或已達 100 人上限；沒有重複建立或自動合併。"
                 duplicates = sum(c["name"] == fields["name"] for c in state["items"].values())
                 return "聯絡人\n已建立本機紀錄。" + ("有同名紀錄，仍以不同 ID 分開。\n" if duplicates > 1 else "\n") + self.display(contact)
             return apply
         if instruction in {"查看聯絡人", "聯絡人資料"}:
             address = self.source_address(identifier)
-            matches = [c for c in self.registry()["items"].values() if address in c["emails"]]
-            return answer("\n\n".join(self.display(c) for c in matches) if matches else "這封信的寄件者尚無本機聯絡人紀錄。")
+            def view():
+                if not address or self.source_address(identifier) != address:
+                    return "聯絡人\n寄件者身份無法明確核對；沒有關聯其他聯絡人，請先在 Gmail 核對。"
+                matches = [c for c in self.registry()["items"].values() if address in c["emails"]]
+                return "聯絡人\n" + ("\n\n".join(self.display(c) for c in matches) if matches else "這封信的寄件者尚無本機聯絡人紀錄。")
+            return view
         update = re.fullmatch(r"更新聯絡人\s+([a-f0-9]{12})\s+([a-f0-9]{8})\s*[:：]\s*(.+)", instruction, re.S)
         if update:
             contact_id, version = update[1], update[2]

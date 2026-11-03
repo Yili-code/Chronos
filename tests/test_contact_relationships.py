@@ -229,3 +229,47 @@ def test_email_claimed_birthday_does_not_become_relationship_fact(workflow):
     assert "沒有足夠" in execute(service, "關係建議 " + contact["id"])
     assert "birthday" not in service.registry()["items"][contact["id"]]
     workflow.ai._generate_output.assert_not_awaited()
+
+
+@pytest.mark.parametrize("source", [
+    {"sender_ambiguous": True},
+    {"sender": "Client <client@example.org>, Other <other@example.org>"},
+    {"sender": "Client <not-an-address>"},
+])
+def test_ambiguous_source_never_creates_or_resolves_contact(workflow, source):
+    service = context(workflow)
+    create(service)
+    previous = service.registry()
+    workflow.patch("message:ab12", mail={**thread()[-1], **source})
+    execute(service, "新增聯絡人：Different person")
+    assert service.registry() == previous
+    text = execute(service, "查看聯絡人")
+    assert "核對" in text and "ID：" not in text
+
+
+def test_sender_ambiguity_appearing_before_contact_commit_blocks_write(workflow):
+    service = context(workflow)
+    action = service.prepare("ab12", "新增聯絡人：Alex")
+    workflow.patch("message:ab12", mail={**thread()[-1], "sender_ambiguous": True})
+    action()
+    assert not service.registry()["items"]
+
+
+@pytest.mark.parametrize("source", [
+    {"sender_ambiguous": True},
+    {"sender": "Client <client@example.org>, Other <other@example.org>"},
+    {"sender": None},
+])
+def test_unresolved_identity_does_not_create_first_contact(workflow, source):
+    service = context(workflow)
+    workflow.patch("message:ab12", mail={**thread()[-1], **source})
+    execute(service, "新增聯絡人：Alex")
+    assert not service.registry()["items"]
+
+
+def test_prepared_contact_view_rechecks_source_before_returning_identity(workflow):
+    service = context(workflow)
+    create(service)
+    view = service.prepare("ab12", "查看聯絡人")
+    workflow.patch("message:ab12", mail={**thread()[-1], "sender_ambiguous": True})
+    assert "核對" in view() and "ID：" not in view()

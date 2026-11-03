@@ -1,0 +1,18 @@
+{
+  "phase": "mail-sourced contact identity",
+  "date": "2026-11-03 Asia/Taipei",
+  "base_commit": "aeca9f457c22809c5e10669fd666c4695f81ac18",
+  "tests": {
+    "tests": 3594,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "seconds": 181.038,
+  "before": "An ambiguous mail sender resolved to an existing contact ID.",
+  "after": "Ambiguous, multiple and malformed identities are rejected; creation and prepared views recheck source identity before use.",
+  "wheel_sha256": "10315a7b74629b6e6c6d34c8e3d2840386b8b4c6232c760984cf9e6a92479b69",
+  "source_match": true,
+  "production_deployed": false,
+  "external_writes": "mocked only"
+}
