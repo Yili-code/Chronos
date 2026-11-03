@@ -24,3 +24,13 @@
 - No migration: optional JSON field, both persistence backends exercised. No type-check configuration introduced; no broad dependency security audit claimed.
 - Release gate remains blocked by missing active core workflows. Missing implementations are explicitly unresolved, not described as credential-only problems. Narrow safety patch can be reviewed independently, but no merge/deployment of this broader request while acceptance condition is unmet.
 - Final complete Python regression: **3013 passed**, 1 existing Starlette/httpx deprecation warning, 225.38 seconds. Final source and test changes included. Planning two atomic English commits: safety fix/tests, then reproducible audit/report/handoff. Push draft PR, verify its CI, leave unmerged while acceptance is blocked.
+
+## PR and CI evidence — 2026-11-03 Asia/Taipei
+
+- Safety fix commit: fc603f3. Audit/report commit: a514b13f1a798f2f6871ec05018392ac47f67721. Both pushed to origin/codex/executive-assistant-audit.
+- Draft PR: https://github.com/Yili-code/Chronos/pull/124 . Remains unmerged; no deployment.
+- CI run 41568398588 verified against a514b13: Python 3.11, Python 3.12 and extension jobs all completed successfully. https://github.com/Yili-code/Chronos/actions/runs/41568398588
+- This evidence update changes documentation only. Its new commit is not the SHA verified by the preceding run; do not conflate those. Recheck the final branch CI after pushing this record.
+- End state: narrow mail safety repair implemented/tested and under draft review. Requested broader system upgrade remains **incomplete**: 54 active unsupported acceptance scenarios. LINE/Instagram's 16 dependent cases were deferred by the user. No missing application feature is represented as completed or as merely awaiting credentials.
+- Next: implement missing draft/contacts/meeting/relationship/reply-state workflows with explicit state and provider contracts, then run true domain/integration acceptance before any release. The present audit is a baseline and safety repair, not completion of that work.
+- Original workspace and unrelated changes preserved; no claim of other-machine synchronization. Local test scratch directories are not staged or shared.
