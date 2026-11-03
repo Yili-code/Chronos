@@ -2,6 +2,8 @@
 
 Date: 2026-11-03, Asia/Taipei. This is an incomplete acceptance audit, not a claim that Chronos now provides all requested secretary functions.
 
+Baseline scope: the capability table and 80-case results below describe the original audit at commit `6effb2d`. Subsequent reviewed mail draft and reply-tracking implementation is documented in [Mail correspondence](mail-correspondence.md); it does not retroactively turn the baseline's blocked scenarios into passes.
+
 ## Scope and capability evidence
 
 | Domain | Current owning implementation | Supported behavior and remaining gap |

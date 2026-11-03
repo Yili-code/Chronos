@@ -187,6 +187,8 @@ class MailWorkflow:
         deadline = time.monotonic() + 1200
         now = (now or datetime.now(ZoneInfo("Asia/Taipei"))).astimezone(ZoneInfo("Asia/Taipei"))
         await self.gmail.verify_account()
+        from .mail_followups import MailFollowups
+        await MailFollowups(self).refresh(now)
         owner = uuid.uuid4().hex
         def claim(old):
             if old and old.get("until", 0) > time.time():
@@ -333,6 +335,14 @@ class MailWorkflow:
         if not saved:
             return lambda: "找不到這封已整理的信。沒有執行任何動作。"
         instruction = instruction.strip()
+        from .mail_followups import MailFollowups
+        followup = await MailFollowups(self).prepare(identifier, instruction, now)
+        if followup is not None:
+            return followup
+        from .mail_correspondence import MailCorrespondence
+        correspondence = await MailCorrespondence(self).prepare(identifier, instruction)
+        if correspondence is not None:
+            return correspondence
         action = {"刪除": "trash", "刪掉": "trash", "移到垃圾桶": "trash", "delete": "trash",
                   "保留": "keep", "已讀": "read", "標為已讀": "read", "新增任務": "task",
                   "加到tasks": "task", "加到 tasks": "task"}.get(instruction.lower(), instruction.lower())

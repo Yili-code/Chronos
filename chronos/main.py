@@ -1066,6 +1066,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             await delete_telegram_messages(chat_id, card_id)
         is_proposal = receipt["reply"].startswith("Create this task?\n\n")
         is_edit = receipt["reply"] == "Reply with the revised task title."
+        is_correspondence = receipt["reply"].startswith(("回覆草稿\n", "郵件追蹤\n"))
         task_resolved = (receipt["reply"].startswith("Added task #")
                          or receipt["reply"].startswith("This email already has task #"))
         callback_action = callback_match.group(1) if callback_match else None
@@ -1096,7 +1097,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                 result = await telegram.send_message(chat_id, receipt["reply"], reply_markup=markup)
                 if not result.get("ok"):
                     raise HTTPException(status_code=502, detail="Mail action reply pending")
-                if is_proposal or is_edit:
+                if is_proposal or is_edit or is_correspondence:
                     message_id = result.get("result", {}).get("message_id")
                     if not message_id:
                         raise HTTPException(status_code=502, detail="Mail task prompt ID missing")

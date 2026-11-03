@@ -4,6 +4,8 @@ import base64
 import re
 import time
 from html import unescape
+from email.message import EmailMessage
+from email.utils import parseaddr
 
 import httpx
 
@@ -72,6 +74,11 @@ def decode_message(raw):
         "body_incomplete": incomplete,
         "unsubscribe": bool(headers.get("list-unsubscribe")),
         "has_reply": bool(headers.get("in-reply-to") or headers.get("references")),
+        "reply_to": headers.get("reply-to", ""),
+        "rfc_message_id": headers.get("message-id", ""),
+        "references": headers.get("references", ""),
+        "automatic": headers.get("auto-submitted", "no").lower() != "no" or bool(
+            headers.get("x-autoreply") or headers.get("x-autorespond")),
     }
 
 
@@ -151,6 +158,48 @@ class GmailClient:
 
     async def read(self, identifier):
         return decode_message(await self._request("GET", f"messages/{message_id(identifier)}", params={"format": "full"}))
+
+    async def thread(self, identifier):
+        data = await self._request("GET", f"threads/{message_id(identifier)}", params={"format": "full"})
+        if not isinstance(data, dict) or data.get("id") != identifier or not isinstance(data.get("messages"), list) or not data["messages"]:
+            raise GmailError("Gmail returned an incomplete thread")
+        try:
+            messages = [decode_message(raw) for raw in data["messages"]]
+        except (ValueError, TypeError, KeyError, AttributeError):
+            raise GmailError("Gmail returned an invalid thread") from None
+        if len(messages) > 100 or any(m["thread_id"] != identifier for m in messages):
+            raise GmailError("Gmail thread is too large or inconsistent; review in Gmail")
+        return sorted(messages, key=lambda m: m["received_at"])
+
+    async def create_reply_draft(self, thread_id, recipient, subject, body, parent_id, references=""):
+        """Create an unsent plain-text reply; exposes no send or attachment API."""
+        if (not isinstance(recipient, str) or re.search(r"[\r\n]", recipient)
+                or not re.fullmatch(r"[^\s<>@,;]+@[^\s<>@,;]+\.[^\s<>@,;]+", recipient)
+                or parseaddr(recipient)[1] != recipient):
+            raise GmailError("A single validated reply address is required")
+        if (not isinstance(subject, str) or len(subject) > 240 or re.search(r"[\r\n]", subject)
+                or not isinstance(body, str) or not body.strip() or len(body) > 4000):
+            raise GmailError("Invalid draft content")
+        if not isinstance(parent_id, str) or not re.fullmatch(r"<[^<>\s]+@[^<>\s]+>", parent_id):
+            raise GmailError("Original message header is missing or invalid")
+        if not isinstance(references, str) or re.search(r"[\r\n]", references):
+            raise GmailError("Invalid reply references")
+        ids = re.findall(r"<[^<>\s]+@[^<>\s]+>", references)[-20:]
+        if parent_id not in ids:
+            ids.append(parent_id)
+        message = EmailMessage()
+        message["To"], message["Subject"] = recipient, subject
+        message["In-Reply-To"], message["References"] = parent_id, " ".join(ids)
+        message.set_content(body)
+        raw = base64.urlsafe_b64encode(message.as_bytes()).decode("ascii")
+        result = await self._request("POST", "drafts", json={"message": {"threadId": message_id(thread_id), "raw": raw}})
+        if (not isinstance(result, dict) or not isinstance(result.get("message"), dict)
+                or "DRAFT" not in result["message"].get("labelIds", [])
+                or "SENT" in result["message"].get("labelIds", [])
+                or result["message"].get("threadId") != thread_id):
+            raise GmailError("Gmail draft result is incomplete; outcome may be unknown")
+        message_id(result.get("id"))
+        return result["id"]
 
     async def trash(self, identifier):
         await self._request("POST", f"messages/{message_id(identifier)}/trash")
