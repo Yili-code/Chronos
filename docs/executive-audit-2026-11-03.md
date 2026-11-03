@@ -55,7 +55,14 @@ These establish provider/security contracts; local test counts come from actual 
 
 Baseline: origin/main `07866f6`; original-source full suite 2,999 passed.
 Initial expanded suite: 3,194 passed before final security upgrade/model replay addition.
-Final locked-source validation, PR/merge CI and deployed revision are recorded in
+Final locked-source validation: **3,215 passed, zero failed/skipped**; extension
+21 passed. Seventy active service scenarios pass, with ten additional excluded
+registration refusal scenarios. PR #125 CI 41569087112 and exact merge CI
+41569486322 passed all three required jobs. Source `016fdecc` deployed at
+2026-11-03 11:06 Asia/Taipei as `chronos-executive-016fdec`, serving 100% traffic.
+Read-only live smoke passed all three reports, readiness and connected components.
+See [sanitized release evidence](evidence/executive-release-2026-11-03.json),
+[initial error observation](evidence/executive-monitor-2026-11-03.json), and
 the [task handoff](handoffs/2026-11-03-executive-audit-01a19f37.md).
 An earlier run is never evidence for a later commit or container.
 
