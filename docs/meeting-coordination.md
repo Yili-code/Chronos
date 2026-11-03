@@ -29,3 +29,5 @@ Multi-party negotiation, other attendees' availability, invitation delivery and 
 Regression tests include changed source cancellation, newly occupied slots, uncertain/incomplete writes, no-attendee event payloads, DST ambiguity, opt-out, external event changes, ETags and simultaneous operations. Ten additional real webhook integration tests verify interactions between drafts, tracking, contacts, preferences and private calendar holds using synthetic external transports.
 
 Provider contracts: [Events insert](https://developers.google.com/workspace/calendar/api/v3/reference/events/insert), [Events resource](https://developers.google.com/workspace/calendar/api/v3/reference/events).
+
+External invitations use a separate [reviewed invitation and RSVP workflow](meeting-invitations.md). A private hold is not silently converted to an external invitation.

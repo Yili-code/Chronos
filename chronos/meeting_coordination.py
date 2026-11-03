@@ -47,6 +47,9 @@ class MeetingCoordination:
             and (expected is None or old.get("status") == expected) else (old or {}))
 
     def preview(self, state):
+        from .meeting_invitations import INVITE_STATES, preview
+        if state.get("status") in INVITE_STATES | {"invite_cancelled"}:
+            return preview(state)
         if state.get("status") in {"creating", "uncertain", "deleting"}:
             return "行事曆操作結果待核對；不會自動重試。請回覆「查看會面狀態」。"
         if state.get("status") == "cancelled":
@@ -156,11 +159,16 @@ class MeetingCoordination:
                 return {"messages": [{"text": "會面協調\n" + text + "\n\n請回覆補充資料，或回覆「補充會面資料：內容」。",
                     "mail_context": {"kind": "meeting", "version": pending["version"]}}]}
             return apply
+        from .meeting_invitations import INVITE_STATES
+        if old.get("status") in INVITE_STATES:
+            return answer(self.preview(old) + "\n調整前請先核對或取消原邀請，不會覆蓋外部事件。")
         if old.get("status") in {"held", "creating", "uncertain", "deleting"}:
             return answer(self.preview(old) + "\n調整前請先核對或取消原暫留。")
         if len(request) > 4000:
             return blocked("累積會面要求太長，請整理為 4,000 字元內的完整要求。")
         _, messages = await MailCorrespondence(self.mail).context(identifier)
+        if any(m.get("sender_ambiguous") or m.get("envelope_ambiguous") for m in messages):
+            return blocked("郵件身份或名單有歧義，請先核對；尚未建立候選時間。")
         if any(m.get("body_incomplete") or m.get("body_truncated") for m in messages):
             return blocked("郵件內容或附件不完整；請先核對，尚未建立候選時間。")
         recipient = email_address(messages[-1].get("sender", ""))
