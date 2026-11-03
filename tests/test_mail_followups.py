@@ -89,12 +89,12 @@ async def test_cancel_prevents_future_reminders(workflow):
 
 
 @pytest.mark.asyncio
-async def test_read_timeout_pauses_instead_of_reminding_from_stale_state(workflow):
+async def test_read_timeout_suppresses_reminders_from_stale_state(workflow):
     await track(workflow)
     workflow.gmail.thread.side_effect = GmailError("timeout")
     result = await MailFollowups(workflow).refresh(now(workflow) + timedelta(days=2))
     assert result["errors"] == 1
-    assert MailFollowups(workflow).registry()["ab12"]["status"] == "paused"
+    assert MailFollowups(workflow).registry()["ab12"]["read_unverified"] is True
     workflow.telegram.send_message.assert_not_awaited()
 
 
@@ -162,3 +162,88 @@ async def test_reminder_registry_writes_are_receipt_transaction_compatible(workf
     receipt = workflow.db.process_update(19001, action)
     assert "等你回覆" in receipt["reply"]
     assert MailFollowups(workflow).registry()["ab12"]["status"] == "waiting_owner"
+
+
+@pytest.mark.asyncio
+async def test_read_failure_recovers_after_fresh_source_check(workflow):
+    await track(workflow)
+    service = MailFollowups(workflow)
+    previous = service.registry()["ab12"]
+    workflow.gmail.thread.side_effect = GmailError("timeout")
+    assert (await service.refresh(now(workflow) + timedelta(days=2)))["errors"] == 1
+    failed = service.registry()["ab12"]
+    assert failed["status"] == "waiting_other"
+    assert failed["version"] == previous["version"] and failed["due_at"] == previous["due_at"]
+    assert failed["read_unverified"] is True
+    assert "未能驗證" in service.describe(failed)
+    workflow.telegram.send_message.assert_not_awaited()
+    workflow.gmail.thread.side_effect = None
+    assert (await service.refresh(now(workflow) + timedelta(days=3)))["reminded"] == 1
+    workflow.telegram.send_message.assert_awaited_once()
+    assert service.registry()["ab12"]["read_unverified"] is False
+
+
+@pytest.mark.asyncio
+async def test_reply_received_during_read_outage_resolves_without_reminder(workflow):
+    await track(workflow)
+    service = MailFollowups(workflow)
+    workflow.gmail.thread.side_effect = GmailError("timeout")
+    await service.refresh(now(workflow) + timedelta(days=2))
+    workflow.gmail.thread.side_effect = None
+    workflow.gmail.thread.return_value = outgoing() + [{**thread()[-1], "id": "later", "received_at": 4}]
+    assert (await service.refresh(now(workflow) + timedelta(days=3)))["resolved"] == 1
+    workflow.telegram.send_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_changed_deadline_before_claim_does_not_send_stale_reminder(workflow):
+    await track(workflow)
+    service = MailFollowups(workflow)
+    state = service.registry()["ab12"]
+    future = (now(workflow) + timedelta(days=10)).timestamp()
+    async def changed(*args, **kwargs):
+        service.update("ab12", state["version"], due_at=future)
+        return outgoing()
+    workflow.gmail.thread.side_effect = changed
+    assert (await service.refresh(now(workflow) + timedelta(days=2)))["reminded"] == 0
+    assert service.registry()["ab12"]["due_at"] == future
+    workflow.telegram.send_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_changed_baseline_before_claim_blocks_old_reminder(workflow):
+    await track(workflow)
+    service = MailFollowups(workflow)
+    state = service.registry()["ab12"]
+    async def changed(*args, **kwargs):
+        service.update("ab12", state["version"], baseline_id="newbaseline")
+        return outgoing()
+    workflow.gmail.thread.side_effect = changed
+    assert (await service.refresh(now(workflow) + timedelta(days=2)))["reminded"] == 0
+    workflow.telegram.send_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_read_outage_is_not_resurrected(workflow):
+    await track(workflow)
+    service = MailFollowups(workflow)
+    workflow.gmail.thread.side_effect = GmailError("timeout")
+    await service.refresh(now(workflow) + timedelta(days=2))
+    await act(workflow, "停止追蹤")
+    workflow.gmail.thread.side_effect = None
+    assert (await service.refresh(now(workflow) + timedelta(days=3)))["checked"] == 0
+    assert service.registry()["ab12"]["status"] == "cancelled"
+    workflow.telegram.send_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_repeated_read_outage_keeps_due_date_without_reminder(workflow):
+    await track(workflow)
+    service = MailFollowups(workflow)
+    due = service.registry()["ab12"]["due_at"]
+    workflow.gmail.thread.side_effect = GmailError("forbidden", 403)
+    for day in (2, 3, 4):
+        assert (await service.refresh(now(workflow) + timedelta(days=day)))["errors"] == 1
+    assert service.registry()["ab12"]["due_at"] == due
+    assert service.registry()["ab12"]["status"] == "waiting_other"
+    workflow.telegram.send_message.assert_not_awaited()

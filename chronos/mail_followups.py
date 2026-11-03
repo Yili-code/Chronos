@@ -52,6 +52,8 @@ class MailFollowups:
             return {"resolved": "已收到另一方回覆，此次追蹤已結束。",
                     "cancelled": "追蹤已取消。", "paused": "追蹤已暫停，請核對自動回覆或讀取／投遞狀態。",
                     "notifying": "提醒已開始投遞，結果仍待確認。", "reminded": "本次已提醒，不會持續催促。"}.get(status, "尚無追蹤。")
+        if state.get("read_unverified"):
+            return text + " 最新郵件未能驗證，這次不發提醒；下次成功讀取後重新核對。 不會寄出催覆郵件。"
         if state.get("due_at"):
             due = datetime.fromtimestamp(state["due_at"], self.mail.settings.tz)
             text += f"若狀態未變，下次排程檢查時會在 {due:%m/%d %H:%M} 後提醒你一次。"
@@ -115,8 +117,12 @@ class MailFollowups:
                 continue
             token = state["version"]
             result["checked"] += 1
+            reading = True
             try:
                 _, messages = await MailCorrespondence(self.mail).context(identifier)
+                reading = False
+                if state.get("read_unverified"):
+                    self.update(identifier, token, read_unverified=False)
                 if messages[-1].get("automatic"):
                     self.update(identifier, token, status="paused", reason="automatic_reply")
                     result["paused"] += 1
@@ -142,7 +148,10 @@ class MailFollowups:
                 def transition(old):
                     old = old or {}
                     item = old.get(identifier, {})
-                    if item.get("version") != token or item.get("status") not in ACTIVE:
+                    if (item.get("version") != token or item.get("status") != state["status"]
+                            or item.get("status") not in ACTIVE or item.get("read_unverified")
+                            or item.get("baseline_id") != state["baseline_id"]
+                            or item.get("due_at") != state.get("due_at")):
                         return old
                     return {**old, identifier: {**item, "status": "notifying", "notification_claim": claim}}
                 claimed = self.mail.db.mutate_mail_state(self.mail.key("followups"), transition)
@@ -154,6 +163,9 @@ class MailFollowups:
                 self.update(identifier, token, status="reminded")
                 result["reminded"] += 1
             except GmailError:
-                self.update(identifier, token, status="paused", reason="read_or_delivery_unverified")
+                if reading:
+                    self.update(identifier, token, read_unverified=True)
+                else:
+                    self.update(identifier, token, status="paused", reason="delivery_unverified")
                 result["errors"] += 1
         return result
