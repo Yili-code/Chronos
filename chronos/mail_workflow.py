@@ -41,6 +41,10 @@ VULNERABILITY = re.compile(r"dependabot|vulnerability|security advisory|CVE-\d|�
 
 def filter_reason(mail, keep_senders="", discard_account_security_after=0):
     labels = set(mail.get("labels", []))
+    # Unknown MIME evidence cannot establish that the whole message is disposable.
+    # This guard also applies to explicit subject-based account-security rules.
+    if mail.get("body_incomplete") or mail.get("body_truncated"):
+        return None
     if "UNREAD" not in labels or labels & {"TRASH", "SPAM", "STARRED"}:
         return None
     address = parseaddr(mail["sender"])[1].lower()
@@ -83,10 +87,12 @@ def format_mail_card(mail, summary, account):
     summary = re.sub(r"^原文摘錄(?:（摘要暫不可用）)?：", "", summary)
     label = "Original excerpt" if excerpt else "摘要"
     sender = mail["sender"]
+    evidence_notice = ("部分內文或附件未讀取；摘要僅涵蓋可讀內容。\n\n"
+                       if mail.get("body_incomplete") or mail.get("body_truncated") else "")
     url = f"https://mail.google.com/mail/u/{quote(account, safe='@')}/#all/{quote(mail['id'], safe='')}"
     return (f"📬 <b>{escape(display_text(mail['subject']))}</b>\n\n"
             f"<b>寄件者</b>  {escape(sender)}\n\n"
-            f"<b>{label}</b>\n{escape(display_text(summary))}\n\n"
+            f"<b>{label}</b>\n{evidence_notice}{escape(display_text(summary))}\n\n"
             f'<a href="{escape(url, quote=True)}">Open email</a>')
 
 

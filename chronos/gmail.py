@@ -30,18 +30,29 @@ def decode_message(raw):
     payload = raw.get("payload", {})
     headers = {h["name"].lower(): h["value"] for h in payload.get("headers", [])}
     plain, html = [], []
+    incomplete = False
 
     def visit(part):
+        nonlocal incomplete
         # Do not download or interpret attachments, including attached messages.
-        if part.get("filename"):
+        mime = part.get("mimeType", "")
+        if (part.get("filename") or part.get("body", {}).get("attachmentId")
+                or mime == "message/rfc822"):
+            incomplete = True
             return
         data = part.get("body", {}).get("data", "")
-        if data and part.get("mimeType") in {"text/plain", "text/html"}:
+        if data and mime in {"text/plain", "text/html"}:
             try:
-                text = base64.urlsafe_b64decode(data + "=" * (-len(data) % 4)).decode("utf-8", "replace")
-            except (ValueError, TypeError):
+                text = base64.b64decode(data + "=" * (-len(data) % 4), altchars=b"-_", validate=True).decode("utf-8")
+            except (ValueError, TypeError, UnicodeDecodeError):
+                incomplete = True
                 text = ""
             (plain if part["mimeType"] == "text/plain" else html).append(text)
+        elif mime and mime not in {"text/plain", "text/html"} and not mime.startswith("multipart/"):
+            incomplete = True
+            return
+        elif not data and part.get("body", {}).get("size", 0):
+            incomplete = True
         for child in part.get("parts", []):
             visit(child)
 
@@ -58,6 +69,7 @@ def decode_message(raw):
         "sender": clean(headers.get("from", ""), 240), "date": clean(headers.get("date", ""), 100),
         "snippet": clean(raw.get("snippet", ""), 600), "body": normalized_body[:12000],
         "body_truncated": len(normalized_body) > 12000,
+        "body_incomplete": incomplete,
         "unsubscribe": bool(headers.get("list-unsubscribe")),
         "has_reply": bool(headers.get("in-reply-to") or headers.get("references")),
     }
