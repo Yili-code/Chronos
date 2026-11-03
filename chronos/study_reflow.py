@@ -1,5 +1,5 @@
 """Preview personal calendar moves, then reconcile each approved move by version."""
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta, time, timezone
 import re
 
 from .google_calendar import CalendarError
@@ -13,8 +13,14 @@ class ReflowReviewError(CalendarError):
 def bounds(event, tz):
     start, end = event.get("start", {}), event.get("end", {})
     if start.get("dateTime") and end.get("dateTime"):
-        return tuple(datetime.fromisoformat(v["dateTime"].replace("Z", "+00:00")).astimezone(tz)
-                     for v in (start, end))
+        try:
+            parsed = tuple(datetime.fromisoformat(v['dateTime'].replace('Z', '+00:00')) for v in (start, end))
+            if (any(v.utcoffset() is None for v in parsed)
+                    or parsed[0].astimezone(timezone.utc) >= parsed[1].astimezone(timezone.utc)):
+                raise ValueError()
+            return tuple(v.astimezone(tz) for v in parsed)
+        except (ValueError, TypeError, AttributeError):
+            raise CalendarError('A calendar event has an invalid or ambiguous time. Planning paused.') from None
     if start.get("date") and end.get("date"):
         return tuple(datetime.combine(datetime.fromisoformat(v["date"]).date(), time(), tz)
                      for v in (start, end))

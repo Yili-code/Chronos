@@ -21,6 +21,7 @@ class Intent(BaseModel):
         "event_reset", "study_reset", "sequence_replan", "study_replan", "replan", "agenda", "free", "info", "reminder_create", "reminder_list", "reminder_cancel",
         "classday", "calendar_view", "calendar_edit", "ai_usage", "announcements", "announcement",
         "mail_next", "cancel", "clarify", "unsupported", "acknowledge", "preference", "assignment_query", "assignment_scan",
+        "briefing", "weekly", "time_usage",
     ]
     task_ids: list[Annotated[int, Field(strict=True, ge=1)]] = Field(default_factory=list, max_length=100)
     target_selection: Literal["single", "all", "ambiguous"] = "single"
@@ -367,7 +368,8 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
     # Neither the model nor the user can supply a command name here.
     simple = {"task_list": "/task", "task_review": "/reviewtasks", "undo": "/undo", "clear_tasks": "/clear",
               "plan_list": "/plan", "free": "/free", "info": "/info",
-              "calendar_view": "/calendar", "ai_usage": "/ai_usage"}
+              "calendar_view": "/calendar", "ai_usage": "/ai_usage",
+              "briefing": "/brief", "weekly": "/week", "time_usage": "/time"}
     try:
         if intent.action == 'assignment_query':
             from . import assignment_access
@@ -386,6 +388,9 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
             result=await bounded_free_message(app.db,app.google_calendar,app.settings,intent.start,intent.end,now)
             action=lambda:result
         elif intent.action in simple:
+            if intent.action in {'briefing', 'weekly', 'time_usage'} and any(
+                    value is not None for value in (intent.start, intent.end, intent.day, intent.end_day)):
+                return clarify('目前摘要只支援今天、下週規劃及過去七個完整日分析。請確認要使用哪一個固定範圍。')
             action = await app.prepare_message(simple[intent.action], update_id=update_id, chat_id=chat_id)
         elif intent.action == 'task_schedule':
             if not persistent or not app.settings.enable_learning_calendar:

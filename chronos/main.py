@@ -205,6 +205,10 @@ def clear_tasks_reply() -> str:
 @tracked_job(lambda: db)
 async def send_daily_tasks() -> None:
     if settings.telegram_chat_id and telegram.enabled:
+        if settings.enable_learning_calendar:
+            from .executive_reports import scheduled
+            await scheduled(db, google_calendar, telegram, settings)
+            return
         result = await telegram.send_message(
             settings.telegram_chat_id,
             format_tasks(
@@ -585,6 +589,20 @@ async def trigger_deadline_reminders(x_chronos_scheduler_secret: str | None = He
 def require_learning_scheduler_secret(value):
     if not settings.scheduler_secret or not hmac.compare_digest(value or "", settings.scheduler_secret):
         raise HTTPException(status_code=403, detail="Invalid scheduler credential")
+
+
+@app.get('/internal/reports/{kind}')
+async def executive_report_preview(kind: str, x_chronos_scheduler_secret: str | None = Header(default=None)):
+    """Authenticated read-only reports for operators; never send notifications."""
+    require_learning_scheduler_secret(x_chronos_scheduler_secret)
+    if kind not in {'brief', 'week', 'time'}:
+        raise HTTPException(status_code=404, detail='Unknown report')
+    from .executive_reports import report
+    try:
+        return JSONResponse({'release': settings.release_sha, 'messages': await report(kind, db, google_calendar, settings)},
+                            headers={'Cache-Control': 'no-store'})
+    except CalendarError:
+        raise HTTPException(status_code=503, detail='Calendar data is unavailable or incomplete') from None
 
 
 @tracked_job(lambda: db)
@@ -1482,6 +1500,14 @@ async def prepare_message(text: str, *, update_id: int | None = None, chat_id: i
             r"(?:\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2})\s+\d{1,2}:\d{2}(?:\s+\d{1,3}(?:\s*(?:minutes|min|分鐘))?)?", normalized, re.IGNORECASE)
             or study_window(normalized, datetime.now(settings.tz), settings.learning_minutes)):
         return lambda: "Open Adjust plan → Set manually on the current execution plan, then send this date/time again. No task was created."
+    report_match = re.fullmatch(r'/(brief|week|time)(?:@[A-Za-z0-9_]+)?', normalized, re.IGNORECASE)
+    if report_match:
+        from .executive_reports import report
+        try:
+            messages = await report(report_match[1].lower(), db, google_calendar, settings)
+        except CalendarError:
+            return lambda: 'Calendar data is unavailable or incomplete. No report or changes were made.'
+        return lambda: message_bundle(*messages)
     if re.fullmatch(r"/free(?:@[A-Za-z0-9_]+)?", normalized, re.IGNORECASE):
         try:
             offer = await free_slot_offer(db, google_calendar, settings)
