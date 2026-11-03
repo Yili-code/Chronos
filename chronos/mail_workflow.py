@@ -335,6 +335,10 @@ class MailWorkflow:
         if not saved:
             return lambda: "找不到這封已整理的信。沒有執行任何動作。"
         instruction = instruction.strip()
+        from .contact_relationships import ContactRelationships
+        contact = ContactRelationships(self).prepare(identifier, instruction, now)
+        if contact is not None:
+            return contact
         from .mail_followups import MailFollowups
         followup = await MailFollowups(self).prepare(identifier, instruction, now)
         if followup is not None:

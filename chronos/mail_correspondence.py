@@ -10,6 +10,7 @@ import re
 import time
 import uuid
 from email.utils import parseaddr
+from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -20,7 +21,15 @@ from .gmail import GmailError
 class ReplyText(BaseModel):
     model_config = ConfigDict(extra="forbid")
     body: str = Field(min_length=1, max_length=4000)
-    questions: list[str] = Field(default_factory=list, max_length=5)
+    questions: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(default_factory=list, max_length=5)
+
+
+def requires_mail_context(text):
+    return bool(re.match(
+        r"^(?:(?:請|幫我)\s*)?(?:草擬(?:郵件)?回覆|起草回覆|撰寫回覆|draft\s+(?:a\s+)?reply|"
+        r"儲存\s*gmail\s*草稿|save\s+gmail\s+draft|查看回覆草稿|取消回覆草稿|追蹤回覆|track\s+reply|"
+        r"查看郵件追蹤|取消郵件追蹤|新增聯絡人|加入聯絡人|記住聯絡人|查看聯絡人|更新聯絡人|"
+        r"刪除聯絡人|合併聯絡人|確認聯絡人操作|記錄互動|聯絡偏好|關係建議|關係紀錄)", text.strip(), re.I))
 
 
 def fingerprint(messages):

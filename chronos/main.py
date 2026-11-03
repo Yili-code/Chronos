@@ -1066,7 +1066,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             await delete_telegram_messages(chat_id, card_id)
         is_proposal = receipt["reply"].startswith("Create this task?\n\n")
         is_edit = receipt["reply"] == "Reply with the revised task title."
-        is_correspondence = receipt["reply"].startswith(("回覆草稿\n", "郵件追蹤\n"))
+        is_correspondence = receipt["reply"].startswith(("回覆草稿\n", "郵件追蹤\n", "聯絡人\n"))
         task_resolved = (receipt["reply"].startswith("Added task #")
                          or receipt["reply"].startswith("This email already has task #"))
         callback_action = callback_match.group(1) if callback_match else None
@@ -1110,6 +1110,16 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             result = await telegram.answer_callback_query(update.callback_query.id)
             if not result.get("ok"):
                 raise HTTPException(status_code=502, detail="Mail callback acknowledgement pending")
+        return {"ok": True}
+    from .mail_correspondence import requires_mail_context
+    if update.message and requires_mail_context(source_message.text or ""):
+        receipt = db.get_update(update_id) or db.process_update(update_id, lambda:
+            "請先回覆要處理的 Gmail 郵件卡片，讓我確認郵件串與對象。尚未建立任務、草稿或聯絡人。")
+        if not receipt["delivered"]:
+            result = await telegram.send_message(chat_id, receipt["reply"])
+            if not result.get("ok"):
+                raise HTTPException(status_code=502, detail="Mail context clarification pending")
+            db.mark_update_delivered(update_id)
         return {"ok": True}
     receipt = db.get_update(update_id)
     plan_callback = False

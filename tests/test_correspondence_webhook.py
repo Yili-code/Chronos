@@ -53,3 +53,29 @@ def test_tracking_reply_stays_bound_and_cancellation_has_no_external_side_effect
     gmail.create_reply_draft.assert_not_awaited()
     main.ai._generate_output.assert_not_awaited()
     assert not tasks.list_open()
+
+
+def test_missing_card_context_asks_instead_of_creating_unrelated_task(system, monkeypatch):
+    client, tasks, bot, gmail, mail = configure(system, monkeypatch)
+    payload = {"update_id": 21301, "message": {"message_id": 800, "chat": {"id": 123}, "text": "草擬回覆：英文謝絕"}}
+    for _ in range(2):
+        assert client.post("/telegram/webhook", json=payload, headers={"X-Telegram-Bot-Api-Secret-Token": "test-hook"}).status_code == 200
+    assert "郵件卡片" in bot.send_message.call_args.args[1]
+    bot.send_message.assert_awaited_once()
+    main.ai.parse.assert_not_awaited()
+    main.ai._generate_output.assert_not_awaited()
+    assert not tasks.list_open()
+
+
+def test_local_contact_preview_binding_version_update_and_duplicate_receipt(system, monkeypatch):
+    client, tasks, bot, gmail, mail = configure(system, monkeypatch)
+    for _ in range(2):
+        assert post(client, 21401, text="新增聯絡人：Alex；公司：Acme").status_code == 200
+    assert len(mail.get("contacts")["items"]) == 1
+    contact = next(iter(mail.get("contacts")["items"].values()))
+    assert mail.binding(123, 700)["mail_id"] == "ab12"
+    command = f"更新聯絡人 {contact['id']} {contact['version']}：公司：Newco"
+    assert post(client, 21402, text=command, card=700).status_code == 200
+    assert mail.get("contacts")["items"][contact["id"]]["company"] == "Newco"
+    main.ai._generate_output.assert_not_awaited()
+    assert not tasks.list_open()

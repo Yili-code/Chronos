@@ -4,6 +4,8 @@ Date: 2026-11-03, Asia/Taipei. This is an incomplete acceptance audit, not a cla
 
 Baseline scope: the capability table and 80-case results below describe the original audit at commit `6effb2d`. Subsequent reviewed mail draft and reply-tracking implementation is documented in [Mail correspondence](mail-correspondence.md); it does not retroactively turn the baseline's blocked scenarios into passes.
 
+Local contact/relationship functionality is separately documented in [Contact relationships](contact-relationships.md). It does not imply Google Contacts authorization or change the baseline's original outcomes.
+
 ## Scope and capability evidence
 
 | Domain | Current owning implementation | Supported behavior and remaining gap |
