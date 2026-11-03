@@ -1,5 +1,5 @@
 """Cloud-driven tomorrow agenda with per-part durable delivery receipts."""
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta, time, timezone
 from html import escape
 import re
 from uuid import uuid4
@@ -54,7 +54,7 @@ def render_agenda(events, day, tz, label="Tomorrow", db=None, now=None, show_tas
         else:
             start = datetime.fromisoformat(event["start"]["dateTime"]).astimezone(tz)
             end = datetime.fromisoformat(event["end"]["dateTime"]).astimezone(tz)
-            duration = round((end - start).total_seconds() / 60)
+            duration = round((end.astimezone(timezone.utc) - start.astimezone(timezone.utc)).total_seconds() / 60)
             task_id = str(props.get("chronosTask", ""))
             task_suffix = f"({task_id})" if show_task_ids and re.fullmatch(r"[1-9][0-9]*", task_id) else ""
             begin = start.strftime("%H:%M") if start.date() == day else start.strftime("%m/%d %H:%M")
@@ -76,7 +76,7 @@ def render_agenda(events, day, tz, label="Tomorrow", db=None, now=None, show_tas
     first_row = True
     group = []
     for _, row, event in sorted(rows, key=lambda item: (item[0], item[1])):
-        if len(text) + len(row) > 3000:
+        if len((text+row).encode('utf-16-le')) // 2 > 3000:
             parts.append(text)
             if event_groups is not None:
                 event_groups.append(group)
