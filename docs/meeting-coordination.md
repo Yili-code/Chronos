@@ -6,6 +6,8 @@ Reply to the intended person's Gmail card with `協調會面：明天下午三�
 
 The candidate displays the target address, title, offset-aware time, IANA timezone and duration. It checks the owner's availability but does not query or invent another person's availability. Ambiguous DST overlaps require an explicit UTC offset. Supported duration is 15–240 minutes, with a future start within one year.
 
+Clarification requests retain the owner's bounded original constraints. Reply to the specific prompt or use `補充會面資料：內容`; an earlier prompt cannot modify a newer candidate. Prompt kind/version are saved with the receipt and carried into the Telegram binding. A newer incomplete request invalidates an earlier unconfirmed candidate, and conflicting draft/meeting pending contexts require explicit selection.
+
 ## Explicit private reservation
 
 `暫留會面時段 <code>` confirms the displayed candidate for a personal calendar hold. Before writing, Chronos reloads the source thread, rejects changes and rechecks availability. Candidates expire after an hour. Concurrent operations claim the same version transactionally.

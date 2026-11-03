@@ -11,7 +11,7 @@ import time
 import uuid
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .ai import AIError
 from .gmail import GmailError, email_address
@@ -20,9 +20,16 @@ NATIVE_STATES = {"saving", "uncertain", "gmail_draft", "send_review", "sending",
 
 
 class ReplyText(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    body: str = Field(min_length=1, max_length=4000)
+    model_config = ConfigDict(extra="forbid", revalidate_instances="always")
+    body: str = Field(min_length=1, max_length=2800)
     questions: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(default_factory=list, max_length=5)
+
+    @field_validator("body")
+    @classmethod
+    def bounded_preview(cls, value):
+        if len(value.encode("utf-16-le")) // 2 > 2800:
+            raise ValueError("Reply exceeds the owner preview limit")
+        return value
 
 
 def requires_mail_context(text):
@@ -30,9 +37,9 @@ def requires_mail_context(text):
         r"^(?:(?:請|幫我)\s*)?(?:草擬(?:郵件)?回覆|起草回覆|撰寫回覆|draft\s+(?:a\s+)?reply|"
         r"儲存\s*gmail\s*草稿|save\s+gmail\s+draft|查看回覆草稿|取消回覆草稿|追蹤回覆|track\s+reply|"
         r"查看郵件追蹤|取消郵件追蹤|新增聯絡人|加入聯絡人|記住聯絡人|查看聯絡人|更新聯絡人|"
-        r"刪除聯絡人|合併聯絡人|確認聯絡人操作|記錄互動|聯絡偏好|關係建議|關係紀錄|"
+        r"刪除聯絡人|合併聯絡人|確認聯絡人操作|記錄互動|聯絡偏好|關係建議|關係紀錄|聯絡方式|"
         r"協調會面|會面邀約|plan\s+meeting|暫留會面時段|取消會面暫留|查看會面狀態|"
-        r"準備寄出回覆草稿|確認寄出回覆|取消寄送回覆)", text.strip(), re.I))
+        r"準備寄出回覆草稿|確認寄出回覆|取消寄送回覆|補充回覆草稿|修改回覆草稿|補充會面資料)", text.strip(), re.I))
 
 
 def fingerprint(messages):
@@ -69,6 +76,12 @@ class MailCorrespondence:
         sending = await MailSend(self.mail).prepare(identifier, instruction)
         if sending is not None:
             return sending
+        supplement = re.fullmatch(r"(?:補充回覆草稿|修改回覆草稿)\s*[:：]\s*(.+)", instruction, re.S)
+        if supplement:
+            state = self.mail.get("reply:" + identifier) or {}
+            if not state.get("owner_request") or state.get("status") not in {"review", "needs_information"}:
+                return text_result("目前沒有可補充的本機草稿，請重新提出完整草擬要求。")
+            return await self.propose(identifier, state["owner_request"] + "\n使用者補充：" + supplement[1])
         draft_match = re.fullmatch(
             r"(?:(?:請|幫我)\s*)?(?:草擬(?:郵件)?回覆|起草回覆|撰寫回覆|draft\s+(?:a\s+)?reply)\s*[:：]?\s*(.*)",
             instruction, re.I | re.S)
@@ -108,11 +121,13 @@ class MailCorrespondence:
             return "草稿已取消或郵件串已變更；請重新草擬。"
         questions = state.get("questions", [])
         if questions:
-            return "需要補充資料，尚未建立 Gmail 草稿：\n" + "\n".join(questions)
+            return "需要補充資料，尚未建立 Gmail 草稿：\n" + "\n".join(questions) + "\n\n請直接回覆補充內容，或回覆「補充回覆草稿：內容」。"
         return (f"收件者：{state['recipient']}\n主旨：{state['subject']}\n\n{state['body']}\n\n"
                 f"這是待確認的本機草稿，沒有寄出。核對內容後回覆：儲存 Gmail 草稿 {state['version']}")
 
     async def propose(self, identifier, request):
+        if len(request) > 4000:
+            return text_result("累積要求超過 4,000 字元，請整理成較短的完整要求，避免遺失限制。")
         if not request.strip():
             return text_result("請補充回覆內容、語氣或語言；不會猜測你的承諾。")
         if re.search(r"reply[ -]?all|\bcc\b|\bbcc\b|副本|密件|附件|attach|寄出|send\b", request, re.I):
@@ -149,6 +164,7 @@ class MailCorrespondence:
         version = uuid.uuid4().hex[:8]
         subject = latest["subject"]
         state = {"status": "needs_information" if generated.questions else "review",
+                 "owner_request": request,
                  "version": version, "created_at": time.time(), "thread_id": thread_id,
                  "source": fingerprint(messages), "recipient": recipient, "subject": subject,
                  "body": generated.body, "questions": generated.questions,
@@ -162,7 +178,10 @@ class MailCorrespondence:
             current = self.mail.db.mutate_mail_state(self.mail.key(key), transition)
             if current.get("version") != version:
                 return "回覆草稿\n草稿已被另一個操作更新；請先查看目前草稿。"
-            return "回覆草稿\n" + self.preview(current)
+            text = "回覆草稿\n" + self.preview(current)
+            if current["status"] == "needs_information":
+                return {"messages": [{"text": text, "mail_context": {"kind": "reply", "version": version}}]}
+            return text
         return apply
 
     async def save(self, identifier, token):

@@ -39,9 +39,10 @@ class ContactRelationships:
         address = email_address(source.get("sender", ""))
         return address if re.fullmatch(r"[^\s<>@,;]+@[^\s<>@,;]+\.[^\s<>@,;]+", address) else None
 
-    def display(self, contact):
+    def display(self, contact, page=1):
+        addresses = contact["emails"][(page - 1) * 3:page * 3]
         return (f"{contact['name']} · {contact.get('company') or '公司未提供'}\n"
-                f"Email：{', '.join(contact['emails'])}\n職稱：{contact.get('role') or '未提供'}\n"
+                f"Email（第 {page} 頁，共 {(len(contact['emails']) + 2) // 3} 頁）：{', '.join(addresses)}\n職稱：{contact.get('role') or '未提供'}\n"
                 f"ID：{contact['id']}　版本：{contact['version']}\n"
                 "此為 Chronos 本機紀錄，尚未同步 Google Contacts；Email 來源不代表身份已驗證。")
 
@@ -63,7 +64,7 @@ class ContactRelationships:
         return result
 
     def prepare(self, identifier, instruction, now=None):
-        reference = now or datetime.now(self.mail.settings.tz)
+        reference = (now or datetime.now(self.mail.settings.tz)).astimezone(self.mail.settings.tz)
         create = re.fullmatch(r"(?:新增聯絡人|加入聯絡人|記住聯絡人)\s*[:：]\s*(.+)", instruction, re.S)
         if create:
             fields, address = self.parse_fields(create[1]), self.source_address(identifier)
@@ -194,13 +195,24 @@ class ContactRelationships:
             if birthday or due:
                 return answer(f"依你提供的{'生日' if birthday else '互動紀錄與聯絡間隔'}，可以考慮聯繫 {contact['name']}。這只是建議，沒有寄出訊息。")
             return answer("目前沒有足夠的生日、互動日期或聯絡間隔依據，不會推測近況或安排聯繫。")
-        history = re.fullmatch(r"關係紀錄\s+([a-f0-9]{12})", instruction)
+        addresses = re.fullmatch(r"聯絡方式\s+([a-f0-9]{12})(?:\s+第\s*(\d{1,2})\s*頁)?", instruction)
+        if addresses:
+            contact = self.registry()["items"].get(addresses[1])
+            page = int(addresses[2] or 1)
+            if not contact or not 1 <= page <= (len(contact["emails"]) + 2) // 3:
+                return answer("找不到此聯絡人或頁碼，沒有修改資料。")
+            return answer(self.display(contact, page))
+        history = re.fullmatch(r"關係紀錄\s+([a-f0-9]{12})(?:\s+第\s*(\d{1,2})\s*頁)?", instruction)
         if history:
             contact = self.registry()["items"].get(history[1])
             if not contact:
                 return answer("找不到此 ID，沒有推測或關聯其他人。")
-            notes = "\n".join(n["at"] + "：" + n["text"] for n in contact.get("notes", [])) or "尚無使用者提供的互動紀錄。"
-            return answer(self.display(contact) + "\n聯絡偏好：" + ("不主動聯絡" if contact.get("do_not_contact") else "尚無拒絕聯絡設定")
+            page = int(history[2] or 1)
+            all_notes = list(reversed(contact.get("notes", [])))
+            if not 1 <= page <= max(1, (len(all_notes) + 4) // 5):
+                return answer("互動紀錄沒有此頁，沒有修改資料。")
+            notes = "\n".join(n["at"] + "：" + n["text"] for n in all_notes[(page - 1) * 5:page * 5]) or "尚無使用者提供的互動紀錄。"
+            return answer(f"{contact['name']} · {contact['id']}\n互動紀錄第 {page} 頁，共 {max(1, (len(all_notes) + 4) // 5)} 頁\n聯絡偏好：" + ("不主動聯絡" if contact.get("do_not_contact") else "尚無拒絕聯絡設定")
                           + "\n生日：" + contact.get("birthday", "未提供") + "\n" + notes)
         return None
 

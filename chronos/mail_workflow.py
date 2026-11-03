@@ -329,13 +329,17 @@ class MailWorkflow:
             self.db.mutate_mail_state(self.key("daily-lock"),
                 lambda old: {**old, "until": 0} if old and old.get("owner") == owner else (old or {}))
 
-    async def prepare_action(self, identifier, instruction, now=None):
+    async def prepare_action(self, identifier, instruction, now=None, *, context_kind=None, context_version=None):
         """Return a synchronous DB action for the webhook's atomic receipt transaction."""
         self.require_config()
         saved = self.get("message:" + identifier)
         if not saved:
             return lambda: "找不到這封已整理的信。沒有執行任何動作。"
         instruction = instruction.strip()
+        if context_kind in {"reply", "meeting"} and context_version:
+            current = self.get(context_kind + ":" + identifier) or {}
+            if current.get("version") != context_version:
+                return lambda: "補充提示已過期，請回覆最新提示或原郵件卡片；沒有執行任何動作。"
         from .meeting_coordination import MeetingCoordination
         from .google_calendar import CalendarError
         try:
@@ -443,4 +447,27 @@ class MailWorkflow:
                 state = self.db.mutate_mail_state(self.key("message:" + identifier), transition)
                 return f"Added task #{state['task_id']}: {parsed.title}"
             return create
+        pending = [(kind, self.get(kind + ":" + identifier) or {}) for kind in ("reply", "meeting")]
+        pending = [(kind, state) for kind, state in pending if state.get("status") == "needs_information"
+                   and (context_kind is None or context_kind == kind)]
+        if len(pending) > 1:
+            return lambda: "這封信同時有草稿與會面待補充；請指定「補充回覆草稿：內容」或「補充會面資料：內容」。"
+        if pending:
+            kind, state = pending[0]
+            if instruction in {"取消", "cancel"}:
+                def cancel_pending():
+                    current = self.db.mutate_mail_state(self.key(kind + ":" + identifier), lambda old:
+                        {**old, "status": "cancelled"} if old and old.get("version") == state["version"]
+                        and old.get("status") == "needs_information" else (old or {}))
+                    return ("已取消本機待補充要求，沒有寄信或修改行事曆。" if current.get("version") == state["version"]
+                            and current.get("status") == "cancelled" else "狀態已變更，取消未執行；請使用最新提示。")
+                return cancel_pending
+            if state.get("owner_request"):
+                if kind == "reply":
+                    return await MailCorrespondence(self).propose(identifier, state["owner_request"] + "\n使用者補充：" + instruction)
+                try:
+                    return await MeetingCoordination(self, self.calendar).prepare(identifier,
+                        "補充會面資料：" + instruction, now)
+                except CalendarError:
+                    raise GmailError("Calendar verification failed; no meeting completion is confirmed") from None
         return lambda: "請回覆「刪除」「保留」「已讀」「草擬回覆：內容」或「新增任務：要做的事」。寄送需先核對草稿並明確確認，不會自動寄出。"

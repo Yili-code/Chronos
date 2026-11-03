@@ -1057,7 +1057,8 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                     raise HTTPException(status_code=503, detail=str(error)) from None
             else:
                 try:
-                    action = await mail.prepare_action(mail_binding["mail_id"], source_message.text or "")
+                    action = await mail.prepare_action(mail_binding["mail_id"], source_message.text or "",
+                        context_kind=mail_binding.get("context_kind"), context_version=mail_binding.get("context_version"))
                 except GmailError as error:
                     raise HTTPException(status_code=503, detail=str(error)) from None
             receipt = db.process_update(update_id, action)
@@ -1086,6 +1087,12 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             if receipt["reply"] != "已移到垃圾桶。":
                 markup = None
                 identifier = active_binding["mail_id"]
+                context = (receipt.get("messages") or [{}])[0].get("mail_context") or {}
+                question_kind = context.get("kind") if context.get("kind") in {"reply", "meeting"} else None
+                question_version = context.get("version") if question_kind else None
+                question_current = None
+                if question_kind:
+                    question_current = mail.get(question_kind + ":" + identifier) or {}
                 if is_proposal:
                     import hashlib
                     title = receipt["reply"].split("\n\n", 1)[1]
@@ -1094,7 +1101,12 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                               for label, action in (("Yes", "confirm"), ("Edit", "edit"), ("Cancel", "cancel"))]]}
                 elif is_edit:
                     markup = {"force_reply": True, "input_field_placeholder": "Enter a task title"}
-                result = await telegram.send_message(chat_id, receipt["reply"], reply_markup=markup)
+                elif question_kind and question_current.get("version") == question_version:
+                    markup = {"force_reply": True, "input_field_placeholder": "補充資料或回覆取消"}
+                response_text = receipt["reply"]
+                if question_kind and question_current.get("version") != question_version:
+                    response_text = "補充提示已過期，請使用最新提示；沒有重新執行原操作。"
+                result = await telegram.send_message(chat_id, response_text, reply_markup=markup)
                 if not result.get("ok"):
                     raise HTTPException(status_code=502, detail="Mail action reply pending")
                 if is_proposal or is_edit or is_correspondence:
@@ -1102,10 +1114,15 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                     if not message_id:
                         raise HTTPException(status_code=502, detail="Mail task prompt ID missing")
                     binding = {"mail_id": identifier}
+                    if question_kind:
+                        binding.update(context_kind=question_kind, context_version=question_version)
                     if origin_card_id is not None:
                         binding["origin_message_id"] = origin_card_id
                     mail.patch(f"telegram:{chat_id}:{message_id}", **binding)
-            db.mark_update_delivered(update_id)
+            if receipt.get("messages"):
+                db.mark_update_message_delivered(update_id, 1)
+            else:
+                db.mark_update_delivered(update_id)
         if update.callback_query:
             result = await telegram.answer_callback_query(update.callback_query.id)
             if not result.get("ok"):

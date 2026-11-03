@@ -22,6 +22,8 @@ Preferences use `聯絡偏好 <ID> <version>：不主動聯絡`, `允許聯絡`,
 
 `關係建議 <ID>` offers a suggestion only when an explicitly supplied birthday matches today or a supplied interaction date and cadence establish a gap. Do-not-contact suppresses suggestions. No employment, health, cultural practice or family information is inferred from social signals. No greeting is sent or scheduled automatically.
 
+Birthday comparisons and new notes use the configured owner's timezone even when a scheduler supplies UTC. Relation history shows the newest five entries per page; `關係紀錄 <ID> 第 2 頁` accesses older entries. Address lists show three entries per page; use `聯絡方式 <ID> 第 2 頁` for explicitly merged aliases. Pagination retains all stored records and avoids overlong Telegram messages.
+
 ## Limits and consistency
 
 The account registry is one transactionally updated document, supporting SQLite and Firestore's read-before-write contract. There are limits of 100 contacts, 20 notes per contact, 10 changes per contact, 20 pending confirmations, and a conservative 700 KB UTF-8 serialized size bound. Operations refuse capacity overflow without dropping history. Removing a contact or explicitly curating data is required before adding data beyond these bounds.

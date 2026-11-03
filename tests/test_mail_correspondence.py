@@ -24,7 +24,8 @@ def setup(workflow):
 
 
 async def act(workflow, instruction):
-    return (await workflow.prepare_action("ab12", instruction))()
+    result = (await workflow.prepare_action("ab12", instruction))()
+    return result["messages"][0]["text"] if isinstance(result, dict) else result
 
 
 async def propose(workflow):

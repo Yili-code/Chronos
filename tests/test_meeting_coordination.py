@@ -25,7 +25,8 @@ def configure(workflow):
 
 
 async def action(workflow, text):
-    return (await workflow.prepare_action("ab12", text, NOW))()
+    result = (await workflow.prepare_action("ab12", text, NOW))()
+    return result["messages"][0]["text"] if isinstance(result, dict) else result
 
 
 async def proposal(workflow):
@@ -106,7 +107,8 @@ async def test_incomplete_insert_response_is_uncertain(workflow):
 async def test_ambiguous_dst_time_requires_explicit_offset(workflow):
     service, calendar = configure(workflow)
     workflow.ai._generate_output.return_value = Candidate(title="Discussion", start="2026-11-01T01:30:00-04:00", timezone="America/New_York", minutes=30)
-    text = (await service.prepare("ab12", "協調會面：紐約十一月一日一點半，30 分鐘", datetime.fromisoformat("2026-10-30T12:00:00+08:00")))()
+    result = (await service.prepare("ab12", "協調會面：紐約十一月一日一點半，30 分鐘", datetime.fromisoformat("2026-10-30T12:00:00+08:00")))()
+    text = result["messages"][0]["text"]
     assert "UTC offset" in text
     calendar.busy.assert_not_awaited()
 

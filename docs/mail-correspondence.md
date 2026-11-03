@@ -14,6 +14,12 @@ Draft states are `needs_information`, `review`, `saving`, `gmail_draft`, `uncert
 
 Draft previews and status replies remain bound to the original account/card through Telegram; ordinary task-title proposals remain a separate workflow.
 
+When information is missing, Telegram opens a force-reply prompt. Answer that prompt directly, or use `補充回覆草稿：內容`. The bounded original owner request is retained with the clarification, preserving language, tone and explicit constraints. `修改回覆草稿：內容` can revise a local reviewed version; native saves/sends still require their independent confirmation. Old prompt replies are refused after the underlying version changes. Prompt metadata is stored in the original transactional receipt, so a delayed delivery retry cannot adopt a newer prompt's version.
+
+If both a draft and a meeting require information, an unbound answer asks which workflow it concerns; explicit supplements select the intended one. `取消` in a pending clarification cancels only that local request with a version check. Explicit mail/card operations retain their own routing.
+
+Owner constraints are bounded at 4,000 characters and never silently truncated. Reply bodies have a conservative 2,800 UTF-16-unit preview budget, with supplementary Unicode counted correctly; oversized generated bodies fail validation rather than becoming an incomplete owner approval.
+
 ## Reply tracking
 
 Reply `追蹤回覆` to record the current thread direction without scheduling a reminder. `追蹤回覆：3 天` or `track reply: 24 hours` sets a single owner reminder after that interval, checked by the next mail scheduler run. Hour-level input does not make the daily scheduler run hourly. Supported intervals are one hour through 90 days.

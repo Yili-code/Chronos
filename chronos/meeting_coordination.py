@@ -76,6 +76,12 @@ class MeetingCoordination:
             return False
 
     async def prepare(self, identifier, instruction, now=None):
+        supplement = re.fullmatch(r"補充會面資料\s*[:：]\s*(.+)", instruction, re.S)
+        if supplement:
+            previous = self.state(identifier)
+            if previous.get("status") != "needs_information" or not previous.get("owner_request"):
+                return answer("目前沒有待補充的會面要求，請重新提供完整資訊。")
+            instruction = "協調會面：" + previous["owner_request"] + "\n使用者補充：" + supplement[1]
         propose = re.fullmatch(r"(?:協調會面|會面邀約|plan\s+meeting)\s*[:：]\s*(.+)", instruction, re.I | re.S)
         hold = re.fullmatch(r"暫留會面時段\s+([a-f0-9]{8})", instruction)
         cancel = re.fullmatch(r"取消會面暫留\s+([a-f0-9]{8})", instruction)
@@ -139,13 +145,21 @@ class MeetingCoordination:
     async def propose(self, identifier, request, reference):
         old = self.state(identifier)
         def blocked(text):
+            pending = {"status": "needs_information", "version": uuid.uuid4().hex[:8],
+                       "owner_request": request if len(request) <= 4000 else "", "created_at": time.time()}
             def apply():
-                if old.get("status") == "review":
-                    self.update(identifier, old["version"], expected="review", status="needs_information")
-                return "會面協調\n" + text
+                current = self.mail.db.mutate_mail_state(self.mail.key("meeting:" + identifier), lambda previous:
+                    pending if (previous or {}).get("version") == old.get("version")
+                    and (previous or {}).get("status") == old.get("status") else (previous or {}))
+                if current.get("version") != pending["version"]:
+                    return "會面協調\n會面要求已被另一個操作更新；請使用最新提示。"
+                return {"messages": [{"text": "會面協調\n" + text + "\n\n請回覆補充資料，或回覆「補充會面資料：內容」。",
+                    "mail_context": {"kind": "meeting", "version": pending["version"]}}]}
             return apply
         if old.get("status") in {"held", "creating", "uncertain", "deleting"}:
             return answer(self.preview(old) + "\n調整前請先核對或取消原暫留。")
+        if len(request) > 4000:
+            return blocked("累積會面要求太長，請整理為 4,000 字元內的完整要求。")
         _, messages = await MailCorrespondence(self.mail).context(identifier)
         if any(m.get("body_incomplete") or m.get("body_truncated") for m in messages):
             return blocked("郵件內容或附件不完整；請先核對，尚未建立候選時間。")
@@ -184,6 +198,7 @@ class MeetingCoordination:
             return blocked("日期、時區或長度尚無法可靠確認；請提供明確資訊，沒有安排會面。")
         token = uuid.uuid4().hex[:8]
         state = {"status": "review", "version": token, "created_at": time.time(), "recipient": recipient,
+                 "owner_request": request,
                  "title": result.title, "start": start.isoformat(), "end": end.isoformat(), "timezone": result.timezone,
                  "minutes": result.minutes, "source": fingerprint(messages),
                  "event_id": hashlib.sha256((self.mail.namespace + identifier + token).encode()).hexdigest()}

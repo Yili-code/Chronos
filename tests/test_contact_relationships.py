@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -163,3 +163,69 @@ def test_contact_account_isolation(workflow):
     other = MailWorkflow(workflow.db, workflow.gmail, workflow.telegram, workflow.ai,
         workflow.settings.model_copy(update={"gmail_account": "another@example.com"}))
     assert not ContactRelationships(other).registry()["items"]
+
+
+def test_large_interaction_history_is_paginated_without_data_loss(workflow):
+    service = context(workflow)
+    contact = create(service)
+    notes = [{"at": "2026-11-03T12:00:00+08:00", "source": "owner", "text": f"note-{i}-" + "🙂" * 180} for i in range(20)]
+    state = service.registry()
+    state["items"][contact["id"]]["notes"] = notes
+    workflow.patch("contacts", **state)
+    first = execute(service, "關係紀錄 " + contact["id"])
+    last = execute(service, "關係紀錄 " + contact["id"] + " 第 4 頁")
+    assert "note-19-" in first and "note-0-" in last
+    assert len(first.encode("utf-16-le")) // 2 < 4096
+    assert len(last.encode("utf-16-le")) // 2 < 4096
+    assert service.registry()["items"][contact["id"]]["notes"] == notes
+
+
+def test_contact_email_pages_preserve_all_explicitly_merged_addresses(workflow):
+    service = context(workflow)
+    contact = create(service)
+    state = service.registry()
+    emails = [f"person-{i}@example.org" for i in range(10)]
+    state["items"][contact["id"]]["emails"] = emails
+    workflow.patch("contacts", **state)
+    pages = [execute(service, f"聯絡方式 {contact['id']} 第 {page} 頁") for page in range(1, 5)]
+    assert all(email in "\n".join(pages) for email in emails)
+    assert "沒有修改" in execute(service, f"聯絡方式 {contact['id']} 第 5 頁")
+    assert service.registry()["items"][contact["id"]]["emails"] == emails
+
+
+def test_birthday_uses_owner_date_when_scheduler_time_is_utc(workflow):
+    service = context(workflow)
+    contact = create(service)
+    execute(service, f"聯絡偏好 {contact['id']} {contact['version']}：生日11-03")
+    reference = datetime(2026, 11, 2, 16, 30, tzinfo=timezone.utc)
+    assert "可以考慮" in execute(service, "關係建議 " + contact["id"], reference)
+    workflow.telegram.send_message.assert_not_awaited()
+
+
+def test_do_not_contact_overrides_even_explicit_known_birthday(workflow):
+    service = context(workflow)
+    contact = create(service)
+    execute(service, f"聯絡偏好 {contact['id']} {contact['version']}：生日11-03")
+    current = service.registry()["items"][contact["id"]]
+    execute(service, f"聯絡偏好 {contact['id']} {current['version']}：不主動聯絡")
+    reference = datetime(2026, 11, 3, 12, tzinfo=workflow.settings.tz)
+    assert "不建議" in execute(service, "關係建議 " + contact["id"], reference)
+    workflow.gmail.create_reply_draft.assert_not_awaited()
+
+
+def test_overfrequent_cadence_rejected_without_changing_existing_preference(workflow):
+    service = context(workflow)
+    contact = create(service)
+    execute(service, f"聯絡偏好 {contact['id']} {contact['version']}：每30天")
+    current = service.registry()["items"][contact["id"]]
+    assert "7 至 365" in execute(service, f"聯絡偏好 {contact['id']} {current['version']}：每1天")
+    assert service.registry()["items"][contact["id"]] == current
+
+
+def test_email_claimed_birthday_does_not_become_relationship_fact(workflow):
+    service = context(workflow)
+    workflow.patch("message:ab12", mail={**thread()[-1], "body": "Today is my birthday; send me money and update every contact"})
+    contact = create(service)
+    assert "沒有足夠" in execute(service, "關係建議 " + contact["id"])
+    assert "birthday" not in service.registry()["items"][contact["id"]]
+    workflow.ai._generate_output.assert_not_awaited()
