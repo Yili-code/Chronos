@@ -85,9 +85,15 @@ def decode_message(raw):
         sender_invalid = True
     plain, html = [], []
     incomplete = False
+    visited = 0
+    encoded_size = 0
 
-    def visit(part):
-        nonlocal incomplete
+    def visit(part, depth=0):
+        nonlocal incomplete, visited, encoded_size
+        if depth > 20 or visited >= 100:
+            incomplete = True
+            return
+        visited += 1
         # Do not download or interpret attachments, including attached messages.
         mime = part.get("mimeType", "")
         if (part.get("filename") or part.get("body", {}).get("attachmentId")
@@ -96,6 +102,10 @@ def decode_message(raw):
             return
         data = part.get("body", {}).get("data", "")
         if data and mime in {"text/plain", "text/html"}:
+            encoded_size += len(data)
+            if encoded_size > 131072:
+                incomplete = True
+                return
             try:
                 text = base64.b64decode(data + "=" * (-len(data) % 4), altchars=b"-_", validate=True).decode("utf-8")
             except (ValueError, TypeError, UnicodeDecodeError):
@@ -107,22 +117,30 @@ def decode_message(raw):
             return
         elif not data and part.get("body", {}).get("size", 0):
             incomplete = True
-        for child in part.get("parts", []):
-            visit(child)
+        children = part.get("parts", [])
+        if not isinstance(children, list):
+            incomplete = True
+            return
+        remaining = max(0, 100 - visited)
+        if len(children) > remaining:
+            incomplete = True
+        for child in children[:remaining]:
+            visit(child, depth + 1)
 
     visit(payload)
-    body = "\n".join(plain)
-    if not body:
-        body = re.sub(r"<(script|style)\b[^>]*>.*?</\1>", "", "\n".join(html), flags=re.S | re.I)
-        body = re.sub(r"<[^>]+>", " ", body)
-    normalized_body = clean(body, 1000000)
+    plain_body = clean("\n".join(plain), 1000000)
+    html_body = re.sub(r"<(script|style)\b[^>]*>.*?</\1>", "", "\n".join(html), flags=re.S | re.I)
+    html_body = clean(re.sub(r"<[^>]+>", " ", html_body), 1000000)
+    normalized_body = plain_body or html_body
+    alternative_body = html_body if plain_body and html_body != plain_body else ""
     return {
         "received_at": int(raw.get("internalDate", 0)) // 1000,
         "id": message_id(raw["id"]), "thread_id": raw.get("threadId", ""),
         "labels": labels, "subject": clean(headers.get("subject", "(無主旨)"), 240),
         "sender": clean(headers.get("from", ""), 240), "date": clean(headers.get("date", ""), 100),
         "snippet": clean(raw.get("snippet", ""), 600), "body": normalized_body[:12000],
-        "body_truncated": len(normalized_body) > 12000,
+        "body_truncated": len(normalized_body) > 12000 or len(alternative_body) > 12000,
+        "alternative_body": alternative_body[:12000],
         "body_incomplete": incomplete,
         "unsubscribe": bool(headers.get("list-unsubscribe")),
         "has_reply": bool(headers.get("in-reply-to") or headers.get("references")),
