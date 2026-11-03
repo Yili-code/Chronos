@@ -1,5 +1,6 @@
 """Owner-only Calendar transport with deterministic event IDs and safe errors."""
 import asyncio
+from datetime import datetime, timezone
 import time
 from urllib.parse import quote
 
@@ -8,6 +9,12 @@ import httpx
 
 class CalendarError(RuntimeError):
     pass
+
+
+def validate_range(start, end):
+    if (start.utcoffset() is None or end.utcoffset() is None
+            or start.astimezone(timezone.utc) >= end.astimezone(timezone.utc)):
+        raise CalendarError('Calendar query needs a positive timezone-aware range.')
 
 
 class GoogleCalendar:
@@ -63,6 +70,7 @@ class GoogleCalendar:
         return "calendars/" + quote(self.settings.calendar_id, safe="") + "/events"
 
     async def busy(self, start, end):
+        validate_range(start, end)
         # Google may coalesce a primary email and the `primary` alias into one
         # response entry. Normalize before checking every requested calendar.
         ids = sorted({"primary" if value.strip().casefold() == self.settings.calendar_account.casefold()
@@ -72,29 +80,38 @@ class GoogleCalendar:
         data = await self.request("POST", "freeBusy", body={"timeMin": start.isoformat(),
             "timeMax": end.isoformat(), "timeZone": self.settings.timezone,
             "items": [{"id": value} for value in ids]})
-        calendars = data.get("calendars", {})
-        if any(value not in calendars or calendars[value].get("errors") for value in ids):
-            raise CalendarError("Some calendars could not be checked. No work block was scheduled.")
-        result = []
-        from datetime import datetime
-        for value in calendars.values():
-            for slot in value.get("busy", []):
-                result.append((datetime.fromisoformat(slot["start"].replace("Z", "+00:00")),
-                               datetime.fromisoformat(slot["end"].replace("Z", "+00:00"))))
-        return result
+        try:
+            calendars = data['calendars']
+            if not isinstance(calendars, dict) or not ids:
+                raise ValueError()
+            result = []
+            for calendar_id in ids:
+                value = calendars[calendar_id]
+                if value.get('errors') or not isinstance(value.get('busy'), list):
+                    raise ValueError()
+                for slot in value['busy']:
+                    begin, stop = (datetime.fromisoformat(slot[key].replace('Z', '+00:00'))
+                                   for key in ('start', 'end'))
+                    validate_range(begin, stop)
+                    result.append((begin, stop))
+            return result
+        except (KeyError, TypeError, AttributeError, ValueError, CalendarError):
+            raise CalendarError('Some calendars could not be checked. No work block was scheduled.') from None
 
     async def event(self, event_id):
         return await self.request("GET", self.events_path() + "/" + event_id, missing=True)
 
     async def agenda(self, start, end):
         """Read every expanded occurrence overlapping the bounded local day."""
+        validate_range(start, end)
         ids = sorted({"primary" if value.strip().casefold() == self.settings.calendar_account.casefold()
                       else value.strip() for value in
                       [self.settings.calendar_id, *self.settings.calendar_busy_ids.split(",")] if value.strip()})
         events, seen = [], set()
         for calendar_id in ids:
             page = None
-            while True:
+            pages = set()
+            for _ in range(40):
                 params = {"timeMin": start.isoformat(), "timeMax": end.isoformat(),
                           "timeZone": self.settings.timezone, "singleEvents": "true",
                           "orderBy": "startTime", "maxResults": 250}
@@ -113,6 +130,11 @@ class GoogleCalendar:
                 page = data.get("nextPageToken")
                 if not page:
                     break
+                if not isinstance(page, str) or page in pages:
+                    raise CalendarError('Calendar pagination is inconsistent. No partial agenda was returned.')
+                pages.add(page)
+            else:
+                raise CalendarError('Too many Calendar events. Narrow the requested date range.')
         return events
 
     async def search_events(self, query):
