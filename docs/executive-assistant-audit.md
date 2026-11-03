@@ -6,6 +6,8 @@ Baseline scope: the capability table and 80-case results below describe the orig
 
 Local contact/relationship functionality is separately documented in [Contact relationships](contact-relationships.md). It does not imply Google Contacts authorization or change the baseline's original outcomes.
 
+Reviewed meeting candidates and private tentative calendar holds are documented in [Meeting coordination](meeting-coordination.md). They are not attendee coordination or invitation delivery.
+
 ## Scope and capability evidence
 
 | Domain | Current owning implementation | Supported behavior and remaining gap |

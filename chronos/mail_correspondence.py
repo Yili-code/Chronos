@@ -29,7 +29,8 @@ def requires_mail_context(text):
         r"^(?:(?:請|幫我)\s*)?(?:草擬(?:郵件)?回覆|起草回覆|撰寫回覆|draft\s+(?:a\s+)?reply|"
         r"儲存\s*gmail\s*草稿|save\s+gmail\s+draft|查看回覆草稿|取消回覆草稿|追蹤回覆|track\s+reply|"
         r"查看郵件追蹤|取消郵件追蹤|新增聯絡人|加入聯絡人|記住聯絡人|查看聯絡人|更新聯絡人|"
-        r"刪除聯絡人|合併聯絡人|確認聯絡人操作|記錄互動|聯絡偏好|關係建議|關係紀錄)", text.strip(), re.I))
+        r"刪除聯絡人|合併聯絡人|確認聯絡人操作|記錄互動|聯絡偏好|關係建議|關係紀錄|"
+        r"協調會面|會面邀約|plan\s+meeting|暫留會面時段|取消會面暫留|查看會面狀態)", text.strip(), re.I))
 
 
 def fingerprint(messages):

@@ -260,7 +260,7 @@ async def reset_in_progress(request: Request, error: ResetInProgress):
 
 
 def mail_workflow():
-    return MailWorkflow(db, gmail, telegram, ai, settings)
+    return MailWorkflow(db, gmail, telegram, ai, settings, calendar=google_calendar)
 
 
 def learning_calendar():
@@ -1066,7 +1066,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             await delete_telegram_messages(chat_id, card_id)
         is_proposal = receipt["reply"].startswith("Create this task?\n\n")
         is_edit = receipt["reply"] == "Reply with the revised task title."
-        is_correspondence = receipt["reply"].startswith(("回覆草稿\n", "郵件追蹤\n", "聯絡人\n"))
+        is_correspondence = receipt["reply"].startswith(("回覆草稿\n", "郵件追蹤\n", "聯絡人\n", "會面協調\n"))
         task_resolved = (receipt["reply"].startswith("Added task #")
                          or receipt["reply"].startswith("This email already has task #"))
         callback_action = callback_match.group(1) if callback_match else None

@@ -103,8 +103,9 @@ class MailSummary(BaseModel):
 
 
 class MailWorkflow:
-    def __init__(self, db, gmail, telegram, ai, settings):
+    def __init__(self, db, gmail, telegram, ai, settings, *, calendar=None):
         self.db, self.gmail, self.telegram, self.ai, self.settings = db, gmail, telegram, ai, settings
+        self.calendar = calendar
         self.namespace = "mail:" + hashlib.sha256(settings.gmail_account.lower().encode()).hexdigest()[:16] + ":"
 
     def key(self, suffix):
@@ -335,6 +336,14 @@ class MailWorkflow:
         if not saved:
             return lambda: "找不到這封已整理的信。沒有執行任何動作。"
         instruction = instruction.strip()
+        from .meeting_coordination import MeetingCoordination
+        from .google_calendar import CalendarError
+        try:
+            meeting = await MeetingCoordination(self, self.calendar).prepare(identifier, instruction, now)
+        except CalendarError:
+            raise GmailError("Calendar verification failed; no meeting completion is confirmed") from None
+        if meeting is not None:
+            return meeting
         from .contact_relationships import ContactRelationships
         contact = ContactRelationships(self).prepare(identifier, instruction, now)
         if contact is not None:
