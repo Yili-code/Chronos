@@ -93,6 +93,9 @@ class MeetingInvitations:
         return outcome, responses, snapshot, owned
 
     async def reconcile(self, identifier, state):
+        if (state.get("reschedule") or {}).get("status") in {"applying", "uncertain", "unverified"}:
+            from .meeting_rescheduling import MeetingRescheduling
+            return await MeetingRescheduling(self.mail).reconcile(identifier, state)
         event = await self.calendar.event(state["event_id"])
         if (event is None and state["status"] in {"inviting", "invite_uncertain", "invite_cancelling", "invite_cancel_uncertain"}):
             return state, False
@@ -220,6 +223,7 @@ class MeetingInvitations:
                 and props.get("chronosMeeting") == state["version"]
                 and props.get("chronosAccount") == self.mail.namespace
                 and props.get("chronosInvitation") == state["invite_token"]
+                and (not state.get("reschedule_epoch") or props.get("chronosReschedule") == state["reschedule_epoch"])
                 and event.get("summary") == state["title"] and event.get("location") == state["location"]
                 and len(emails) == len(set(emails)) and set(emails) == set(state["invitees"])
                 and all(datetime.fromisoformat(event[k]["dateTime"].replace("Z", "+00:00")) == datetime.fromisoformat(state[k])
@@ -264,6 +268,9 @@ class MeetingInvitations:
             return None
         if not (prepare or confirm or cancel or cancel_confirm or abandon or show):
             return None
+        from .meeting_rescheduling import active, preview as reschedule_preview
+        if active(state):
+            return reply(reschedule_preview(state))
         if not self.calendar or not self.calendar.configured():
             return reply("Calendar 尚未授權，沒有提交任何邀請。")
         await self.calendar.verify_owner()
@@ -345,7 +352,8 @@ class MeetingInvitations:
                 "guestsCanSeeOtherGuests": False,
                 "attendees": [{"email": address, "responseStatus": "needsAction"} for address in state["invitees"]],
                 "extendedProperties": {"private": {"chronosMeeting": state["version"],
-                    "chronosAccount": self.mail.namespace, "chronosInvitation": state["invite_token"]}}}
+                    "chronosAccount": self.mail.namespace, "chronosInvitation": state["invite_token"],
+                    **({"chronosReschedule": state["reschedule_epoch"]} if state.get("reschedule_epoch") else {})}}}
             try:
                 if state.get("invite_previous_status") == "held":
                     event = await self.calendar.invite_existing(state["event_id"], {k: v for k, v in body.items() if k != "id"}, state["hold_etag"])

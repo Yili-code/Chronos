@@ -1,0 +1,25 @@
+{
+  "phase": "stage 1 reviewed meeting rescheduling",
+  "date": "2026-11-04 Asia/Taipei",
+  "base_commit": "a176c967655dcc8f407e6e222f156797a8235118",
+  "tests": {
+    "tests": 3980,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "seconds": 208.209,
+  "rescheduling_regressions": 69,
+  "wheel_sha256": "e8861720e5efc369159264c43288efa566ee7dc7f5f0cbc19f9a300933fcb6a0",
+  "matched_runtime_modules": 116,
+  "source_match": true,
+  "external_test_writes": "mocked only",
+  "production_deployed": false,
+  "boundaries": [
+    "explicit offset/zone/duration fields in this stage",
+    "only owned single events; unchanged recipients/title/location",
+    "unknown updates never replay",
+    "old guest acceptance cannot prove acceptance of new time; missing reset evidence stays unverified",
+    "broader natural intent routing belongs to stage 2"
+  ]
+}

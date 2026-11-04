@@ -5,7 +5,7 @@ from .mail_correspondence import fingerprint
 
 
 FIELDS = ("version", "status", "event_id", "title", "start", "end", "timezone", "recipient", "invitees",
-    "location", "calendar_account", "calendar_id", "invite_token")
+    "location", "calendar_account", "calendar_id", "invite_token", "reschedule", "reschedule_epoch")
 
 
 def context(mail, identifier):
@@ -24,6 +24,9 @@ async def verify(mail, identifier, draft):
         return False
     state = mail.get("meeting:" + identifier) or {}
     status = state.get("status")
+    from .meeting_rescheduling import active
+    if active(state):
+        return False
     if not state or status in {"review", "needs_information", "cancelled", "invite_cancelled"}:
         return True
     if status not in {"held", "invite_pending", "invite_accepted", "invite_declined"}:

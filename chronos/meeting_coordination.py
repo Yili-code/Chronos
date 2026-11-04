@@ -93,6 +93,10 @@ class MeetingCoordination:
         show = instruction == "查看會面狀態"
         if not (propose or hold or cancel or show):
             return None
+        from .meeting_rescheduling import active, preview as reschedule_preview
+        current = self.state(identifier)
+        if active(current):
+            return answer(reschedule_preview(current))
         if not self.calendar or not self.calendar.configured():
             return answer("Google Calendar 尚未完成授權，不能確認空檔或建立暫留；沒有安排會議。")
         await self.calendar.verify_owner()
