@@ -220,7 +220,9 @@ class MeetingCoordination:
             busy = await self.calendar.busy(start, end)
             if any(start < stop and end > begin for begin, stop in busy):
                 return blocked("候選時間與你的行事曆衝突，請提供其他時段；沒有安排會面。")
-        except (AIError, ValueError, ZoneInfoNotFoundError, TimeoutError):
+        except (AIError, TimeoutError):
+            return answer("會面解析服務暫時無法使用，請稍後重試；沒有建立或修改候選時間。")
+        except (ValueError, ZoneInfoNotFoundError):
             return blocked("日期、時區或長度尚無法可靠確認；請提供明確資訊，沒有安排會面。")
         token = uuid.uuid4().hex[:8]
         state = {"status": "review", "version": token, "created_at": time.time(), "recipient": recipient,
