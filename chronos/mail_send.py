@@ -33,6 +33,9 @@ class MailSend:
         if (native.get("to", [native.get("recipient")]) != selected["to"]
                 or native.get("cc", []) != selected["cc"] or native.get("bcc", []) != selected["bcc"]):
             return None
+        from .mail_meeting_context import verify as verify_meeting
+        if not await verify_meeting(self.mail, identifier, state):
+            return None
         return fingerprint(native)
 
     async def prepare(self, identifier, instruction):
@@ -73,7 +76,7 @@ class MailSend:
                     return preparation
             verified = await self.verify(identifier, state)
             if not verified:
-                return text_result("郵件串、聯絡偏好或 Gmail 草稿已變更，寄送已阻擋；請核對後重新確認。")
+                return text_result("郵件串、相關會面、聯絡偏好或 Gmail 草稿已變更，寄送已阻擋；請核對後重新確認。")
             token = uuid.uuid4().hex[:8]
             from .mail_recipients import envelope
             selected = envelope(state)
@@ -96,14 +99,15 @@ class MailSend:
         verified = await self.verify(identifier, state)
         if not verified or verified != state["send_snapshot"]:
             self.update(identifier, state["version"], "send_review", status="gmail_draft", send_token=None)
-            return text_result("草稿、聯絡偏好或郵件串在確認前變更，寄送已阻擋；請重新核對。")
+            return text_result("草稿、相關會面、聯絡偏好或郵件串在確認前變更，寄送已阻擋；請重新核對。")
         claim = uuid.uuid4().hex
         from .mail_recipients import envelope, transport_options, preferences_allow
         selected = envelope(state)
         def transition(old):
             if (old and old.get("version") == state["version"] and old.get("status") == "send_review"
                     and old.get("send_token") == confirm[1] and old.get("send_expires", 0) > time.time()):
-                if not preferences_allow(self.mail, selected):
+                from .mail_meeting_context import matches as meeting_matches
+                if not preferences_allow(self.mail, selected) or not meeting_matches(self.mail, identifier, old):
                     return {**old, "status": "gmail_draft", "send_token": None}
                 return {**old, "status": "sending", "send_claim": claim}
             return old or {}

@@ -19,3 +19,5 @@ Conversion uses conditional PATCH with the original ETag and sendUpdates=all, pr
 Remaining coordination work: rescheduling, negotiation based on reply content, and conference-link creation. This phase does not claim these capabilities.
 
 Official contracts: [events.insert](https://developers.google.com/workspace/calendar/api/v3/reference/events/insert), [event resource and attendee response status](https://developers.google.com/workspace/calendar/api/v3/reference/events).
+
+Reply drafts for the same mail card bind to a minimal related-meeting snapshot. Meaningful meeting changes invalidate draft saving or sending; polling timestamps and notification bookkeeping do not. Draft generation receives only user-relevant meeting details, without internal confirmation codes. Before sending, owned Calendar event evidence is rechecked after native Gmail draft inspection, followed by an atomic local meeting-state check. Unknown Calendar reads stop mail submission. These checks are observations at that time, not a distributed transaction across Gmail and Calendar; unrelated conversations are not inferred or linked.
