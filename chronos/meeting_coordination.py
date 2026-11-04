@@ -65,7 +65,9 @@ class MeetingCoordination:
                 f"若要在自己的行事曆暫留，回覆：暫留會面時段 {state['version']}")
 
     def matches(self, event, state):
-        if not isinstance(event, dict) or event.get("attendees"):
+        if (not isinstance(event, dict) or event.get("attendees") or event.get("attendeesOmitted")
+                or event.get("recurrence") or event.get("recurringEventId") or event.get("originalStartTime")
+                or event.get("privateCopy") or event.get("eventType", "default") != "default"):
             return False
         private = event.get("extendedProperties", {}).get("private", {})
         if (event.get("id") != state["event_id"] or private.get("chronosMeeting") != state["version"]
@@ -240,7 +242,9 @@ class MeetingCoordination:
         if current.get("claim") != claim:
             return answer("另一個操作已處理此暫留，請先查看狀態。")
         try:
-            await self.calendar.delete_event(state["event_id"], event["etag"])
+            acknowledgement = await self.calendar.delete_event(state["event_id"], event["etag"])
+            if type(acknowledgement) is not dict or acknowledgement:
+                raise CalendarError("Calendar deletion acknowledgement is unverified")
         except CalendarError:
             return answer("取消結果不確定，請在 Calendar 核對；不會重複刪除或寄出通知。")
         self.update(identifier, token, expected="deleting", status="cancelled")

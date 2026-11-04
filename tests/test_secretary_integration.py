@@ -22,7 +22,10 @@ def integrated(system, monkeypatch):
         return events[body["id"]]
     calendar.insert.side_effect = insert
     calendar.event.side_effect = lambda identifier: events.get(identifier)
-    calendar.delete_event.side_effect = lambda identifier, etag: events.pop(identifier)
+    def delete(identifier, etag):
+        events.pop(identifier)
+        return {}
+    calendar.delete_event.side_effect = delete
     monkeypatch.setattr(main, "google_calendar", calendar)
     start = (datetime.now(main.settings.tz) + timedelta(days=2)).replace(hour=15, minute=0, second=0, microsecond=0)
     def generated(*args):

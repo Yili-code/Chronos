@@ -18,6 +18,7 @@ def configure(workflow):
     calendar = AsyncMock()
     calendar.configured = Mock(return_value=True)
     calendar.busy.return_value = []
+    calendar.delete_event.return_value = {}
     calendar.insert.side_effect = lambda body: {**body, "etag": "v1"}
     workflow.calendar = calendar
     workflow.ai._generate_output.return_value = Candidate(title="合作討論", start="2026-11-04T15:00:00+08:00", timezone="Asia/Taipei", minutes=30)
@@ -182,3 +183,38 @@ async def test_missing_calendar_permission_returns_safe_boundary(workflow):
     assert "尚未完成授權" in await action(workflow, "協調會面：明天下午")
     calendar.verify_owner.assert_not_awaited()
     calendar.insert.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", [
+    {"recurrence": ["RRULE:FREQ=WEEKLY"]},
+    {"recurringEventId": "series"},
+    {"originalStartTime": {"dateTime": "2026-11-04T15:00:00+08:00"}},
+    {"attendeesOmitted": True},
+    {"privateCopy": True},
+    {"eventType": "outOfOffice"},
+])
+async def test_external_hold_scope_changes_prevent_deletion(workflow, change):
+    service, calendar = configure(workflow)
+    state = await proposal(workflow)
+    await action(workflow, "暫留會面時段 " + state["version"])
+    calendar.event.return_value = {**calendar.insert.call_args.args[0], "etag": "v2", **change}
+    text = await action(workflow, "取消會面暫留 " + state["version"])
+    calendar.delete_event.assert_not_awaited()
+    assert service.state("ab12")["status"] == "held"
+    assert "沒有刪除" in text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ack", [None, {"id": "wrong"}, [], True])
+async def test_hold_delete_requires_verified_empty_ack(workflow, ack):
+    service, calendar = configure(workflow)
+    state = await proposal(workflow)
+    await action(workflow, "暫留會面時段 " + state["version"])
+    calendar.event.return_value = {**calendar.insert.call_args.args[0], "etag": "v1"}
+    calendar.delete_event.return_value = ack
+    text = await action(workflow, "取消會面暫留 " + state["version"])
+    assert service.state("ab12")["status"] == "deleting"
+    assert "不確定" in text
+    await action(workflow, "取消會面暫留 " + state["version"])
+    calendar.delete_event.assert_awaited_once()
