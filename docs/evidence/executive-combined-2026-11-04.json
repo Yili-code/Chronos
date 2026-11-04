@@ -1,0 +1,25 @@
+{
+  "phase": "combined executive and latest main source",
+  "date": "2026-11-04 Asia/Taipei",
+  "audit_parent": "4f12d1d6412155234a58013a7812bb3d8ddda466",
+  "main_parent": "c53534d721df827d85e26f94dd216e69e72e263a",
+  "tests": {
+    "tests": 3911,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "seconds": 188.493,
+  "wheel_sha256": "17d844472cacac58736a26108f5a3ebccab0b092bbbfbf78c200bb426770b21d",
+  "source_match": true,
+  "matched_runtime_modules": 115,
+  "audit_parent_ci": {
+    "run": 41781779123,
+    "python_311": "success",
+    "python_312": "success",
+    "extension": "success"
+  },
+  "external_test_writes": "mocked only",
+  "product_80_case_acceptance_complete": false,
+  "production_deployed": false
+}

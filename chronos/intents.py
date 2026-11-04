@@ -210,6 +210,15 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
     except (AIError, ValueError) as error:
         return lambda reply=str(error): "目前無法理解這個要求，沒有變更任何內容。\n" + escape(reply)
 
+    if intent.action == 'task_review':
+        from . import task_review
+        if not task_review.wording_request(text):
+            if not pending and bound_task_id is None and task_review.standalone_work(text):
+                intent = Intent(action='task_create', instruction=text)
+            else:
+                intent = Intent(action='clarify', instruction=text,
+                    question='你想新增工作，還是調整現有任務的標題或標籤？')
+
     focus_scope = task_focus.window(text, now)
     if not focus_request and focus_scope and intent.action in {
             'replan', 'plan_request', 'plan_edit', 'task_schedule', 'task_complete', 'task_create'}:
