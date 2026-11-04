@@ -1,4 +1,5 @@
 import pytest
+from copy import deepcopy
 
 from test_meeting_coordination import configure, proposal, action
 from test_mail_workflow import workflow
@@ -25,7 +26,7 @@ async def test_invitation_preparation_is_explicit_and_unsent(workflow):
 async def test_organizer_confirmed_does_not_mean_everyone_accepted(workflow):
     service, calendar, state, text = await prepared(workflow)
     calendar.event.return_value = None
-    calendar.invite.side_effect = lambda body: {**body, "status": "confirmed", "organizer": {"self": True}, "etag": "v1"}
+    calendar.invite.side_effect = lambda body: {**deepcopy(body), "status": "confirmed", "organizer": {"self": True}, "etag": "v1"}
     text = await action(workflow, "確認會面邀請 " + state["invite_token"])
     assert "尚未全部接受" in text
     assert service.state("ab12")["status"] == "invite_pending"
@@ -43,10 +44,10 @@ async def test_stale_invitation_approval_never_submits(workflow):
 async def submitted(workflow):
     service, calendar, state, text = await prepared(workflow)
     calendar.event.return_value = None
-    calendar.invite.side_effect = lambda body: {**body, "status": "confirmed", "organizer": {"self": True}, "etag": "v1"}
+    calendar.invite.side_effect = lambda body: {**deepcopy(body), "status": "confirmed", "organizer": {"self": True}, "etag": "v1"}
     await action(workflow, "確認會面邀請 " + state["invite_token"])
     body = calendar.invite.call_args.args[0]
-    calendar.event.return_value = {**body, "status": "confirmed", "organizer": {"self": True}, "etag": "v1"}
+    calendar.event.return_value = {**deepcopy(body), "status": "confirmed", "organizer": {"self": True}, "etag": "v1"}
     calendar.cancel_invitation.return_value = {}
     return service, calendar, service.state("ab12")
 

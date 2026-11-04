@@ -1,4 +1,5 @@
 """Reviewed external invitations; organizer confirmation is not an RSVP."""
+import asyncio
 import re
 import time
 import uuid
@@ -10,6 +11,9 @@ from .mail_correspondence import MailCorrespondence, fingerprint
 from .mail_recipients import preferences_allow
 
 
+RSVP_POLL_SECONDS = 45
+
+
 INVITE_STATES = {"invite_review", "inviting", "invite_uncertain", "invite_pending", "invite_accepted",
     "invite_declined", "invite_unverified", "invite_cancel_review", "invite_cancelling", "invite_cancel_uncertain"}
 
@@ -19,6 +23,8 @@ def reply(text):
 
 
 def preview(state):
+    if state.get("rsvp_read_unverified"):
+        return "最新 Calendar 狀態未能驗證；以下為上次觀察，不代表目前已確認：\n" + preview({**state, "rsvp_read_unverified": False})
     status = state.get("status")
     if status == "invite_review":
         return (f"會面邀請預覽\n{state['title']}\n受邀者：{', '.join(state['invitees'])}\n"
@@ -53,6 +59,143 @@ class MeetingInvitations:
             and current.get("status") == old.get("status")
             and current.get("invite_token") == old.get("invite_token")
             and current.get("cancel_token") == old.get("cancel_token") else (current or {}))
+
+    def registry(self):
+        return self.mail.get("meeting-invitations") or {}
+
+    def register(self, identifier, state):
+        def transition(old):
+            old = old or {}
+            current = self.state(identifier)
+            if (current.get("version") != state["version"] or current.get("status") != "invite_review"
+                    or current.get("invite_token") != state["invite_token"]):
+                return old
+            retained = {}
+            for key, entry in old.items():
+                saved = self.state(key)
+                if saved.get("version") == entry.get("version") and saved.get("status") not in {"review", "cancelled", "invite_cancelled"}:
+                    retained[key] = entry
+            if identifier not in retained and len(retained) >= 100:
+                return old
+            return {**retained, identifier: {"version": state["version"], "event_id": state["event_id"]}}
+        result = self.mail.db.mutate_mail_state(self.mail.key("meeting-invitations"), transition)
+        return result.get(identifier, {}).get("version") == state["version"]
+
+    def evidence(self, event, state):
+        outcome = self.outcome(event, state)
+        owned = self.owned(event, state)
+        if (isinstance(event, dict) and event.get("id") == state["event_id"]
+                and event.get("status") == "cancelled" and state.get("provider_verified")):
+            outcome = "invite_cancelled"
+        responses = {email_address(a["email"]): a.get("responseStatus") if isinstance(a.get("responseStatus"), str) else "unknown"
+            for a in event["attendees"] if not a.get("organizer")} if owned else {}
+        snapshot = fingerprint({"outcome": outcome, "responses": responses})
+        return outcome, responses, snapshot, owned
+
+    async def reconcile(self, identifier, state):
+        event = await self.calendar.event(state["event_id"])
+        if (event is None and state["status"] in {"inviting", "invite_uncertain", "invite_cancelling", "invite_cancel_uncertain"}):
+            return state, False
+        outcome, responses, snapshot, owned = self.evidence(event, state)
+        if state["status"] in {"invite_cancelling", "invite_cancel_uncertain"} and outcome != "invite_cancelled":
+            return state, False
+        status = state["status"] if state["status"] == "invite_cancel_review" and owned else outcome
+        def transition(old):
+            if (not old or old.get("version") != state["version"] or old.get("status") != state["status"]
+                    or old.get("rsvp_revision", 0) != state.get("rsvp_revision", 0)
+                    or old.get("invite_token") != state.get("invite_token")):
+                return old or {}
+            changed = old.get("rsvp_snapshot") != snapshot
+            return {**old, "status": status, "rsvp_status": outcome, "rsvp_responses": responses,
+                "rsvp_snapshot": snapshot, "rsvp_revision": old.get("rsvp_revision", 0) + int(changed),
+                "provider_verified": bool(old.get("provider_verified") or owned), "rsvp_read_unverified": False,
+                "rsvp_checked_at": time.time()}
+        current = self.mail.db.mutate_mail_state(self.mail.key("meeting:" + identifier), transition)
+        return current, True
+
+    async def refresh(self, now=None):
+        result = {"checked": 0, "notified": 0, "errors": 0, "deferred": 0}
+        registry = self.registry()
+        if not registry:
+            return result
+        if not self.calendar or not self.calendar.configured():
+            result["errors"] = len(registry)
+            self.mail.patch("meeting-rsvp-health", **result, checked_at=time.time())
+            return result
+        entries = sorted(registry.items())
+        offset = int((self.mail.get("meeting-rsvp-health") or {}).get("cursor", 0)) % len(entries)
+        entries = entries[offset:] + entries[:offset]
+        deadline = time.monotonic() + RSVP_POLL_SECONDS
+        visited = 0
+        owner_verified = False
+        for identifier, entry in entries:
+            if time.monotonic() >= deadline:
+                result["deferred"] = len(entries) - visited
+                break
+            visited += 1
+            state = self.state(identifier)
+            if state.get("version") != entry.get("version") or state.get("status") not in INVITE_STATES - {"invite_review"}:
+                continue
+            result["checked"] += 1
+            reading = True
+            try:
+                async with asyncio.timeout(max(0.001, deadline - time.monotonic())):
+                    if (state.get("calendar_account") != self.mail.settings.calendar_account
+                            or state.get("calendar_id") != self.mail.settings.calendar_id):
+                        raise CalendarError("Invitation calendar binding changed")
+                    if not owner_verified:
+                        await self.calendar.verify_owner()
+                        owner_verified = True
+                    current, verified = await self.reconcile(identifier, state)
+                    revision = current.get("rsvp_revision", 0)
+                    if not verified or revision <= current.get("last_notified_revision", 0):
+                        continue
+                    delivery_key = f"meeting-rsvp:{identifier}:{current['version']}:{revision}"
+                    claim = uuid.uuid4().hex
+                    def transition(old):
+                        if (not old or old.get("version") != current["version"] or old.get("rsvp_revision") != revision
+                                or old.get("status") != current["status"] or old.get("rsvp_snapshot") != current.get("rsvp_snapshot")
+                                or old.get("rsvp_read_unverified") or old.get("last_notified_revision", 0) >= revision):
+                            return old or {}
+                        delivery = self.mail.get(delivery_key) or {}
+                        if old.get("notice_claim_revision") == revision and delivery.get("delivery") == "sent":
+                            return {**old, "last_notified_revision": max(old.get("last_notified_revision", 0), revision), "rsvp_notice_error": False}
+                        if old.get("notice_claim_revision") == revision and delivery.get("delivery") != "retry":
+                            return old
+                        return {**old, "notice_claim_revision": revision, "notice_claim": claim}
+                    claimed = self.mail.db.mutate_mail_state(self.mail.key("meeting:" + identifier), transition)
+                    if claimed.get("notice_claim") != claim:
+                        continue
+                    observed = {**current, "status": current.get("rsvp_status", current["status"])}
+                    reading = False
+                    checked = datetime.fromtimestamp(current.get("rsvp_checked_at", time.time()), self.mail.settings.tz)
+                    await self.mail.deliver(delivery_key, f"Calendar 狀態觀察（{checked:%m/%d %H:%M}）：" + current["title"] + "\n" + current["start"] + "\n" + preview(observed))
+                    def complete(old):
+                        if old and old.get("version") == current["version"] and old.get("notice_claim") == claim:
+                            return {**old, "last_notified_revision": max(old.get("last_notified_revision", 0), revision), "rsvp_notice_error": False}
+                        return old or {}
+                    self.mail.db.mutate_mail_state(self.mail.key("meeting:" + identifier), complete)
+                    delivery = self.mail.get(delivery_key) or {}
+                    if delivery.get("message_id"):
+                        self.mail.patch(f"telegram:{self.mail.settings.telegram_chat_id}:{delivery['message_id']}", mail_id=identifier)
+                    result["notified"] += 1
+            except (CalendarError, GmailError, TimeoutError):
+                field = "rsvp_read_unverified" if reading else "rsvp_notice_error"
+                def failed(old):
+                    if not old or old.get("version") != state["version"]:
+                        return old or {}
+                    if reading and old.get("rsvp_revision", 0) != state.get("rsvp_revision", 0):
+                        return old
+                    if not reading and old.get("notice_claim") != claim:
+                        return old
+                    return {**old, field: True}
+                self.mail.db.mutate_mail_state(self.mail.key("meeting:" + identifier), failed)
+                result["errors"] += 1
+                if not owner_verified:
+                    result["deferred"] = len(entries) - visited
+                    break
+        self.mail.patch("meeting-rsvp-health", **result, cursor=(offset + visited) % len(entries), checked_at=time.time())
+        return result
 
     def selected(self, state):
         return reviewed_envelope(state["invitees"][0], to=state["invitees"])
@@ -162,11 +305,7 @@ class MeetingInvitations:
         if show:
             if state["status"] in {"invite_review", "invite_cancel_review", "invite_cancelled"}:
                 return reply(preview(state))
-            event = await self.calendar.event(state["event_id"])
-            if state["status"] in {"invite_cancelling", "invite_cancel_uncertain"} or (event is None and state["status"] in {"inviting", "invite_uncertain"}):
-                return reply(preview(state))
-            outcome = self.outcome(event, state)
-            current = self.transition(identifier, state, {"status": outcome})
+            current, _ = await self.reconcile(identifier, state)
             return reply(preview(current))
         if confirm:
             if (state["status"] != "invite_review" or state.get("invite_token") != confirm[1]
@@ -174,9 +313,13 @@ class MeetingInvitations:
                 return reply("邀請確認已過期或不符；沒有提交。")
             if not await self.verify(identifier, state, reference) or await self.calendar.event(state["event_id"]) is not None:
                 return reply("來源、偏好、空檔或事件狀態已變更；沒有提交邀請。")
+            if not self.register(identifier, state):
+                return reply("邀請索引已變更或達到 100 個追蹤上限；沒有提交外部邀請。")
             claim = uuid.uuid4().hex
             def transition(old):
-                if (old and old.get("version") == state["version"] and old.get("status") == "invite_review"
+                registered = self.registry().get(identifier, {})
+                if (registered.get("version") == state["version"] and registered.get("event_id") == state["event_id"]
+                        and old and old.get("version") == state["version"] and old.get("status") == "invite_review"
                         and old.get("invite_token") == confirm[1] and old.get("invite_expires", 0) > time.time()
                         and preferences_allow(self.mail, self.selected(state))):
                     return {**old, "status": "inviting", "invite_claim": claim}
@@ -199,7 +342,12 @@ class MeetingInvitations:
                     outcome = "invite_uncertain"
             except CalendarError as exc:
                 outcome = "review" if exc.status in {400, 401, 403, 412, 429} else "invite_uncertain"
-            current = self.transition(identifier, current, {"status": outcome})
+            values = {"status": outcome}
+            if outcome not in {"review", "invite_uncertain"}:
+                _, responses, snapshot, owned = self.evidence(event, state)
+                values.update(rsvp_snapshot=snapshot, rsvp_responses=responses, rsvp_status=outcome,
+                    rsvp_revision=0, last_notified_revision=0, provider_verified=owned)
+            current = self.transition(identifier, current, values)
             return reply(preview(current) if outcome != "review" else "Calendar 明確拒絕邀請，沒有確認完成；請重新準備並授權。")
         if cancel:
             if state.get("version") != cancel[1] or state["status"] not in {"invite_pending", "invite_accepted", "invite_declined"}:
@@ -230,7 +378,13 @@ class MeetingInvitations:
             outcome = "invite_cancelled"
         except CalendarError as exc:
             outcome = "invite_unverified" if exc.status in {400, 401, 403, 412, 429} else "invite_cancel_uncertain"
-        current = self.transition(identifier, current, {"status": outcome})
+        values = {"status": outcome}
+        if outcome == "invite_cancelled":
+            revision = current.get("rsvp_revision", 0) + 1
+            values.update(rsvp_status=outcome, rsvp_snapshot=fingerprint({"outcome": outcome, "responses": {}}),
+                rsvp_read_unverified=False, rsvp_checked_at=time.time(), rsvp_revision=revision,
+                last_notified_revision=revision)
+        current = self.transition(identifier, current, values)
         if outcome == "invite_unverified":
             return reply("Calendar 明確拒絕取消；原邀請須重新核對，請先查看會面邀請再準備取消。")
         return reply(preview(current))

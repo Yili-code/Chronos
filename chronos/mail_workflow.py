@@ -177,16 +177,19 @@ class MailWorkflow:
         except TelegramError:
             self.patch(delivery_key, delivery="uncertain")
             raise GmailError("Telegram mail delivery outcome is unknown; owner review required") from None
-        if not result.get("ok"):
+        if not isinstance(result, dict):
+            result = {}
+        if result.get("ok") is not True:
             # 5xx / malformed responses cannot establish whether Telegram accepted it.
             code = result.get("error_code")
             definite = isinstance(code, int) and 400 <= code < 500
             self.patch(delivery_key, delivery="retry" if definite else "uncertain")
             raise GmailError("Telegram rejected mail delivery or its outcome is unknown")
-        sent_id = result.get("result", {}).get("message_id")
-        if mail_id and not sent_id:
+        payload = result.get("result")
+        sent_id = payload.get("message_id") if isinstance(payload, dict) else None
+        if type(sent_id) is not int or sent_id <= 0:
             self.patch(delivery_key, delivery="uncertain")
-            raise GmailError("Telegram did not return the mail card ID")
+            raise GmailError("Telegram did not return a valid delivery message ID")
         if mail_id:
             self.patch(f"telegram:{self.settings.telegram_chat_id}:{sent_id}", mail_id=mail_id)
         self.patch(delivery_key, delivery="sent", message_id=sent_id)
@@ -198,6 +201,8 @@ class MailWorkflow:
         deadline = time.monotonic() + 1200
         now = (now or datetime.now(ZoneInfo("Asia/Taipei"))).astimezone(ZoneInfo("Asia/Taipei"))
         await self.gmail.verify_account()
+        from .meeting_invitations import MeetingInvitations
+        await MeetingInvitations(self).refresh(now)
         from .mail_followups import MailFollowups
         await MailFollowups(self).refresh(now)
         owner = uuid.uuid4().hex
