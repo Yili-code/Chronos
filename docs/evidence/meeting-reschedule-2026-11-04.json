@@ -14,12 +14,42 @@
   "matched_runtime_modules": 116,
   "source_match": true,
   "external_test_writes": "mocked only",
-  "production_deployed": false,
+  "production_deployed": true,
   "boundaries": [
     "explicit offset/zone/duration fields in this stage",
     "only owned single events; unchanged recipients/title/location",
     "unknown updates never replay",
     "old guest acceptance cannot prove acceptance of new time; missing reset evidence stays unverified",
     "broader natural intent routing belongs to stage 2"
-  ]
+  ],
+  "production": {
+    "sha": "eef2c132a1c56da20ca1b86bb3ea6ded47fc97f8",
+    "ci_run": 41837829175,
+    "revision": "chronos-executive-eef2c13",
+    "traffic_percent": 100,
+    "rollback": "chronos-executive-a176c96",
+    "deployed_at": "2026-11-04T13:30:49.080857+00:00",
+    "runtime_settings_preserved": true,
+    "smoke": {
+      "readiness": "ready",
+      "calendar_read_verified": true,
+      "gmail_enabled": true,
+      "telegram_connected": true,
+      "reports": {
+        "brief": {
+          "parts": 2,
+          "read_only": true
+        },
+        "week": {
+          "parts": 8,
+          "read_only": true
+        },
+        "time": {
+          "parts": 1,
+          "read_only": true
+        }
+      }
+    },
+    "synthetic_production_writes": false
+  }
 }
