@@ -77,6 +77,32 @@ def card(state, aliases):
                                              {'text': 'Keep unchanged', 'callback_data': 'taskreview:cancel:' + state['token']}]]}}
 
 
+def wording_request(text):
+    """A global wording review needs an explicit task presentation/tag request."""
+    fields = re.search(r'用詞|措辭|措辞|標題|标题|標籤|标签|命名|名稱|名称|'
+                       r'\b(?:wording|titles?|tags?|naming|names?)\b', text, re.I)
+    scope = re.search(r'任務|任务|待辦|待办|\b(?:tasks?|to-?dos?)\b', text, re.I)
+    course_tags = re.search(r'課程|课程', text) and re.search(r'標籤|标签', text)
+    return bool(fields and scope or course_tags)
+
+
+def standalone_work(text):
+    """Narrow imperative work items; questions, references and field edits stay out."""
+    from .task_references import nonoperative, literal_ids
+    if (nonoperative(text) or literal_ids(text, []) is not None
+            or re.search(r'[?？「」『』"\n]|如何|怎麼|怎么|不要|不需要|不用|別|别|\b(?:not|never)\b', text, re.I)
+            or wording_request(text)):
+        return False
+    match = re.fullmatch(
+        r'\s*(?:(?:請|请|幫我|帮我)\s*)?'
+        r'(?:(?:優化|优化|改善|改進|改进|重構|重构|維護|维护|修復|修复|開發|开发|測試|测试)\s*|'
+        r'(?:optimi[sz]e|improve|refactor|maintain|fix|develop|test)\s+)'
+        r'(.{1,160}?)[。.!！\s]*', text, re.I)
+    return bool(match and match[1].strip().casefold() not in {
+        '任務', '任务', '待辦', '待办', '我的任務', '我的任务', '任務清單', '待辦清單',
+        '所有任務', '全部任務', 'tasks', 'my tasks', 'all tasks', 'todos'})
+
+
 def new_task_suggestion(db, task, all_tasks, aliases, chat_id, now):
     """Write-only after creation, compatible with Firestore read-before-write."""
     course = infer_course(task) if not task.get('project') and chat_id is not None else None
