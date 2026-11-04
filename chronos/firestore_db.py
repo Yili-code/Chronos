@@ -106,6 +106,23 @@ class FirestoreDatabase(TaskActions):
             return state
         return self._run_transaction(mutate)
 
+    def compare_mail_states(self, expected, changes):
+        """Read all guards before writing any local workflow state."""
+        if not set(changes) <= set(expected):
+            raise ValueError("Mail changes require an expected state")
+        def apply(transaction):
+            current = {}
+            refs = {key: self.mail_state.document(key) for key in expected}
+            for key, ref in refs.items():
+                snapshot = ref.get(transaction=transaction)
+                current[key] = snapshot.to_dict() if snapshot.exists else None
+            if current != expected:
+                return False
+            for key, value in changes.items():
+                transaction.set(refs[key], value)
+            return True
+        return self._run_transaction(apply)
+
     def mutate_study_delivery(self, key: str, transition: Callable) -> dict:
         """Transaction callbacks must be pure: Firestore can replay them."""
         def mutate(transaction):
