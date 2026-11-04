@@ -93,8 +93,8 @@ class MailFollowups:
             text += "尚未設定提醒時間；可回覆「追蹤回覆：3 天」設定。"
         return text + " 不會寄出催覆郵件。"
 
-    async def prepare(self, identifier, instruction, now=None):
-        match = re.fullmatch(r"(?:追蹤回覆|track\s+reply)\s*[:：]?\s*(?:(\d{1,3})\s*(天|小時|days?|hours?))?(?:\s*[；;]\s*(?:對象|target)\s*[:：]\s*(.+))?", instruction, re.I)
+    async def prepare(self, identifier, instruction, now=None, *, stage=False):
+        match = re.fullmatch(r"(?:追蹤回覆|track\s+reply)\s*[:：]?\s*(?:(\d{1,4})\s*(天|小時|days?|hours?))?(?:\s*[；;]\s*(?:對象|target)\s*[:：]\s*(.+))?", instruction, re.I)
         if match:
             duration = int(match[1] or 0) * (86400 if match[2] and match[2].lower() in {"天", "day", "days"} else 3600)
             if match[1] and not 3600 <= duration <= 90 * 86400:
@@ -147,6 +147,12 @@ class MailFollowups:
                      "baseline_id": latest["id"], "latest_id": messages[-1]["id"],
                      "due_at": reference + duration if duration else None, "duration": duration,
                      "created_at": reference}
+            if stage:
+                from .mail_natural_workflow import LocalChange
+                registry = self.registry()
+                if identifier not in registry and len(registry) >= 100:
+                    return reply("追蹤已達 100 個上限，尚未建立。")
+                return LocalChange("followups", {**registry, identifier: state}, "郵件追蹤\n" + self.describe(state))
             def apply():
                 def transition(old):
                     old = old or {}

@@ -1,0 +1,12 @@
+# Stage 2 natural mail workflow
+
+- Updated: 2026-11-04 Asia/Taipei. Branch codex/mail-natural-workflow-1104; base eef2c132a1c56da20ca1b86bb3ea6ded47fc97f8. User authorized phased work and direct deployment.
+- Scope: bound-mail natural draft and explicit-duration reply tracking, including one composite request. Typed interpretation never grants send/calendar/recipient authority. Existing provider write confirmation stays mandatory.
+- Root issue: first-match dispatch silently treats combined requests as only one action. Fix preparation and atomic local commit rather than expanding command regex into writes.
+- Implementation pending. Plan bounded typed interpretation, shared read-before-write CAS for local changes, SQLite/Firestore and webhook regressions, full suite, PR/exact-merge CI, guarded production release. No live recipient/calendar test writes.
+- Later stages remain: broader meeting/search composition and refreshed >=80 product-case acceptance. No overall completion claim.
+
+- Implemented typed owner-only interpretation, explicit duration/target grounding, staged existing draft/tracking preparation and atomic multi-document CAS. Contacts, source card, draft, meeting and tracking guards are read before all writes on both backends. No partial application, model-selected recipients or external effects. Composite requests on clarification cards also route fully; stale cards reject.
+- Final local verification:4060 passed,0 failures/errors/skips,142 existing warnings,220.33 seconds. Includes80 new regressions across both backends and real webhook/receipt/binding/save flow. All117 wheel runtime modules match source; Ruff undefined-name, docs121 links and diff checks passed. Earlier full runs interrupted for boundary fixes are not release evidence.
+- Existing unsupported-send contract preserved before model invocation. Reply All, remote effects, Calendar/search/contact/task composition, conditional or recurrent tracking safely require separate workflows. Missing facts abort the entire plan. Model interpretation tests are schema-aware mocks, not a live Gemini benchmark. No dependency/schema migration.
+- Source frozen; atomic commit/PR CI, exact merge CI and guarded production release pending. PR131 prior-phase evidence was merged after all required CI passed; main difference from this phase base is documentation only. See subsequent Git/CI for publication status.

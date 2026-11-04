@@ -33,6 +33,9 @@ class ReplyText(BaseModel):
 
 
 def requires_mail_context(text):
+    from .mail_natural_workflow import natural_request
+    if natural_request(text) and re.search(r"郵件|這封信|回信|草擬|回覆|追蹤|email|reply|draft|track", text, re.I):
+        return True
     return bool(re.match(
         r"^(?:(?:請|幫我)\s*)?(?:草擬(?:郵件)?回覆|起草回覆|撰寫回覆|draft\s+(?:a\s+)?reply|"
         r"儲存\s*gmail\s*草稿|save\s+gmail\s+draft|查看回覆草稿|取消回覆草稿|追蹤回覆|track\s+reply|"
@@ -148,7 +151,7 @@ class MailCorrespondence:
         return (f"{notice}{roles}\n主旨：{state['subject']}\n\n{state['body']}\n\n"
                 f"這是待確認的本機草稿，沒有寄出。核對內容後回覆：儲存 Gmail 草稿 {state['version']}")
 
-    async def propose(self, identifier, request, *, reply_all=None):
+    async def propose(self, identifier, request, *, reply_all=None, stage=False):
         if len(request) > 4000:
             return text_result("累積要求超過 4,000 字元，請整理成較短的完整要求，避免遺失限制。")
         if not request.strip():
@@ -212,6 +215,9 @@ class MailCorrespondence:
                  "parent_id": latest["rfc_message_id"], "references": latest.get("references", "")}
         if not state["questions"] and len(self.preview(state).encode("utf-16-le")) // 2 > 3600:
             state.update(status="needs_information", questions=["請縮短回覆內容，讓全部收件者與正文能完整預覽。"])
+        if stage:
+            from .mail_natural_workflow import LocalChange
+            return LocalChange(key, state, self.presentation(state))
         def apply():
             def transition(old):
                 from .mail_meeting_context import matches as meeting_matches

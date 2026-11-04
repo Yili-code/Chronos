@@ -355,6 +355,9 @@ class MailWorkflow:
             current = self.get(context_kind + ":" + identifier) or {}
             if current.get("version") != context_version:
                 return lambda: "補充提示已過期，請回覆最新提示或原郵件卡片；沒有執行任何動作。"
+        from .mail_natural_workflow import natural_request, prepare as prepare_natural
+        if natural_request(instruction):
+            return await prepare_natural(self, identifier, instruction, now)
         from .mail_attachments import MailAttachments
         attachment = await MailAttachments(self).prepare(identifier, instruction)
         if attachment is not None:

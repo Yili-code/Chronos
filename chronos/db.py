@@ -153,6 +153,20 @@ class Database(TaskActions):
             )
             return state
 
+    def compare_mail_states(self, expected, changes):
+        """Commit a workflow only if every observed document is unchanged."""
+        if not set(changes) <= set(expected):
+            raise ValueError("Mail changes require an expected state")
+        scope = self.connect() if self._transaction.get() is not None else self.transaction()
+        with scope as connection:
+            if any(self.get_mail_state(key) != value for key, value in expected.items()):
+                return False
+            for key, value in changes.items():
+                connection.execute(
+                    "INSERT INTO mail_state VALUES (?, ?) ON CONFLICT(state_key) DO UPDATE SET state_json=excluded.state_json",
+                    (key, json.dumps(value)))
+            return True
+
     def __init__(self, path: Path, *, tz=None):
         self.path = path
         self.tz = tz or ZoneInfo('Asia/Taipei')
