@@ -1,0 +1,25 @@
+{
+  "phase": "read-only Gmail search and current workflow evidence",
+  "base": "e9936cd8dd5fb3578623e47954a1a706f4278fb3",
+  "tests": {
+    "tests": 4110,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "seconds": 274.407,
+  "new_search_regressions": 50,
+  "wheel_runtime_modules": 118,
+  "wheel_sha256": "ccc7aaef30fd31622a7f0cc7d5914f17c43f90b7b6b84a35d09b06d955655b52",
+  "source_match": true,
+  "provider_read_only_preflight": {
+    "account_verified": true,
+    "search_api_verified": true,
+    "returned_messages": 0,
+    "has_next_page": false,
+    "mail_mutations": 0,
+    "message_bodies_read": 0
+  },
+  "production_deployed": false,
+  "original_acceptance_complete": false
+}

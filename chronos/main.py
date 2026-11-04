@@ -1036,6 +1036,19 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
     # Route mail cards before generic task/study replies. Bind callbacks to the
     # actual delivered card so arbitrary mail IDs cannot be supplied by a client.
     mail = mail_workflow() if settings.enable_gmail else None
+    from . import mail_search
+    if update.message and mail_search.command(source_message.text or ""):
+        if mail is None:
+            raise HTTPException(status_code=503, detail="Mail integration is disabled")
+        receipt = db.get_update(update_id)
+        try:
+            if receipt is None:
+                action = await mail_search.prepare(mail, source_message.text or "", chat_id)
+                receipt = db.process_update(update_id, action)
+            await mail_search.deliver(mail, chat_id, update_id, receipt)
+        except GmailError as error:
+            raise HTTPException(status_code=503, detail=str(error)) from None
+        return {"ok": True}
     if mail and update.message and (source_message.text or "").strip() == "/mail_next":
         receipt = db.get_update(update_id)
         if receipt is None:

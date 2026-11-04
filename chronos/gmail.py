@@ -237,6 +237,33 @@ class GmailClient:
                 break
         return list(dict.fromkeys(ids)), bool(page)
 
+    async def search_page(self, query, page=None):
+        """One bounded read-only page; query text is supplied by the owner."""
+        if not isinstance(query, str) or not query.strip() or len(query) > 500 or any(ord(c) < 32 for c in query):
+            raise GmailError("Gmail search requires a bounded explicit query")
+        params = {"q": query, "maxResults": 5}
+        if re.search(r"\bin:(?:anywhere|trash|spam)\b", query, re.I):
+            params["includeSpamTrash"] = "true"
+        if page:
+            if not isinstance(page, str) or len(page) > 2048 or any(ord(c) < 32 for c in page):
+                raise GmailError("Gmail search cursor is invalid")
+            params["pageToken"] = page
+        data = await self._request("GET", "messages", params=params)
+        try:
+            items = data.get("messages", [])
+            if not isinstance(items, list) or len(items) > 5:
+                raise ValueError("Invalid result page")
+            ids = [message_id(item["id"]) for item in items]
+            if len(ids) != len(set(ids)):
+                raise ValueError("Duplicate results")
+            token = data.get("nextPageToken")
+            if token is not None and (not isinstance(token, str) or not token or len(token) > 2048
+                    or token == page or any(ord(c) < 32 for c in token)):
+                raise ValueError("Invalid result cursor")
+            return ids, token
+        except (TypeError, ValueError, KeyError, AttributeError):
+            raise GmailError("Gmail search returned an invalid or repeated page") from None
+
     async def read(self, identifier):
         raw = await self._request("GET", f"messages/{message_id(identifier)}", params={"format": "full"})
         try:
