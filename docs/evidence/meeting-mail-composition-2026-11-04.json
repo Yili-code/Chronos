@@ -2,15 +2,15 @@
   "phase": "selected-thread meeting, draft and tracking composition",
   "base": "7c44f4ae057d15bac722c24337030d0443de67d2",
   "tests": {
-    "tests": 4183,
+    "tests": 4191,
     "failures": 0,
     "errors": 0,
     "skipped": 0
   },
-  "seconds": 212.417,
-  "new_regressions": 73,
+  "seconds": 211.054,
+  "new_regressions": 81,
   "wheel_runtime_modules": 118,
-  "wheel_sha256": "086c3f3d31623a05215d6e2e9ab4ce68c3089ed6822aacf77afeb016873b26fc",
+  "wheel_sha256": "d9af59be107f0c5808da97aa431c56c9df65f3c0f2c7cbc9825e7cd0027c4f75",
   "source_match": true,
   "workflow_catalog": {
     "definitions": 90,
@@ -19,7 +19,7 @@
       "Deferred": 10
     },
     "executions": 222,
-    "local_report_sha256": "a2f8975d3649898f2ce98e3f3b2ee0f691faa79158e3c9212d3c7dfc308cd309",
+    "local_report_sha256": "1ffe7e7063e8baf924e328bd5b1f2dedd50f954eaad79335895a329c5b911c1a",
     "ci_artifact_file": "secretary-workflow-evidence.json",
     "original_definitions_unchanged": true
   },
@@ -38,5 +38,14 @@
     "atomic candidate/draft/tracking preparation; failed steps leave no partial state",
     "unclear requests require complete restatement",
     "broader original natural-language and cross-platform acceptance remains incomplete"
-  ]
+  ],
+  "updated_at": "2026-11-05T00:06:57.991776+08:00",
+  "live_model_evidence": "meeting-mail-live-model-2026-11-05.json",
+  "calendar_availability_preflight": {
+    "calendar_account_verified": true,
+    "configured_calendar_availability_verified": true,
+    "event_mutations": 0,
+    "private_event_content_read": false,
+    "scope_changes": 0
+  }
 }
