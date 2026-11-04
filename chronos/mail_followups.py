@@ -3,13 +3,18 @@
 A registry is mutated as one document so SQLite and Firestore share the same
 read-before-write contract. Human replies resolve a wait; auto replies pause it.
 """
+import asyncio
 import re
+from time import monotonic, time as timestamp
 import uuid
 from datetime import datetime
 from email.utils import getaddresses
 
 from .gmail import GmailError, email_address, reviewed_envelope
 from .mail_correspondence import MailCorrespondence
+
+
+FOLLOWUP_POLL_SECONDS = 45
 
 
 ACTIVE = {"waiting_other", "waiting_owner"}
@@ -173,73 +178,101 @@ class MailFollowups:
 
     async def refresh(self, now=None, *, only=None, notify=True):
         reference = (now or datetime.now(self.mail.settings.tz)).timestamp()
-        result = {"checked": 0, "resolved": 0, "paused": 0, "reminded": 0, "errors": 0}
-        for identifier, state in self.registry().items():
-            if (only is not None and identifier != only) or state.get("status") not in ACTIVE | {"paused"}:
-                continue
+        result = {"checked": 0, "resolved": 0, "paused": 0, "reminded": 0, "errors": 0, "deferred": 0}
+        entries = sorted((identifier, state) for identifier, state in self.registry().items()
+            if (only is None or identifier == only) and state.get("status") in ACTIVE | {"paused"})
+        if not entries:
+            return result
+        offset = int((self.mail.get("followup-health") or {}).get("cursor", 0)) % len(entries) if only is None else 0
+        entries = entries[offset:] + entries[:offset]
+        deadline = monotonic() + FOLLOWUP_POLL_SECONDS
+        visited = 0
+        for identifier, state in entries:
+            if monotonic() >= deadline:
+                result["deferred"] = len(entries) - visited
+                break
+            visited += 1
             token = state["version"]
             result["checked"] += 1
             reading = True
             try:
-                _, messages = await MailCorrespondence(self.mail).context(identifier)
-                if state.get("read_unverified"):
-                    self.update(identifier, token, read_unverified=False)
-                target = state.get("target")
-                if not target:
-                    self.update(identifier, token, status="paused", reason="target_unverified")
-                    result["paused"] += 1
-                    continue
-                if messages[-1].get("automatic") and self.sender(messages[-1]) == target:
-                    self.update(identifier, token, status="paused", reason="automatic_reply")
-                    result["paused"] += 1
-                    continue
-                ids = [m["id"] for m in messages]
-                if state["baseline_id"] not in ids:
-                    self.update(identifier, token, status="paused", reason="source_missing")
-                    result["paused"] += 1
-                    continue
-                newer = [m for m in messages[ids.index(state["baseline_id"]) + 1:] if not m.get("automatic")]
-                waiting = state.get("waiting_for", state["status"])
-                replied = any((waiting == "waiting_other" and self.direction(m) == "waiting_owner" and self.sender(m) == target)
-                    or (waiting == "waiting_owner" and self.direction(m) == "waiting_other" and target in self.addresses(m))
-                    for m in newer)
-                if replied:
-                    self.update(identifier, token, status="resolved", reason="reply_received", latest_id=messages[-1]["id"])
-                    result["resolved"] += 1
-                    continue
-                relevant = [m for m in newer if (waiting == "waiting_other" and self.direction(m) == "waiting_other"
-                    and target in self.addresses(m)) or (waiting == "waiting_owner" and self.sender(m) == target)]
-                if relevant:
-                    self.update(identifier, token, baseline_id=relevant[-1]["id"], latest_id=relevant[-1]["id"],
-                                due_at=reference + state["duration"] if state["duration"] else None)
-                    continue
-                if (state.get("status") not in ACTIVE or not notify
-                        or not state.get("due_at") or state["due_at"] > reference):
-                    continue
-                claim = uuid.uuid4().hex
-                def transition(old):
+                async with asyncio.timeout(max(0.001, deadline - monotonic())):
+                    _, messages = await MailCorrespondence(self.mail).context(identifier)
+                    if state.get("read_unverified"):
+                        self.update(identifier, token, read_unverified=False)
+                    target = state.get("target")
+                    if not target:
+                        self.update(identifier, token, status="paused", reason="target_unverified")
+                        result["paused"] += 1
+                        continue
+                    if messages[-1].get("automatic") and self.sender(messages[-1]) == target:
+                        self.update(identifier, token, status="paused", reason="automatic_reply")
+                        result["paused"] += 1
+                        continue
+                    ids = [m["id"] for m in messages]
+                    if state["baseline_id"] not in ids:
+                        self.update(identifier, token, status="paused", reason="source_missing")
+                        result["paused"] += 1
+                        continue
+                    newer = [m for m in messages[ids.index(state["baseline_id"]) + 1:] if not m.get("automatic")]
+                    waiting = state.get("waiting_for", state["status"])
+                    replied = any((waiting == "waiting_other" and self.direction(m) == "waiting_owner" and self.sender(m) == target)
+                        or (waiting == "waiting_owner" and self.direction(m) == "waiting_other" and target in self.addresses(m))
+                        for m in newer)
+                    if replied:
+                        self.update(identifier, token, status="resolved", reason="reply_received", latest_id=messages[-1]["id"])
+                        result["resolved"] += 1
+                        continue
+                    relevant = [m for m in newer if (waiting == "waiting_other" and self.direction(m) == "waiting_other"
+                        and target in self.addresses(m)) or (waiting == "waiting_owner" and self.sender(m) == target)]
+                    if relevant:
+                        self.update(identifier, token, baseline_id=relevant[-1]["id"], latest_id=relevant[-1]["id"],
+                                    due_at=reference + state["duration"] if state["duration"] else None)
+                        continue
+                    if (state.get("status") not in ACTIVE or not notify
+                            or not state.get("due_at") or state["due_at"] > reference):
+                        continue
+                    claim = uuid.uuid4().hex
+                    def transition(old):
+                        old = old or {}
+                        item = old.get(identifier, {})
+                        if (item.get("version") != token or item.get("status") != state["status"]
+                                or item.get("status") not in ACTIVE or item.get("read_unverified")
+                                or item.get("target") != state.get("target")
+                                or item.get("baseline_id") != state["baseline_id"]
+                                or item.get("due_at") != state.get("due_at")):
+                            return old
+                        return {**old, identifier: {**item, "status": "notifying", "notification_claim": claim}}
+                    claimed = self.mail.db.mutate_mail_state(self.mail.key("followups"), transition)
+                    if claimed.get(identifier, {}).get("notification_claim") != claim:
+                        continue
+                    waiting = "等對方回覆" if state["status"] == "waiting_other" else "待你回覆"
+                    reading = False
+                    await self.mail.deliver(f"followup-notification:{identifier}:{token}",
+                        f"郵件追蹤提醒：{state.get('subject', '(無主旨)')[:160]}\n{waiting}（{target}）。這是一次提醒，未寄出任何催覆郵件。請在原郵件卡片查看追蹤。")
+                    self.update(identifier, token, status="reminded")
+                    result["reminded"] += 1
+            except (GmailError, TimeoutError) as exc:
+                def failed(old):
                     old = old or {}
                     item = old.get(identifier, {})
-                    if (item.get("version") != token or item.get("status") != state["status"]
-                            or item.get("status") not in ACTIVE or item.get("read_unverified")
-                            or item.get("target") != state.get("target")
-                            or item.get("baseline_id") != state["baseline_id"]
-                            or item.get("due_at") != state.get("due_at")):
+                    if item.get("version") != token:
                         return old
-                    return {**old, identifier: {**item, "status": "notifying", "notification_claim": claim}}
-                claimed = self.mail.db.mutate_mail_state(self.mail.key("followups"), transition)
-                if claimed.get(identifier, {}).get("notification_claim") != claim:
-                    continue
-                waiting = "等對方回覆" if state["status"] == "waiting_other" else "待你回覆"
-                reading = False
-                await self.mail.deliver(f"followup-notification:{identifier}:{token}",
-                    f"郵件追蹤提醒：{state.get('subject', '(無主旨)')[:160]}\n{waiting}（{target}）。這是一次提醒，未寄出任何催覆郵件。請在原郵件卡片查看追蹤。")
-                self.update(identifier, token, status="reminded")
-                result["reminded"] += 1
-            except GmailError:
-                if reading:
-                    self.update(identifier, token, read_unverified=True)
-                else:
-                    self.update(identifier, token, status="paused", reason="delivery_unverified")
+                    if reading:
+                        if (item.get("status") != state["status"] or item.get("baseline_id") != state["baseline_id"]
+                                or item.get("due_at") != state.get("due_at")):
+                            return old
+                        changed = {"read_unverified": True}
+                    else:
+                        if item.get("status") != "notifying" or item.get("notification_claim") != claim:
+                            return old
+                        changed = {"status": "paused", "reason": "delivery_unverified"}
+                    return {**old, identifier: {**item, **changed}}
+                self.mail.db.mutate_mail_state(self.mail.key("followups"), failed)
                 result["errors"] += 1
+                if isinstance(exc, TimeoutError):
+                    result["deferred"] = len(entries) - visited
+                    break
+        if only is None:
+            self.mail.patch("followup-health", **result, cursor=(offset + visited) % len(entries), checked_at=timestamp())
         return result
