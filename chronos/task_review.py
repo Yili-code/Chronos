@@ -79,6 +79,9 @@ def card(state, aliases):
 
 def wording_request(text):
     """A global wording review needs an explicit task presentation/tag request."""
+    from .task_references import nonoperative
+    if nonoperative(text) or re.search(r'[?？「」『』"]|不要|不需要|不用|別|别|\b(?:not|never)\b', text, re.I):
+        return False
     fields = re.search(r'用詞|措辭|措辞|標題|标题|標籤|标签|命名|名稱|名称|'
                        r'\b(?:wording|titles?|tags?|naming|names?)\b', text, re.I)
     scope = re.search(r'任務|任务|待辦|待办|\b(?:tasks?|to-?dos?)\b', text, re.I)

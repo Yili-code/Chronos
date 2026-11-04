@@ -52,6 +52,7 @@ def test_explicit_task_wording_review_remains_available(store,monkeypatch,text):
 @pytest.mark.parametrize('text',[
     '優化任務','優化 Mnemosyne？','不要優化 Mnemosyne','如果我說優化 Mnemosyne',
     'Optimize task 1','Optimize my tasks','優化「Mnemosyne」這句話的意思',
+    '不要優化任務標題','如果我說優化任務用詞','優化任務標題？',
 ])
 def test_ambiguous_nonoperative_or_referenced_work_cannot_trigger_global_review(store,monkeypatch,text):
     task=main.tasks.create('InnoServe 準備')

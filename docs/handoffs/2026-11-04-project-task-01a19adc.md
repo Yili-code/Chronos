@@ -13,3 +13,7 @@
 - Initial post-write terminal output failed because Windows stdout lacked Chinese encoding; the transaction and readback had completed. Idempotent rerun used ASCII-safe JSON and verified the same task without creating another.
 
 - Final local full suite: 3,250 passed in 175.10s, existing Starlette warning only. Local compilation, documentation/diff and extension21 checks passed. Preparing atomic source PR; real requested task addition complete, runtime routing fix not deployed.
+
+- Published atomic source 2e3a0c364246e5908397306cb09898037830040c in PR https://github.com/Yili-code/Chronos/pull/127; required remote CI pending. Real task-add request is already fulfilled separately. New runtime deployment has not been attempted.
+
+- Follow-up counterexamples: negated, hypothetical and question-form task wording requests could still enter review when task/field keywords were present. Explicit wording detection now rejects these forms; six both-store regressions added. Final feature suite41 passed; final full source3,256 passed in189.64s, one existing warning. No further scope additions.
