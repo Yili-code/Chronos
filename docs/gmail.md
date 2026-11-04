@@ -80,6 +80,16 @@ Telegram 傳送前也保存紀錄。遇到 timeout 或服務錯誤而無法確�
 歷史整理的每批五封與待處理關卡只適用 `/mail_next`；每日新信通知獨立執行，不會被歷史整理阻擋。
 批次、截止範圍及指令識別保存在資料庫；重送同一指令不會多開一批。不寄信、不永久刪除。
 
+## 唯讀搜尋
+
+傳送 `/mail_search from:client@example.org subject:報價` 或 `搜尋郵件：from:client@example.org subject:報價`。冒號後是你提供的 Gmail 查詢，支援寄件者、主旨、日期及標籤等 Gmail 搜尋語法，不自動翻譯自然語言為查詢，也不從顯示名稱猜測 Email。查詢需 1 至 500 字元、單行、非空白。
+
+每頁最多五封，列出原文節錄與 Gmail 連結；還有結果時提供 `/mail_search_next <code>`。分頁綁定目前帳號與擁有者，有效 15 分鐘；取得新一頁後舊碼失效。查詢結果是讀取當時的快照，郵件新增或刪除可改變分頁結果。`in:anywhere`、`in:trash`、`in:spam` 明確要求時才包含垃圾桶／垃圾郵件。
+
+搜尋不會分類、標已讀、封存、刪除、寄信或自動建立草稿／追蹤。回覆選定結果卡片後，可沿用既有草擬、聯絡人與會面流程。中途讀取失敗不呈現部分結果，也不宣稱沒有符合郵件；同一 Telegram update 重送從已確認投遞的位置繼續，不重新搜尋。遠端送達後、本機 receipt 保存前中斷仍可能重複卡片，並非 exactly-once 保證。
+
+使用官方 [users.messages.list](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/list) 與逐封讀取；沿用已授權 Gmail 帳號，不新增 OAuth scope。
+
 ## 自然語言本機流程
 
 回覆綁定的郵件卡片，例如「幫我草擬英文回覆，並在 3 天後提醒我追蹤」。目前支援本機回覆草稿、明確間隔的追蹤，或兩者一起準備；追蹤間隔使用阿拉伯數字、單一小時或天數（1 小時至 90 天）。可明確提供一位郵件串內的追蹤對象 Email。
