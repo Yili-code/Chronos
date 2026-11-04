@@ -44,6 +44,9 @@ jobs:
         if: always()
         run: uv run python scripts/generate_release_evidence.py --junit python-test-results.xml --output release-evidence.json
 
+      - name: Observe secretary workflow cases
+        run: uv run python scripts/audit_secretary_workflows.py --output secretary-workflow-evidence.json --basetemp .pytest-secretary-workflow
+
       - name: Upload validation evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -52,6 +55,7 @@ jobs:
           path: |
             release-evidence.json
             python-test-results.xml
+            secretary-workflow-evidence.json
           if-no-files-found: error
           retention-days: 30
 

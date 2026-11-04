@@ -1,5 +1,15 @@
 # Executive assistant acceptance audit
 
+## Current evidence supplement (2026-11-04)
+
+The baseline below is preserved unchanged; its missing-feature descriptions are historical. Reviewed drafting/sending, local contacts/relationships, native invitations/RSVP, rescheduling, explicit reply tracking and bounded natural draft/tracking workflows were added later. Read-only owner-query search is documented in [Gmail](gmail.md). Single configured Gmail remains the active scope; LINE/Instagram and extra Gmail accounts remain deferred.
+
+The [observed workflow catalog](evidence/secretary-workflows-2026-11-04.json) contains 80 independent scenario definitions: ten per requested domain plus ten cross-domain scenarios. Seventy executable workflow definitions use actual service commands and behavioral assertions against synthetic SQLite/Firestore and API/model doubles; ten platform definitions preserve the owner's deferral. Parameter variants are executions of their parent definition, not additional independent cases. Every execution records commands, replies, API arguments/results, ordered DB transitions, final states and failed assertions if present. Source hashes bind the evidence to actual files.
+
+Reproduce with `python scripts/audit_secretary_workflows.py --output .pytest-tmp/secretary-workflows.json --basetemp .pytest-tmp/secretary-workflows-run`. CI repeats this observation on each validated commit and uploads its exact-source report alongside the normal test evidence. The original 80-case corpus and expectations are not changed or retroactively regraded. This supplement is bounded workflow evidence; it does **not** certify arbitrary original natural-language requests, cross-platform identity resolution, Google Contacts sync or real-recipient Production execution. The full original acceptance gate remains incomplete.
+
+Current support: email search/triage is bounded to one verified Gmail; reply drafts have explicit local/native/send states and reviewed recipients; contacts/relationship data are owner-maintained locally; meetings verify private holds, native invitation/RSVP and in-place rescheduling; follow-ups distinguish owner/recipient waits and pause unknown/automatic outcomes. General search-to-meeting orchestration and unsupported third-party platforms must not be reported as completed.
+
 Date: 2026-11-03, Asia/Taipei. This is an incomplete acceptance audit, not a claim that Chronos now provides all requested secretary functions.
 
 Baseline scope: the capability table and 80-case results below describe the original audit at commit `6effb2d`. Subsequent reviewed mail draft and reply-tracking implementation is documented in [Mail correspondence](mail-correspondence.md); it does not retroactively turn the baseline's blocked scenarios into passes.
