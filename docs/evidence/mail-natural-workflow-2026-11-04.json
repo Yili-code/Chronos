@@ -13,7 +13,7 @@
   "packaged_runtime_modules": 117,
   "source_match": true,
   "wheel_sha256": "c77f8f801a9bc32ce89cf2353a0d368f60551eed2c09ba19d2f3ee9756060a4f",
-  "production_deployed": false,
+  "production_deployed": true,
   "external_writes": "mocked only",
   "boundaries": [
     "bound source card required",
@@ -21,5 +21,35 @@
     "no AI-granted send or Calendar authority",
     "unclear requests do not apply any step; restate the complete request",
     "broader search/meeting composition and refreshed 80 product cases remain pending"
-  ]
+  ],
+  "production": {
+    "sha": "e9936cd8dd5fb3578623e47954a1a706f4278fb3",
+    "ci_run": 41843608453,
+    "revision": "chronos-executive-e9936cd",
+    "traffic_percent": 100,
+    "rollback": "chronos-executive-eef2c13",
+    "deployed_at": "2026-11-04T14:08:15.550202+00:00",
+    "runtime_settings_preserved": true,
+    "smoke": {
+      "readiness": "ready",
+      "calendar_read_verified": true,
+      "gmail_enabled": true,
+      "telegram_connected": true,
+      "reports": {
+        "brief": {
+          "parts": 2,
+          "read_only": true
+        },
+        "week": {
+          "parts": 8,
+          "read_only": true
+        },
+        "time": {
+          "parts": 1,
+          "read_only": true
+        }
+      }
+    },
+    "synthetic_production_writes": false
+  }
 }
