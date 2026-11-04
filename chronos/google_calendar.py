@@ -8,7 +8,9 @@ import httpx
 
 
 class CalendarError(RuntimeError):
-    pass
+    def __init__(self, message, status=None):
+        super().__init__(message)
+        self.status = status
 
 
 def validate_range(start, end):
@@ -59,7 +61,7 @@ class GoogleCalendar:
             if missing and r.status_code in {404, 410}:
                 return None
             if not r.is_success:
-                raise CalendarError(f"Google Calendar request failed (HTTP {r.status_code}).")
+                raise CalendarError(f"Google Calendar request failed (HTTP {r.status_code}).", r.status_code)
             if method == 'DELETE' and r.status_code == 204:
                 return {}
             return r.json()
@@ -160,6 +162,21 @@ class GoogleCalendar:
 
     async def insert(self, body):
         return await self.request("POST", self.events_path(), body=body, params={"sendUpdates": "none"})
+
+    async def invite(self, body):
+        return await self.request("POST", self.events_path(), body=body, params={"sendUpdates": "all"})
+
+    async def invite_existing(self, event_id, body, etag):
+        if not etag:
+            raise CalendarError("Event version is missing; invitation paused.")
+        return await self.request("PATCH", self.events_path() + "/" + quote(event_id, safe=""),
+            body=body, params={"sendUpdates": "all"}, etag=etag)
+
+    async def cancel_invitation(self, event_id, etag):
+        if not etag:
+            raise CalendarError("Event version is missing; cancellation paused.")
+        return await self.request("DELETE", self.events_path() + "/" + quote(event_id, safe=""),
+            params={"sendUpdates": "all"}, etag=etag)
 
     async def delete_event(self, event_id, etag):
         if not etag:

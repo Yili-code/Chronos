@@ -1,0 +1,29 @@
+{
+  "phase": "reviewed Calendar invitations and RSVP evidence",
+  "date": "2026-11-03 Asia/Taipei",
+  "base_commit": "3acea0cd4764d6087b55760d495af8510feedbaa",
+  "tests": {
+    "tests": 3696,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "seconds": 179.306,
+  "focused_invitation_tests": 74,
+  "reproduced_defects": [
+    "Missing invitation capability",
+    "Single-event cancellation review accepted an externally converted recurring series"
+  ],
+  "before_scope_fix_full_tests": 3678,
+  "wheel_sha256": "cdba3027688ffce6bdaad5e6775b4337cbaff563a2de71f1935b4c45300c852e",
+  "source_match": true,
+  "external_writes": "mocked only",
+  "production_deployed": false,
+  "remaining": [
+    "Private-hold conversion",
+    "Rescheduling",
+    "Automatic RSVP polling",
+    "Conference creation",
+    "Natural multi-intent coordination"
+  ]
+}

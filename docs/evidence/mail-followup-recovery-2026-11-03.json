@@ -1,0 +1,21 @@
+{
+  "phase": "recoverable read verification and current-state reminder claims",
+  "date": "2026-11-03 Asia/Taipei",
+  "base_commit": "9a5ee030aa5335ce02cf59f44d37f19c3feaebb3",
+  "tests": {
+    "tests": 3556,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "seconds": 176.793,
+  "reproduced_before": [
+    "Read timeout permanently paused the wait",
+    "Concurrent deadline extension still produced a stale reminder"
+  ],
+  "after": "Successful fresh reads can resume or resolve waits; claims verify current baseline, deadline and verification state; ambiguous writes remain paused.",
+  "wheel_sha256": "e1a66b3e958b686e563b1cea651bd1a659da20d1e37f1c017c51fd9cd4c78d54",
+  "source_match": true,
+  "production_deployed": false,
+  "external_writes": "mocked only"
+}

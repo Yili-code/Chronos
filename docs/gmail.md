@@ -6,10 +6,10 @@
 
 - 每天 **Asia/Taipei（UTC+8）07:00**，通知上次成功掃描後新增的郵件，含已讀與未讀，但排除寄件備份、草稿、垃圾桶與垃圾郵件。使用 Gmail 秒數時間範圍查詢（[官方說明](https://developers.google.com/workspace/gmail/api/guides/filtering)），每封成功播報一次。首次沒有時間紀錄時，只取前 24 小時的新信；歷史郵件仍由 `/mail_next` 整理。每次預設最多 100 封，達上限時保留原起點，後續執行跳過已播報項目並接續處理。只有完整批次成功後才推進掃描時間；不會更動保留郵件的已讀狀態。沒有新信時不傳通知。
 - 僅同時符合 Gmail `CATEGORY_PROMOTIONS`、`List-Unsubscribe` 與明確促銷詞的信移到垃圾桶。帳單、交易、登入、安全、作業／工作等關鍵字、往返信、星號、重要郵件、私人分類、白名單，以及內容過長而無法完整檢查的信保留。這是保守啟發式，不是完美分類；可先檢視預覽、加入白名單。
-- Telegram 逐封簡短回報移到垃圾桶的主旨、寄件者及原因；其他信提供繁體中文摘要、建議下一步與 Gmail 連結。摘要使用既有 Gemini，失敗時顯示原文摘錄。不會開啟郵件內連結或讀取附件。
+- Telegram 逐封簡短回報移到垃圾桶的主旨、寄件者及原因；其他信提供繁體中文摘要、建議下一步與 Gmail 連結。摘要使用既有 Gemini，失敗時顯示原文摘錄。不會開啟郵件內連結或自動讀取附件；擁有者可在原卡片明確要求[附件清單與受限文字預覽](mail-correspondence.md)。
 - 直接按郵件卡片按鈕或回覆 `刪除`、`保留`、`已讀`、`新增任務：要做的事`。使用現有 Telegram webhook 立即處理，不等隔天。
 - 新增任務必須由使用者要求。每封信最多建立一個 task，保留原信連結；重複點擊、Telegram 重送與併發更新不會重複建立。後續修改沿用 `/edit`。
-- **沒有寄信、轉寄或永久刪除入口**。即使回覆「寄出」也不寄信。未來若新增寄信功能，必須先呈現收件人、主旨、正文並取得使用者對該封內容的明確同意，不能把 Gmail 讀寫授權視為寄信許可。
+- 支援[完整郵件串回覆草擬與回覆追蹤](mail-correspondence.md)。保存 Gmail 草稿不會寄送；只有透過[獨立的逐封寄送確認](authorized-mail-send.md)，核對收件者、主旨與正文後，才會提交寄送。單獨回覆「寄出」不會寄信。沒有轉寄或永久刪除入口；OAuth 權限不是逐封寄送許可。
 - 目前只支援既有的私人 Telegram chat（正數 chat ID），且必須設定 webhook secret。群組使用尚未支援。
 
 ## 第一次授權
@@ -26,7 +26,7 @@ New-Item -ItemType Directory -Force .gmail | Out-Null
 
 瀏覽器會開啟 Google 同意頁。確認正確帳號並授權後，工具會用 PKCE 與隨機 state 驗證本機回呼，再確認 Gmail 帳號符合 `--account`。client ID、secret、refresh token 與帳號存入 `.env`；不會輸出憑證、不會改信、不會開啟郵件功能。Google 同意或重新登入必須由帳號持有人完成。
 
-Gmail 的垃圾桶 API 需要 `gmail.modify`。該 Google scope 也涵蓋寄信能力，**Google 沒有在此 scope 內拆出「寄信前詢問」**；本程式藉由不提供寄信入口限制行為。不要將此 OAuth token 用於未受控的其他程式。參考 [Gmail scopes](https://developers.google.com/workspace/gmail/api/auth/scopes)、[trash](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/trash)、[Desktop OAuth](https://developers.google.com/identity/protocols/oauth2/native-app)。
+Gmail 的垃圾桶 API 需要 `gmail.modify`。該 Google scope 也涵蓋寄信能力，**Google 沒有在此 scope 內拆出「寄信前詢問」**；本程式透過 owner/card 綁定、逐封內容審查、獨立確認與不確定結果禁止重播限制行為。不要將此 OAuth token 用於未受控的其他程式。參考 [Gmail scopes](https://developers.google.com/workspace/gmail/api/auth/scopes)、[trash](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/trash)、[Desktop OAuth](https://developers.google.com/identity/protocols/oauth2/native-app)。
 
 External + Testing 的 refresh token 可能有短期有效期限；長期運作前依 Google 對應用發布狀態與帳號的規定完成設定。授權失效時會停止處理，須重新授權，不會退回其他帳號。
 
@@ -61,6 +61,8 @@ Gmail 憑證由 Secret Manager 注入，不放進 image。郵件使用獨立的�
 ## 資料與失敗處理
 
 SQLite 的 `mail_state` 或 Firestore 的 `<prefix>_mail_state` 保存郵件 ID、主旨、寄件者、日期、最多 12,000 字元內文、摘要、原卡片對應與任務／投遞紀錄。這些資料目前不自動到期；資料庫備份亦包含郵件資料。Gemini 會收到摘要或任務解析所需的郵件文字；Telegram 收到主旨、寄件者與摘要／摘錄。
+
+啟用 correspondence 工作流程後，另保存本機草稿、最多 4,000 字元的必要 owner 要求／補充上下文、原郵件串雜湊、確認與寄送狀態。草擬或會面解析會把所需郵件串送給既有 Gemini；不會把其他聯絡人的資料當作工具權限。補充提示的版本保存在原始 receipt，避免延遲投遞錯綁新要求。
 
 垃圾桶操作前先保存待處理紀錄；Gmail 寫入結果不明時，下次先重新讀取狀態，必要時重試同一個可重複操作。未完成的批次會跨日接續，避免已移到垃圾桶的信漏報。
 

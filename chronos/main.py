@@ -264,7 +264,7 @@ async def reset_in_progress(request: Request, error: ResetInProgress):
 
 
 def mail_workflow():
-    return MailWorkflow(db, gmail, telegram, ai, settings)
+    return MailWorkflow(db, gmail, telegram, ai, settings, calendar=google_calendar)
 
 
 def learning_calendar():
@@ -409,7 +409,8 @@ async def mail_status(x_chronos_scheduler_secret: str | None = Header(default=No
         if not chat.get("ok") or chat.get("result", {}).get("id") != settings.telegram_chat_id:
             raise GmailError("Telegram owner chat could not be verified")
         return {"enabled": True, "gmail_account": account, "telegram_connected": True,
-                "send_enabled": False, "timezone": "Asia/Taipei"}
+                "send_enabled": True, "send_requires_confirmation": True,
+                "automatic_send_enabled": False, "timezone": "Asia/Taipei"}
     except GmailError as error:
         raise HTTPException(status_code=503, detail=str(error)) from None
 
@@ -1058,7 +1059,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         if mail is None:
             raise HTTPException(status_code=503, detail="Mail integration is disabled")
         callback_match = (re.fullmatch(
-            r"mail:(trash|task|keep|read|(?:confirm|edit|cancel)_[a-f0-9]{8}):([A-Za-z0-9_-]{1,32})",
+            r"mail:(trash|task|keep|read|(?:confirm|edit|cancel|save_reply|prepare_send|send_reply|stop_send)_[a-f0-9]{8}):([A-Za-z0-9_-]{1,32})",
             update.callback_query.data or "",
         ) if mail_callback else None)
         active_binding = (mail.binding(chat_id, source_message.message_id) if mail_callback else mail_binding)
@@ -1075,7 +1076,8 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                     raise HTTPException(status_code=503, detail=str(error)) from None
             else:
                 try:
-                    action = await mail.prepare_action(mail_binding["mail_id"], source_message.text or "")
+                    action = await mail.prepare_action(mail_binding["mail_id"], source_message.text or "",
+                        context_kind=mail_binding.get("context_kind"), context_version=mail_binding.get("context_version"))
                 except GmailError as error:
                     raise HTTPException(status_code=503, detail=str(error)) from None
             receipt = db.process_update(update_id, action)
@@ -1084,6 +1086,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             await delete_telegram_messages(chat_id, card_id)
         is_proposal = receipt["reply"].startswith("Create this task?\n\n")
         is_edit = receipt["reply"] == "Reply with the revised task title."
+        is_correspondence = receipt["reply"].startswith(("回覆草稿\n", "郵件追蹤\n", "聯絡人\n", "會面協調\n", "郵件附件\n"))
         task_resolved = (receipt["reply"].startswith("Added task #")
                          or receipt["reply"].startswith("This email already has task #"))
         callback_action = callback_match.group(1) if callback_match else None
@@ -1103,6 +1106,12 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             if receipt["reply"] != "已移到垃圾桶。":
                 markup = None
                 identifier = active_binding["mail_id"]
+                context = (receipt.get("messages") or [{}])[0].get("mail_context") or {}
+                question_kind = context.get("kind") if context.get("kind") in {"reply", "meeting"} else None
+                question_version = context.get("version") if question_kind else None
+                question_current = None
+                if question_kind:
+                    question_current = mail.get(question_kind + ":" + identifier) or {}
                 if is_proposal:
                     import hashlib
                     title = receipt["reply"].split("\n\n", 1)[1]
@@ -1111,22 +1120,49 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                               for label, action in (("Yes", "confirm"), ("Edit", "edit"), ("Cancel", "cancel"))]]}
                 elif is_edit:
                     markup = {"force_reply": True, "input_field_placeholder": "Enter a task title"}
-                result = await telegram.send_message(chat_id, receipt["reply"], reply_markup=markup)
+                elif question_kind and question_current.get("version") == question_version:
+                    markup = {"force_reply": True, "input_field_placeholder": "補充資料或回覆取消"}
+                elif is_correspondence and len(identifier) <= 32:
+                    actions = (receipt.get("messages") or [{}])[0].get("mail_actions") or []
+                    labels = {"save_reply": "Gmail 草稿", "prepare_send": "寄送準備", "send_reply": "確認寄送", "stop_send": "取消寄送"}
+                    buttons = [{"text": labels[item["kind"]], "callback_data": f"mail:{item['kind']}_{item['token']}:{identifier}"}
+                               for item in actions if item.get("kind") in labels and re.fullmatch(r"[a-f0-9]{8}", item.get("token", ""))]
+                    if buttons:
+                        markup = {"inline_keyboard": [buttons]}
+                response_text = receipt["reply"]
+                if question_kind and question_current.get("version") != question_version:
+                    response_text = "補充提示已過期，請使用最新提示；沒有重新執行原操作。"
+                result = await telegram.send_message(chat_id, response_text, reply_markup=markup)
                 if not result.get("ok"):
                     raise HTTPException(status_code=502, detail="Mail action reply pending")
-                if is_proposal or is_edit:
+                if is_proposal or is_edit or is_correspondence:
                     message_id = result.get("result", {}).get("message_id")
                     if not message_id:
                         raise HTTPException(status_code=502, detail="Mail task prompt ID missing")
                     binding = {"mail_id": identifier}
+                    if question_kind:
+                        binding.update(context_kind=question_kind, context_version=question_version)
                     if origin_card_id is not None:
                         binding["origin_message_id"] = origin_card_id
                     mail.patch(f"telegram:{chat_id}:{message_id}", **binding)
-            db.mark_update_delivered(update_id)
+            if receipt.get("messages"):
+                db.mark_update_message_delivered(update_id, 1)
+            else:
+                db.mark_update_delivered(update_id)
         if update.callback_query:
             result = await telegram.answer_callback_query(update.callback_query.id)
             if not result.get("ok"):
                 raise HTTPException(status_code=502, detail="Mail callback acknowledgement pending")
+        return {"ok": True}
+    from .mail_correspondence import requires_mail_context
+    if update.message and requires_mail_context(source_message.text or ""):
+        receipt = db.get_update(update_id) or db.process_update(update_id, lambda:
+            "請先回覆要處理的 Gmail 郵件卡片，讓我確認郵件串與對象。尚未建立任務、草稿或聯絡人。")
+        if not receipt["delivered"]:
+            result = await telegram.send_message(chat_id, receipt["reply"])
+            if not result.get("ok"):
+                raise HTTPException(status_code=502, detail="Mail context clarification pending")
+            db.mark_update_delivered(update_id)
         return {"ok": True}
     receipt = db.get_update(update_id)
     plan_callback = False

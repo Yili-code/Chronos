@@ -1,0 +1,37 @@
+{
+  "phase": "durable RSVP polling and owner updates",
+  "date": "2026-11-04 Asia/Taipei",
+  "base_commit": "6d1b932ed1b7a50d17058437bd075d9caa2d76f7",
+  "tests": {
+    "tests": 3746,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "seconds": 182.801,
+  "frozen_source_files": 264,
+  "frozen_source_unchanged": true,
+  "wheel_sha256": "725ff393411fb9b086a524ec7adaec78619170e040be9d4b94edda8bacd7cfba",
+  "source_match": true,
+  "external_writes": "mocked only",
+  "production_deployed": false,
+  "regression_scope": [
+    "indexed invitation before external write",
+    "unchanged RSVP silent",
+    "meaningful response transitions",
+    "concurrent owner notification claims",
+    "unknown delivery not replayed",
+    "definite rejection retry",
+    "sent journal recovery",
+    "stale read cannot overwrite cancellation",
+    "45 second provider budget and rotating cursor",
+    "strict positive Telegram message ID"
+  ],
+  "remaining": [
+    "private hold conversion",
+    "rescheduling",
+    "conference creation",
+    "current 80-case product acceptance",
+    "production deployment and verification"
+  ]
+}

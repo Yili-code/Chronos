@@ -83,9 +83,12 @@ def test_mail_status_is_authenticated_and_read_only(system, monkeypatch):
     gmail.verify_account.assert_not_awaited()
     result = client.get("/internal/mail/status", headers={"X-Chronos-Scheduler-Secret": "test-scheduler"})
     assert result.status_code == 200
-    assert result.json()["send_enabled"] is False
+    assert result.json()["send_enabled"] is True
+    assert result.json()["send_requires_confirmation"] is True
+    assert result.json()["automatic_send_enabled"] is False
     gmail.trash.assert_not_awaited()
     gmail.mark_read.assert_not_awaited()
+    gmail.send_reviewed_draft.assert_not_awaited()
     bot.send_message.assert_not_awaited()
 
 

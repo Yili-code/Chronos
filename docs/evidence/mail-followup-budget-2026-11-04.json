@@ -1,0 +1,23 @@
+{
+  "phase": "bounded mail follow-up polling",
+  "date": "2026-11-04 Asia/Taipei",
+  "base_commit": "a99257647437a7a2b60045371c5cd86c98580352",
+  "tests": {
+    "tests": 3870,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "seconds": 192.978,
+  "budget_regressions": 16,
+  "before_fix_failed": 2,
+  "wheel_sha256": "01718d3b7d4b9c4ce2efb2f873659b127d1cfdf1227d9d92c9e83377815cf29a",
+  "source_match": true,
+  "external_writes": "mocked only",
+  "production_deployed": false,
+  "boundaries": [
+    "45 second external wait budget excludes synchronous storage latency",
+    "manual single-thread checks preserve scheduler cursor",
+    "unknown owner delivery remains paused without replay"
+  ]
+}
