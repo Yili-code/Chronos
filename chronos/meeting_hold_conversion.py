@@ -23,7 +23,8 @@ def clean_hold(service, event, state):
             and event.get("transparency", "opaque") == "opaque"
             and isinstance(event.get("etag"), str) and bool(event["etag"])
             and event.get("extendedProperties") == {"private": {
-                "chronosMeeting": state["version"], "chronosAccount": service.mail.namespace}})
+                "chronosMeeting": state["version"], "chronosAccount": service.mail.namespace,
+                **({"chronosReschedule": state["reschedule_epoch"]} if state.get("reschedule_epoch") else {})}})
     except (AttributeError, TypeError, KeyError):
         return False
 

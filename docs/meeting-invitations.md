@@ -16,8 +16,17 @@ Submitted invitations are registered before the provider write and checked by th
 
 Conversion uses conditional PATCH with the original ETag and sendUpdates=all, preserving the same event ID. It refuses changed/recurring holds, additional descriptions, locations, attachments, conference data, shared properties and unknown fields instead of publishing or deleting unreviewed private content. Fresh complete agenda checks exclude only the exact owned hold on its source calendar; another overlapping event still blocks conversion. Abandoning review or a definite provider rejection restores the held state. Unknown PATCH outcomes remain uncertain and are never automatically repeated. Holds created before calendar-account binding was recorded require manual reconciliation and cannot be converted by this workflow.
 
-Remaining coordination work: rescheduling, negotiation based on reply content, and conference-link creation. This phase does not claim these capabilities.
+Remaining coordination work: negotiation based on reply content, and conference-link creation. This phase does not claim these capabilities.
 
 Official contracts: [events.insert](https://developers.google.com/workspace/calendar/api/v3/reference/events/insert), [event resource and attendee response status](https://developers.google.com/workspace/calendar/api/v3/reference/events).
 
 Reply drafts for the same mail card bind to a minimal related-meeting snapshot. Meaningful meeting changes invalidate draft saving or sending; polling timestamps and notification bookkeeping do not. Draft generation receives only user-relevant meeting details, without internal confirmation codes. Before sending, owned Calendar event evidence is rechecked after native Gmail draft inspection, followed by an atomic local meeting-state check. Unknown Calendar reads stop mail submission. These checks are observations at that time, not a distributed transaction across Gmail and Calendar; unrelated conversations are not inferred or linked.
+
+
+## Reviewed rescheduling
+
+Reply to the bound mail card with `準備會面改期 <candidate-code>：2026-11-06T15:00:00+08:00；時區：Asia/Taipei；分鐘：45`. The timestamp requires an explicit UTC offset matching the IANA zone; duration is 15–240 elapsed minutes, and the start must be within the next year. Nonexistent local times and missing constraints are rejected. This stage uses explicit fields; free-form date negotiation belongs to the next intent-routing stage.
+
+Review the unchanged title/attendees and old/new times, then use `確認會面改期 <review-code>` within fifteen minutes. `取消會面改期準備 <review-code>` abandons only a local review. The confirmation rechecks the source thread, account/calendar, owned event and ETag, contact preferences and complete agenda. Only the exact owned event on its source calendar is excluded from conflicts. Conditional PATCH retains the same event ID: private holds use no guest notifications, while invitations request updates to the existing guests.
+
+A unique persisted claim precedes the write. Competing cancellations/proposals and stale mail submissions are blocked during review or uncertain application. Unknown writes never replay; `查看會面改期` performs read-only reconciliation, and RSVP polling can recover uncertain invitation updates. The reschedule epoch and exact new times must match. All invitation guests must be observed in needsAction after updating before normal RSVP tracking resumes; old accepted statuses cannot establish agreement to the new time. If reset evidence is absent, the update remains unverified for owner reconciliation even if the time may already have changed. This does not claim notification delivery or attendee availability.

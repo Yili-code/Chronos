@@ -359,9 +359,13 @@ class MailWorkflow:
         attachment = await MailAttachments(self).prepare(identifier, instruction)
         if attachment is not None:
             return attachment
+        from .meeting_rescheduling import MeetingRescheduling
         from .meeting_invitations import MeetingInvitations
         from .google_calendar import CalendarError
         try:
+            rescheduling = await MeetingRescheduling(self).prepare(identifier, instruction, now)
+            if rescheduling is not None:
+                return rescheduling
             invitation = await MeetingInvitations(self).prepare(identifier, instruction, now)
         except CalendarError:
             raise GmailError("Calendar invitation verification failed; no completion is confirmed") from None
