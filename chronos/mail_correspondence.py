@@ -151,7 +151,9 @@ class MailCorrespondence:
         return (f"{notice}{roles}\n主旨：{state['subject']}\n\n{state['body']}\n\n"
                 f"這是待確認的本機草稿，沒有寄出。核對內容後回覆：儲存 Gmail 草稿 {state['version']}")
 
-    async def propose(self, identifier, request, *, reply_all=None, stage=False):
+    async def propose(self, identifier, request, *, reply_all=None, stage=False, meeting_override=None):
+        if meeting_override is not None and not stage:
+            raise ValueError("Staged meeting context requires staged draft preparation")
         if len(request) > 4000:
             return text_result("累積要求超過 4,000 字元，請整理成較短的完整要求，避免遺失限制。")
         if not request.strip():
@@ -174,7 +176,11 @@ class MailCorrespondence:
         from .mail_recipients import envelope, thread_envelope, preferences_allow
         source = fingerprint(messages)
         from .mail_meeting_context import context as meeting_context
-        meeting = meeting_context(self.mail, identifier)
+        if meeting_override is not None:
+            from .mail_meeting_context import FIELDS
+            meeting = {k: meeting_override[k] for k in FIELDS if k in meeting_override}
+        else:
+            meeting = meeting_context(self.mail, identifier)
         meeting_source = fingerprint(meeting)
         try:
             if reply_all is None and previous.get("source") == source:
