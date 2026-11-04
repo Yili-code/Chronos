@@ -102,6 +102,10 @@ class MeetingCoordination:
         state = self.state(identifier)
         if not state:
             return answer("尚無候選會面；請先回覆「協調會面：日期、時間、時區與長度」。")
+        if state.get("calendar_account") is not None and (
+                state["calendar_account"] != self.mail.settings.calendar_account
+                or state.get("calendar_id") != self.mail.settings.calendar_id):
+            return answer("Calendar 帳號或行事曆已變更；沒有操作原暫留，請先核對。")
         if show:
             if state.get("status") in {"creating", "uncertain", "held", "deleting"}:
                 event = await self.calendar.event(state["event_id"])
@@ -211,6 +215,7 @@ class MeetingCoordination:
                  "owner_request": request,
                  "title": result.title, "start": start.isoformat(), "end": end.isoformat(), "timezone": result.timezone,
                  "minutes": result.minutes, "source": fingerprint(messages),
+                 "calendar_account": self.mail.settings.calendar_account, "calendar_id": self.mail.settings.calendar_id,
                  "event_id": hashlib.sha256((self.mail.namespace + identifier + token).encode()).hexdigest()}
         def apply():
             current = self.mail.db.mutate_mail_state(self.mail.key("meeting:" + identifier), lambda previous:

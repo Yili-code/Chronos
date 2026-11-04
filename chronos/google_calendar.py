@@ -166,6 +166,12 @@ class GoogleCalendar:
     async def invite(self, body):
         return await self.request("POST", self.events_path(), body=body, params={"sendUpdates": "all"})
 
+    async def invite_existing(self, event_id, body, etag):
+        if not etag:
+            raise CalendarError("Event version is missing; invitation paused.")
+        return await self.request("PATCH", self.events_path() + "/" + quote(event_id, safe=""),
+            body=body, params={"sendUpdates": "all"}, etag=etag)
+
     async def cancel_invitation(self, event_id, etag):
         if not etag:
             raise CalendarError("Event version is missing; cancellation paused.")

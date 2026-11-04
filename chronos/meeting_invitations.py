@@ -27,7 +27,7 @@ def preview(state):
         return "最新 Calendar 狀態未能驗證；以下為上次觀察，不代表目前已確認：\n" + preview({**state, "rsvp_read_unverified": False})
     status = state.get("status")
     if status == "invite_review":
-        return (f"會面邀請預覽\n{state['title']}\n受邀者：{', '.join(state['invitees'])}\n"
+        return (("會面邀請預覽（將轉換原私人暫留）\n" if state.get("invite_previous_status") == "held" else "會面邀請預覽\n") + f"{state['title']}\n受邀者：{', '.join(state['invitees'])}\n"
             f"時間：{state['start']} 至 {state['end']}（{state['timezone']}）\n地點：{state['location']}\n"
             "僅核對你的設定行事曆；對方可用時間與接受狀態尚未確認。尚未提交邀請。\n"
             f"這會通知所有列出的受邀者。核對後回覆：確認會面邀請 {state['invite_token']}\n確認碼 15 分鐘內有效。\n"
@@ -247,6 +247,9 @@ class MeetingInvitations:
         start, end = (datetime.fromisoformat(state[k]) for k in ("start", "end"))
         if start <= now:
             return False
+        if state.get("invite_previous_status") == "held":
+            from .meeting_hold_conversion import verify_conversion
+            return await verify_conversion(self, state)
         return not any(start < stop and end > begin for begin, stop in await self.calendar.busy(start, end))
 
     async def prepare(self, identifier, instruction, now=None):
@@ -270,7 +273,7 @@ class MeetingInvitations:
                 (state["calendar_account"] != self.mail.settings.calendar_account or state.get("calendar_id") != self.mail.settings.calendar_id)):
             return reply("Calendar 帳號或行事曆設定已變更；請先核對原邀請，沒有修改其他行事曆。")
         if prepare:
-            if state.get("status") != "review" or state.get("version") != prepare[1]:
+            if state.get("status") not in {"review", "held"} or state.get("version") != prepare[1]:
                 return reply("請先選擇最新候選時間；私人暫留須先核對或取消，沒有自動轉為外部邀請。")
             fields = re.fullmatch(r"([^；;\r\n]+)[；;]\s*地點\s*[:：]\s*([^\r\n]{1,300})", prepare[2])
             if not fields:
@@ -284,7 +287,14 @@ class MeetingInvitations:
                 return reply("邀請名單無法明確核對；沒有提交或猜測收件者。")
             proposed = {**state, "invitees": addresses, "location": fields[2].strip(),
                 "calendar_account": self.mail.settings.calendar_account, "calendar_id": self.mail.settings.calendar_id,
-                "invite_token": uuid.uuid4().hex[:8], "invite_expires": time.time() + 900}
+                "invite_token": uuid.uuid4().hex[:8], "invite_expires": time.time() + 900,
+                "invite_previous_status": state["status"]}
+            if state["status"] == "held":
+                from .meeting_hold_conversion import clean_hold
+                event = await self.calendar.event(state["event_id"])
+                if not clean_hold(self, event, state):
+                    return reply("私人暫留已變更或含未審查內容；沒有轉成邀請，也沒有移除內容。")
+                proposed["hold_etag"] = event["etag"]
             if not proposed["location"] or not await self.verify(identifier, proposed, reference):
                 return reply("郵件、聯絡偏好或行事曆已變更；沒有準備外部邀請。")
             def apply():
@@ -298,7 +308,7 @@ class MeetingInvitations:
             if state["status"] not in {"invite_review", "invite_cancel_review"} or state.get(field) != abandon[1]:
                 return reply("準備確認已變更或外部操作已開始；沒有撤回任何已提交操作。")
             def apply():
-                status = state.get("cancel_previous_status") if field == "cancel_token" else "review"
+                status = state.get("cancel_previous_status") if field == "cancel_token" else state.get("invite_previous_status", "review")
                 current = self.transition(identifier, state, {"status": status, field: None})
                 return "會面協調\n" + ("已取消本次準備，沒有對外提交。" if current.get(field) is None else "確認已變更，沒有取消其他準備。")
             return apply
@@ -311,7 +321,8 @@ class MeetingInvitations:
             if (state["status"] != "invite_review" or state.get("invite_token") != confirm[1]
                     or state.get("invite_expires", 0) <= time.time()):
                 return reply("邀請確認已過期或不符；沒有提交。")
-            if not await self.verify(identifier, state, reference) or await self.calendar.event(state["event_id"]) is not None:
+            if not await self.verify(identifier, state, reference) or (state.get("invite_previous_status") != "held"
+                    and await self.calendar.event(state["event_id"]) is not None):
                 return reply("來源、偏好、空檔或事件狀態已變更；沒有提交邀請。")
             if not self.register(identifier, state):
                 return reply("邀請索引已變更或達到 100 個追蹤上限；沒有提交外部邀請。")
@@ -330,25 +341,28 @@ class MeetingInvitations:
             body = {"id": state["event_id"], "summary": state["title"], "location": state["location"],
                 "start": {"dateTime": state["start"], "timeZone": state["timezone"]},
                 "end": {"dateTime": state["end"], "timeZone": state["timezone"]}, "status": "confirmed",
-                "visibility": "private", "guestsCanModify": False, "guestsCanInviteOthers": False,
+                "visibility": "private", "transparency": "opaque", "guestsCanModify": False, "guestsCanInviteOthers": False,
                 "guestsCanSeeOtherGuests": False,
                 "attendees": [{"email": address, "responseStatus": "needsAction"} for address in state["invitees"]],
                 "extendedProperties": {"private": {"chronosMeeting": state["version"],
                     "chronosAccount": self.mail.namespace, "chronosInvitation": state["invite_token"]}}}
             try:
-                event = await self.calendar.invite(body)
+                if state.get("invite_previous_status") == "held":
+                    event = await self.calendar.invite_existing(state["event_id"], {k: v for k, v in body.items() if k != "id"}, state["hold_etag"])
+                else:
+                    event = await self.calendar.invite(body)
                 outcome = self.outcome(event, state)
                 if outcome == "invite_unverified":
                     outcome = "invite_uncertain"
             except CalendarError as exc:
-                outcome = "review" if exc.status in {400, 401, 403, 412, 429} else "invite_uncertain"
+                outcome = state.get("invite_previous_status", "review") if exc.status in {400, 401, 403, 412, 429} else "invite_uncertain"
             values = {"status": outcome}
-            if outcome not in {"review", "invite_uncertain"}:
+            if outcome not in {"review", "held", "invite_uncertain"}:
                 _, responses, snapshot, owned = self.evidence(event, state)
                 values.update(rsvp_snapshot=snapshot, rsvp_responses=responses, rsvp_status=outcome,
                     rsvp_revision=0, last_notified_revision=0, provider_verified=owned)
             current = self.transition(identifier, current, values)
-            return reply(preview(current) if outcome != "review" else "Calendar 明確拒絕邀請，沒有確認完成；請重新準備並授權。")
+            return reply(preview(current) if outcome not in {"review", "held"} else "Calendar 明確拒絕邀請，沒有確認完成；原候選或私人暫留保留，請重新核對後準備並授權。")
         if cancel:
             if state.get("version") != cancel[1] or state["status"] not in {"invite_pending", "invite_accepted", "invite_declined"}:
                 return reply("請先核對已提交邀請的最新狀態；沒有取消。")

@@ -1,0 +1,36 @@
+{
+  "phase": "reviewed private hold conversion",
+  "date": "2026-11-04 Asia/Taipei",
+  "base_commit": "e779bc272003b1caa2abc8fee3939c332a721cb9",
+  "tests": {
+    "tests": 3826,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "seconds": 201.473,
+  "conversion_tests": 60,
+  "wheel_sha256": "1f573daf9c33fe30ed53c5c927d8a109375d8c45c44b7baa051cb103d04c5544",
+  "source_match": true,
+  "matched_modules": [
+    "chronos/google_calendar.py",
+    "chronos/meeting_coordination.py",
+    "chronos/meeting_invitations.py",
+    "chronos/meeting_hold_conversion.py"
+  ],
+  "external_writes": "mocked only",
+  "production_deployed": false,
+  "remaining": [
+    "reviewed rescheduling",
+    "conference creation",
+    "natural multi-intent routing",
+    "current 80-case acceptance",
+    "production release and verification"
+  ],
+  "limitations": [
+    "legacy unbound holds require manual reconciliation",
+    "modified hold content requires manual review",
+    "guest availability not verified",
+    "unknown writes never automatically replay"
+  ]
+}
