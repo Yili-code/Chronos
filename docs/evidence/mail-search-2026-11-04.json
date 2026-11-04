@@ -20,6 +20,53 @@
     "mail_mutations": 0,
     "message_bodies_read": 0
   },
-  "production_deployed": false,
-  "original_acceptance_complete": false
+  "production_deployed": true,
+  "original_acceptance_complete": false,
+  "production": {
+    "sha": "7c44f4ae057d15bac722c24337030d0443de67d2",
+    "ci_run": 41852690011,
+    "revision": "chronos-executive-7c44f4a",
+    "traffic_percent": 100,
+    "rollback": "chronos-executive-e9936cd",
+    "deployed_at": "2026-11-04T15:02:45.838350+00:00",
+    "runtime_settings_preserved": true,
+    "smoke": {
+      "readiness": "ready",
+      "calendar_read_verified": true,
+      "gmail_enabled": true,
+      "telegram_connected": true,
+      "reports": {
+        "brief": {
+          "parts": 2,
+          "read_only": true
+        },
+        "week": {
+          "parts": 8,
+          "read_only": true
+        },
+        "time": {
+          "parts": 1,
+          "read_only": true
+        }
+      }
+    },
+    "synthetic_production_writes": false
+  },
+  "post_release_provider_probe": {
+    "account_verified": true,
+    "search_api_verified": true,
+    "returned_messages": 0,
+    "has_next_page": false,
+    "mail_mutations": 0,
+    "message_bodies_read": 0
+  },
+  "independent_smoke": {
+    "source_and_traffic_verified": true,
+    "mail_http": 200,
+    "calendar_http": 200,
+    "unauthenticated_mail_http": 403,
+    "automatic_send_enabled": false,
+    "confirmation_required": true,
+    "gmail_0700_and_tasks_0800_schedulers": "ENABLED Asia/Taipei"
+  }
 }
