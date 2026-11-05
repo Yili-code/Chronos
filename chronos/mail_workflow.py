@@ -359,6 +359,10 @@ class MailWorkflow:
             current = self.get(context_kind + ":" + identifier) or {}
             if current.get("version") != context_version:
                 return lambda: "補充提示已過期，請回覆最新提示或原郵件卡片；沒有執行任何動作。"
+        from .mail_reply_identity import prepare as prepare_identity
+        identity = await prepare_identity(self, identifier, instruction)
+        if identity is not None:
+            return identity
         from .mail_correspondence import MailCorrespondence, draft_review_request, native_draft_request, recipient_preflight_request
         if native_draft_request(instruction):
             if context_kind == "reply" and context_version:

@@ -268,3 +268,35 @@ async def test_original_sensitive_reply_all_is_explicitly_unsupported(workflow):
         'fix_and_regression':'Route to explicit all-address/authority preflight without native writes; full attachment request remains unsupported',
         'production_case_execution':False})
     assert all(checks.values()),checks
+
+
+@pytest.mark.asyncio
+async def test_original_same_name_company_contact_is_grounded(workflow):
+    instruction,condition,expected=SCENARIOS['drafting'][4]
+    setup(workflow)
+    contacts={'items':{
+        'work':{'id':'work','version':'11111111','name':'Alex','company':'Acme','role':'公司同事','emails':['client@example.org'],'notes':['PRIVATE-WORK-NOTE']},
+        'school':{'id':'school','version':'22222222','name':'Alex','company':'Example University','role':'學校同學','emails':['classmate@example.org'],'notes':['PRIVATE-SCHOOL-NOTE']}},'pending':{}}
+    workflow.patch('contacts',**contacts)
+    workflow.ai._generate_output.reset_mock()
+    before={'contacts':copy.deepcopy(workflow.get('contacts')),'draft':copy.deepcopy(workflow.get('reply:ab12'))}
+    action=await workflow.prepare_action('ab12',instruction)
+    receipt=workflow.db.process_update(94501,action)
+    workflow.db.process_update(94501,lambda:pytest.fail('Duplicate identity request was replayed'))
+    output=receipt['reply']
+    checks={'correct_company_identity':'client@example.org' in output and 'Acme' in output,
+        'not_school_identity':'classmate@example.org' not in output,'private_notes_withheld':'PRIVATE-WORK-NOTE' not in output and 'PRIVATE-SCHOOL-NOTE' not in output,
+        'asks_missing_reply_body':'草擬回覆：內容' in output and '尚未草擬' in output,
+        'verified_thread':workflow.gmail.thread.await_args.args==('th1',) and workflow.gmail.verify_account.await_count==1,
+        'contacts_and_draft_unchanged':before=={'contacts':workflow.get('contacts'),'draft':workflow.get('reply:ab12')},
+        'no_generation':workflow.ai._generate_output.await_count==0,
+        'no_native_write':all(getattr(workflow.gmail,n).await_count==0 for n in ('create_reply_draft','send_reviewed_draft','read_attachment','trash','archive','mark_read'))}
+    RECORDS.append({'id':'DRAFTING-05','input':instruction,'expected':expected,'preconditions':{'original':condition,'contacts':contacts,'bound_thread':thread()},
+        'backend':type(workflow.db).__name__,'mode':'deterministic local contact and thread identity preflight',
+        'actual_reply':output,'tool_calls':[str(c) for c in workflow.gmail.mock_calls],'api_results':{'thread':thread()},
+        'database_before':before,'database_after':{'contacts':workflow.get('contacts'),'draft':workflow.get('reply:ab12')},
+        'checks':checks,'status':'Pass' if all(checks.values()) else 'Fail','difference':[k for k,v in checks.items() if not v],
+        'severity':None if all(checks.values()) else 'High','root_cause':'Named owner qualifiers were not checked against explicit contacts and bound sender before drafting',
+        'fix_and_regression':'Deterministic positive/negative qualifier preflight, unique owner-maintained record and bound sender match; missing body requires clarification',
+        'production_case_execution':False})
+    assert all(checks.values()),checks

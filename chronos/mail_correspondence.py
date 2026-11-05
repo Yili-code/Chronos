@@ -55,6 +55,9 @@ class ReplyText(BaseModel):
 
 
 def requires_mail_context(text):
+    from .mail_reply_identity import request_parts
+    if request_parts(text) is not None:
+        return True
     if draft_review_request(text) or native_draft_request(text) or recipient_preflight_request(text):
         return True
     from .mail_natural_workflow import natural_request, draft_request
@@ -222,6 +225,10 @@ class MailCorrespondence:
             return text_result("累積要求超過 4,000 字元，請整理成較短的完整要求，避免遺失限制。")
         if not request.strip():
             return text_result("請補充回覆內容、語氣或語言；不會猜測你的承諾。")
+        from .mail_reply_identity import prepare as prepare_identity
+        identity = await prepare_identity(self.mail, identifier, request)
+        if identity is not None:
+            return identity
         if re.search(r"reply[ -]?all|\bcc\b|\bbcc\b|副本|密件|附件|attach|寄出|send\b", request, re.I):
             return text_result("Reply All 請使用「回覆全體草稿：內容」；明確 CC/BCC 可在本機草稿以「設定回覆收件者」指定。附件與寄送需要各自確認，尚未執行。")
         key = "reply:" + identifier
