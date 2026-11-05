@@ -3325,7 +3325,7 @@
     "missing_links": 0,
     "diff_check": "Pass"
   },
-  "production_deployed": false,
+  "production_deployed": true,
   "production_case_execution": false,
   "original_acceptance_complete": false,
   "initial_production_release": {
@@ -3405,7 +3405,7 @@
     "failed_before_fix": 4,
     "root_cause": "Find/draft/track detection intercepted non-mail work",
     "fix": "Require mail semantics in composite search and explicit mail/reply evidence before reserving missing mail context",
-    "final_release_pending": true,
+    "final_release_pending": false,
     "related_tests": 236,
     "live_model_replayed_after_scope_only_fix": false,
     "live_model_basis": "Generation and supported mail paths unchanged; final original backend replay checks routing. Live source manifest remains tied to pre-scope revision."
@@ -3576,5 +3576,101 @@
       "DRAFTING-08",
       "DRAFTING-09"
     ]
+  },
+  "production_release": {
+    "sha": "5c5f09c9ad1afafa2895fb3f5e33038eb18ab524",
+    "ci_run": 41978233038,
+    "revision": "chronos-executive-5c5f09c",
+    "traffic_percent": 100,
+    "rollback": "chronos-executive-f6e58f1",
+    "deployed_at": "2026-11-05T06:11:56.956019+00:00",
+    "runtime_settings_preserved": true,
+    "smoke": {
+      "readiness": "ready",
+      "calendar_read_verified": true,
+      "gmail_enabled": true,
+      "telegram_connected": true,
+      "reports": {
+        "brief": {
+          "parts": 2,
+          "read_only": true
+        },
+        "week": {
+          "parts": 8,
+          "read_only": true
+        },
+        "time": {
+          "parts": 1,
+          "read_only": true
+        }
+      }
+    },
+    "synthetic_production_writes": false
+  },
+  "independent_production_probes": [
+    {
+      "revision": "chronos-executive-5c5f09c",
+      "source": "5c5f09c9ad1afafa2895fb3f5e33038eb18ab524",
+      "traffic": [
+        {
+          "revision": "chronos-executive-5c5f09c",
+          "percent": 100
+        }
+      ]
+    },
+    {
+      "component": "mail",
+      "http": 200,
+      "verified_flags": {
+        "enabled": true,
+        "telegram_connected": true,
+        "send_enabled": true,
+        "send_requires_confirmation": true,
+        "automatic_send_enabled": false
+      }
+    },
+    {
+      "component": "calendar",
+      "http": 200,
+      "verified_flags": {
+        "enabled": true,
+        "calendar_read_verified": true
+      }
+    }
+  ],
+  "unauthenticated_access_probe": {
+    "unauthenticated_mail_status_http": 403,
+    "body_read": false
+  },
+  "live_readonly_search_provider_probe": {
+    "account_verified": true,
+    "search_api_verified": true,
+    "returned_messages": 0,
+    "has_next_page": false,
+    "mail_mutations": 0,
+    "message_bodies_read": 0
+  },
+  "initial_release_validation": {
+    "pr": 154,
+    "head": "05ad615c7712adc2185935327f926d1b62c4aaf0",
+    "pr_ci": 41975457866,
+    "merge": "f6e58f116739d5c0b5bf5ce15795ff871fbf2094",
+    "merge_ci": 41975852189,
+    "required_jobs": "all successful"
+  },
+  "final_release_validation": {
+    "pr": 156,
+    "head": "f7e3bb2d3ceea4c7f1d659eefadb1b9201ace72e",
+    "pr_ci": 41977872936,
+    "merge": "5c5f09c9ad1afafa2895fb3f5e33038eb18ab524",
+    "merge_ci": 41978233038,
+    "required_jobs": [
+      "extension",
+      "test (3.11)",
+      "test (3.12)"
+    ],
+    "conclusion": "success",
+    "merge_content_matches_validated_feature": true,
+    "artifacts": "both available and unexpired"
   }
 }
