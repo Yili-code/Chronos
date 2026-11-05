@@ -1520,7 +1520,82 @@
     },
     "diff_check": "Pass"
   },
-  "production_deployed": false,
+  "production_deployed": true,
   "production_case_execution": false,
-  "original_acceptance_complete": false
+  "original_acceptance_complete": false,
+  "production_release": {
+    "sha": "b85901dc97d4c298c2f674cd7ba08093337b3fe9",
+    "ci_run": 41961510338,
+    "revision": "chronos-executive-b85901d",
+    "traffic_percent": 100,
+    "rollback": "chronos-mail-mobile-89c3405",
+    "deployed_at": "2026-11-05T03:31:30.599023+00:00",
+    "runtime_settings_preserved": true,
+    "smoke": {
+      "readiness": "ready",
+      "calendar_read_verified": true,
+      "gmail_enabled": true,
+      "telegram_connected": true,
+      "reports": {
+        "brief": {
+          "parts": 2,
+          "read_only": true
+        },
+        "week": {
+          "parts": 8,
+          "read_only": true
+        },
+        "time": {
+          "parts": 1,
+          "read_only": true
+        }
+      }
+    },
+    "synthetic_production_writes": false
+  },
+  "independent_production_probes": [
+    {
+      "revision": "chronos-executive-b85901d",
+      "source": "b85901dc97d4c298c2f674cd7ba08093337b3fe9",
+      "traffic": [
+        {
+          "revision": "chronos-executive-b85901d",
+          "percent": 100
+        }
+      ]
+    },
+    {
+      "component": "mail",
+      "http": 200,
+      "verified_flags": {
+        "enabled": true,
+        "telegram_connected": true,
+        "send_enabled": true,
+        "send_requires_confirmation": true,
+        "automatic_send_enabled": false
+      }
+    },
+    {
+      "component": "calendar",
+      "http": 200,
+      "verified_flags": {
+        "enabled": true,
+        "calendar_read_verified": true
+      }
+    }
+  ],
+  "unauthenticated_access_probe": {
+    "unauthenticated_mail_status_http": 403,
+    "body_read": false
+  },
+  "pr_number": 140,
+  "pr_head": "56e6b93d29e7774b5b7989fa2bd507eb68583d3c",
+  "pr_ci": 41961054602,
+  "merge_ci": 41961510338,
+  "required_jobs": [
+    "extension",
+    "test (3.11)",
+    "test (3.12)"
+  ],
+  "required_jobs_conclusion": "success"
 }
