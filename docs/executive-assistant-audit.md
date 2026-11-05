@@ -104,3 +104,9 @@ Production rollback and monitoring for a future release must be checked at that 
 ### Original draft state slice (2026-11-05)
 
 Unchanged DRAFTING-06 is now executed with a newer offer after draft creation. The deterministic controller must read the full thread, invalidate the cached local draft, withhold the old body and require new review; no generation or native write is authorized. The reproducible original-drafting runner now executes five definitions (01/02/04/06/09) across nine backend executions using model/external doubles:5 Pass,4 NotExecuted,1 owner-deferred. Prior actual-model evidence for01/02/04/09 remains separately dated; this update does not claim a fresh live-model run or Production case execution. See [state evidence](evidence/original-drafting-state-2026-11-05.json). Full original80 acceptance remains incomplete.
+
+### Original native-save authorization slice (2026-11-05)
+
+Unchanged original07 now exercises an actually displayed preview, the original natural save input, simulated provider acceptance followed by timeout, duplicate update receipt and a new repeated request. Exactly one native draft is accepted; local state remains uncertain and no send occurs. Original08 validates known thread addresses and explicit BCC/disclosure requirements without file access or native writes, but is **Unsupported** because outgoing attachments are not implemented. This safety regression is not counted as successful completion of the compound attachment request.
+
+The original runner now records6 Pass,2 NotExecuted (03/05),1 Unsupported (08),1 owner-deferred (10), across12 synthetic backend executions. Existing original inputs and expectations remain unchanged. No new live-model or Production scenario execution is claimed. See [authorization evidence](evidence/original-drafting-authorization-2026-11-05.json). Existing90-definition workflow doubles remain separate from original acceptance.

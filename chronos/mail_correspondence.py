@@ -27,6 +27,19 @@ def draft_review_request(text):
     return bool(DRAFT_REVIEW.fullmatch(text.strip()))
 
 
+def native_draft_request(text):
+    return bool(re.fullmatch(
+        r"(?:(?:請|幫我)\s*)?(?:只(?:要)?\s*)?(?:存成|存為|儲存(?:成|為|到)?|存到)\s*Gmail\s*草稿(?:就好|即可)?|"
+        r"(?:please\s+)?save\s+(?:this\s+)?as\s+(?:a\s+)?Gmail\s+draft(?:\s+only)?", text.strip(), re.I))
+
+
+def recipient_preflight_request(text):
+    text = re.sub(r"^(?:請|幫我)\s*", "", text.strip())
+    if not re.match(r"(?:reply[ -]+all|回覆全體)(?=$|[\s,，:：])", text, re.I):
+        return False
+    return not re.match(r"(?:reply\s+all\s+draft|回覆全體草稿)\s*[:：]", text, re.I)
+
+
 class ReplyText(BaseModel):
     model_config = ConfigDict(extra="forbid", revalidate_instances="always")
     body: str = Field(min_length=1, max_length=2800, description="Plain-text outgoing draft; questions addressed to the recipient belong here")
@@ -42,7 +55,7 @@ class ReplyText(BaseModel):
 
 
 def requires_mail_context(text):
-    if draft_review_request(text):
+    if draft_review_request(text) or native_draft_request(text) or recipient_preflight_request(text):
         return True
     from .mail_natural_workflow import natural_request, draft_request
     if natural_request(text) and (draft_request(text) or re.search(r"郵件|這封信|追蹤|email|track", text, re.I)):
@@ -72,6 +85,24 @@ def text_result(text):
 class MailCorrespondence:
     def __init__(self, workflow):
         self.mail = workflow
+
+    async def recipient_preflight(self, identifier):
+        from .mail_recipients import thread_envelope, preferences_allow
+        _, messages = await self.context(identifier)
+        try:
+            selected = thread_envelope(messages, self.mail.settings.gmail_account, reply_all=True)
+        except GmailError as error:
+            if error.status != 400:
+                raise
+            return text_result("無法確定完整 Reply All 名單；請先核對每個 To／CC／BCC 的 Email 與揭露授權。沒有讀取、附加或轉寄附件，也沒有建立或寄送草稿。")
+        if not preferences_allow(self.mail, selected):
+            return text_result("名單含不主動聯絡的對象，請先核對聯絡偏好；沒有讀取附件、修改草稿或寄送。")
+        roles = "\n".join(role.upper() + "：" + ", ".join(addresses) for role, addresses in selected.items() if addresses)
+        return text_result("由最新郵件核對的 Reply All 名單：\n" + roles +
+            "\n請明確提供所有新增 To／CC／BCC 的 Email；不會依稱呼猜測 BCC 對象。"
+            "目前不支援在回覆加入或轉寄附件；敏感檔案須另行核對揭露範圍與授權。"
+            "整個複合要求未執行，原有草稿未變更；沒有讀取附件、建立 Gmail 草稿或寄送。"
+            "若只需無附件文字，可使用「回覆全體草稿：內容」，核對後再明確設定收件者。")
 
     async def context(self, identifier):
         await self.mail.gmail.verify_account()

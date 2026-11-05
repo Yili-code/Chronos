@@ -6,6 +6,7 @@ import pytest
 from pydantic import BaseModel, ConfigDict, Field
 
 from chronos.ai import AIError
+from chronos.gmail import GmailError
 from chronos.mail_correspondence import ReplyText, fingerprint
 from chronos.mail_natural_workflow import MailPlan
 from chronos.mail_reply_decisions import ReplyDecision
@@ -199,3 +200,71 @@ async def test_original_stale_reply_is_not_reused(workflow):
         'fix_and_regression':'Shared review reads current thread and invalidates stale local drafts before rendering; no native operation is authorized',
         'production_case_execution':False})
     assert all(checks.values()), checks
+
+
+def test_original_native_save_timeout_after_acceptance(system, monkeypatch):
+    from chronos import main
+    from test_correspondence_webhook import configure
+    from test_mail_webhook import post
+    instruction,condition,expected=SCENARIOS['drafting'][6]
+    client,tasks,bot,gmail,mail=configure(system,monkeypatch)
+    post(client,93501,text='草擬回覆：簡潔英文')
+    before=copy.deepcopy(mail.get('reply:ab12'))
+    binding=mail.binding(123,700)
+    remote=[]
+    async def accept_then_timeout(*args,**kwargs):
+        remote.append({'id':'accepted-draft-1','args':args,'kwargs':kwargs,'state':'DRAFT'})
+        raise GmailError('response timeout after synthetic acceptance',408)
+    gmail.create_reply_draft.side_effect=accept_then_timeout
+    gmail.reset_mock()
+    for update in (93502,93502,93503):
+        assert post(client,update,text=instruction,card=700).status_code==200
+    after=mail.get('reply:ab12')
+    checks={'actual_preview_bound':binding.get('context_version')==before['version'],
+        'one_accepted_draft':len(remote)==1 and gmail.create_reply_draft.await_count==1,
+        'uncertain_local_state':after['status']=='uncertain',
+        'uncertain_reported':'不確定' in main.db.get_update(93502)['reply'],
+        'repeat_requires_check':'核對' in main.db.get_update(93503)['reply'],
+        'no_send':gmail.send_reviewed_draft.await_count==0,'no_tasks':not tasks.list_open(),
+        'exact_native_arguments':bool(remote) and list(remote[0]['args'])==[before[k] for k in ('thread_id','recipient','subject','body','parent_id','references')],
+        'draft_not_claimed_confirmed':not after.get('gmail_draft_id')}
+    RECORDS.append({'id':'DRAFTING-07','input':instruction,'expected':expected,'preconditions':{'original':condition,'displayed_draft':before,'preview_binding':binding},
+        'backend':'Database','mode':'application boundary with synthetic acceptance then response timeout',
+        'actual_reply':[main.db.get_update(n)['reply'] for n in (93502,93503)],
+        'tool_calls':[str(c) for c in gmail.mock_calls],'api_results':{'synthetic_remote_drafts':remote,'response':'408 after acceptance'},
+        'database_before':before,'database_after':after,'checks':checks,'status':'Pass' if all(checks.values()) else 'Fail',
+        'difference':[k for k,v in checks.items() if not v],'severity':None if all(checks.values()) else 'High',
+        'root_cause':'Natural save requests lacked a displayed-version authorization boundary',
+        'fix_and_regression':'Bind actual review previews to their version and reuse existing uncertain native-save claim protection',
+        'production_case_execution':False})
+    assert all(checks.values()),checks
+
+
+@pytest.mark.asyncio
+async def test_original_sensitive_reply_all_is_explicitly_unsupported(workflow):
+    instruction,condition,expected=SCENARIOS['drafting'][7]
+    setup(workflow)
+    await propose(workflow)
+    before=copy.deepcopy(workflow.get('reply:ab12'))
+    messages=thread()
+    messages[-1].update(to=['owner@example.com','partner@example.org'],cc=['observer@example.org'])
+    workflow.gmail.thread.return_value=messages
+    workflow.patch('contacts',items={'boss1':{'name':'主管','emails':['boss1@example.com']},'boss2':{'name':'主管','emails':['boss2@example.com']}})
+    contacts=copy.deepcopy(workflow.get('contacts'))
+    workflow.gmail.reset_mock();workflow.ai._generate_output.reset_mock()
+    output=(await workflow.prepare_action('ab12',instruction))()
+    checks={'known_addresses_checked':all(address in output for address in ('client@example.org','partner@example.org','observer@example.org')),
+        'bcc_not_guessed':'boss1@example.com' not in output and 'boss2@example.com' not in output and 'Email' in output,
+        'attachment_unsupported_explicit':'不支援' in output and '附件' in output,
+        'requires_disclosure_authority':'授權' in output,'prior_state_preserved':workflow.get('reply:ab12')==before and workflow.get('contacts')==contacts,
+        'no_attachment_or_native_operation':all(getattr(workflow.gmail,n).await_count==0 for n in ('read_attachment','create_reply_draft','send_reviewed_draft','trash','archive','mark_read')),
+        'no_generation':workflow.ai._generate_output.await_count==0}
+    RECORDS.append({'id':'DRAFTING-08','input':instruction,'expected':expected,'preconditions':{'original':condition,'thread':messages,'contacts':contacts},
+        'backend':type(workflow.db).__name__,'mode':'deterministic safe preflight with external doubles','actual_reply':output,
+        'tool_calls':[str(c) for c in workflow.gmail.mock_calls],'api_results':{'thread':messages},'database_before':before,'database_after':workflow.get('reply:ab12'),
+        'checks':checks,'safety_regression_passed':all(checks.values()),'status':'Unsupported' if all(checks.values()) else 'Fail',
+        'difference':['Outgoing attachment creation/transfer is not supported']+[k for k,v in checks.items() if not v],
+        'severity':'Medium' if all(checks.values()) else 'High','root_cause':'No outbound attachment capability; original compound request also lacked safe routing',
+        'fix_and_regression':'Route to explicit all-address/authority preflight without native writes; full attachment request remains unsupported',
+        'production_case_execution':False})
+    assert all(checks.values()),checks

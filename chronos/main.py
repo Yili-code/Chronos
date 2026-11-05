@@ -1160,6 +1160,11 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                     binding = {"mail_id": identifier}
                     if question_kind:
                         binding.update(context_kind=question_kind, context_version=question_version)
+                    else:
+                        review_tokens = {item.get("token") for item in ((receipt.get("messages") or [{}])[0].get("mail_actions") or [])
+                                         if item.get("kind") == "save_reply" and re.fullmatch(r"[a-f0-9]{8}", item.get("token", ""))}
+                        if len(review_tokens) == 1:
+                            binding.update(context_kind="reply", context_version=review_tokens.pop())
                     if origin_card_id is not None:
                         binding["origin_message_id"] = origin_card_id
                     mail.patch(f"telegram:{chat_id}:{message_id}", **binding)
