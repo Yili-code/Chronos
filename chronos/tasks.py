@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 from .course_tags import COURSE_ID_TAGS
 from .repository import TaskRepository
+from .mail_links import source_url
 from .task_timing import display_time, normalize_timing, timing_details, urgent_deadline
 
 
@@ -343,6 +344,9 @@ def format_task_block(
     if task.get("project"):
         project = project_display_name(str(task["project"]), project_aliases)
         lines.append(f"<b>#{escape(project)}</b>")
+    url = source_url(task)
+    if url:
+        lines.append(f'<a href="{escape(url, quote=True)}">開啟郵件</a>')
     return lines
 
 
@@ -360,6 +364,9 @@ def format_task(task: dict, tz, *, html: bool = False, now: datetime | None = No
         project = project_display_name(str(task["project"]))
         project = escape(project) if html else project
         parts.append(f"#{project}")
+    url = source_url(task)
+    if url:
+        parts.append(f'<a href="{escape(url, quote=True)}">開啟郵件</a>' if html else "郵件 " + url)
     return " ".join(parts)
 
 
@@ -409,7 +416,8 @@ def _short_date(value: str) -> str:
 
 
 def display_task_title(title: str) -> str:
-    """Display valid ISO dates as MM/DD without editing stored task text."""
+    """Display dates and legacy mail labels without editing stored task text."""
+    title = re.sub(r"^Read email:\s*", "郵件閱讀｜", title, flags=re.IGNORECASE)
     def shorten(match):
         try:
             datetime.strptime(match[0], "%Y-%m-%d")

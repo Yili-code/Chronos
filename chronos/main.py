@@ -1097,10 +1097,11 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         if receipt["reply"] in {"已移到垃圾桶。", "已標為已讀。"} or receipt["reply"].startswith("已封存，可在 Gmail 所有郵件找到"):
             card_id = source_message.message_id if mail_callback else source_message.reply_to_message.message_id
             await delete_telegram_messages(chat_id, card_id)
-        is_proposal = receipt["reply"].startswith("Create this task?\n\n")
-        is_edit = receipt["reply"] == "Reply with the revised task title."
+        is_proposal = receipt["reply"].startswith("新增這個郵件任務？\n\n")
+        is_edit = receipt["reply"] == "請回覆修改後的任務標題。"
         is_correspondence = receipt["reply"].startswith(("回覆草稿\n", "郵件追蹤\n", "聯絡人\n", "會面協調\n", "郵件附件\n"))
-        task_resolved = (receipt["reply"].startswith("Added task #")
+        task_resolved = (receipt["reply"] == "郵件任務已新增。" or receipt["reply"].startswith("Added task #")
+                         or receipt["reply"] == "這封郵件已有任務，未重複新增。"
                          or receipt["reply"].startswith("This email already has task #"))
         callback_action = callback_match.group(1) if callback_match else None
         active_card_id = (source_message.message_id if mail_callback
@@ -1130,9 +1131,9 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                     title = receipt["reply"].split("\n\n", 1)[1]
                     token = hashlib.sha256(title.encode()).hexdigest()[:8]
                     markup = {"inline_keyboard": [[{"text": label, "callback_data": f"mail:{action}_{token}:{identifier}"}
-                              for label, action in (("Yes", "confirm"), ("Edit", "edit"), ("Cancel", "cancel"))]]}
+                              for label, action in (("確認", "confirm"), ("修改", "edit"), ("取消", "cancel"))]]}
                 elif is_edit:
-                    markup = {"force_reply": True, "input_field_placeholder": "Enter a task title"}
+                    markup = {"force_reply": True, "input_field_placeholder": "任務標題"}
                 elif question_kind and question_current.get("version") == question_version:
                     markup = {"force_reply": True, "input_field_placeholder": "補充資料或回覆取消"}
                 elif is_correspondence and len(identifier) <= 32:
@@ -1158,6 +1159,14 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                     if origin_card_id is not None:
                         binding["origin_message_id"] = origin_card_id
                     mail.patch(f"telegram:{chat_id}:{message_id}", **binding)
+            if receipt["reply"] in {"郵件任務已新增。", "這封郵件已有任務，未重複新增。",
+                    "已取消，沒有新增郵件任務。", "已標為已讀。",
+                    "已保留，之後不會自動過濾這封信；若已在垃圾桶，請在 Gmail 還原。",
+                    "已封存，可在 Gmail 所有郵件找到；本批完成後傳 /mail_next。"}:
+                message_id = result.get("result", {}).get("message_id")
+                if message_id is not None:
+                    import time
+                    mail.patch(f"notice:{update_id}", message_id=message_id, delete_at=time.time() + 7)
             if receipt.get("messages"):
                 db.mark_update_message_delivered(update_id, 1)
             else:
@@ -1166,6 +1175,12 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             result = await telegram.answer_callback_query(update.callback_query.id)
             if not result.get("ok"):
                 raise HTTPException(status_code=502, detail="Mail callback acknowledgement pending")
+        notice = mail.get(f"notice:{update_id}") or {}
+        if notice.get("message_id") and not notice.get("deleted"):
+            import time
+            await asyncio.sleep(max(0, notice["delete_at"] - time.time()))
+            await delete_telegram_messages(chat_id, notice["message_id"])
+            mail.patch(f"notice:{update_id}", deleted=True)
         return {"ok": True}
     from .mail_correspondence import requires_mail_context
     if update.message and requires_mail_context(source_message.text or ""):
