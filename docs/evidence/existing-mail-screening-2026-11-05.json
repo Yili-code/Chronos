@@ -1,0 +1,51 @@
+{
+  "recorded_at": "2026-11-05T13:30:51.836618+08:00",
+  "scope": "Owner-authorized replay of existing unresolved mail using existing Gemini screening and Telegram delivery",
+  "resolved_excluded": 118,
+  "initial_replay": {
+    "batch": "replay:2026-11-05:01a1a9ff",
+    "source_sha": "66669d8750c35343813c178db5ecb5ec68c03f62",
+    "candidate_count": 34,
+    "tiers": {
+      "review": 22,
+      "important": 2
+    },
+    "skipped": {
+      "missing": 10
+    },
+    "cleanup": {
+      "old_cards_already_absent": 3,
+      "old_cards_removed": 22
+    },
+    "daily_cursor_unchanged": true,
+    "tasks_created": 0,
+    "emails_sent": 0,
+    "calendar_writes": 0
+  },
+  "provider_recovery": {
+    "recovered": 4,
+    "remaining": 0,
+    "skipped": 0,
+    "cleanup": {
+      "old_cards_already_absent": 4,
+      "old_cards_removed": 4
+    }
+  },
+  "final_verification": {
+    "final_tiers": {
+      "review": 22,
+      "important": 2
+    },
+    "reason_categories": {
+      "incomplete_or_ambiguous": 16,
+      "protected_or_personal": 7,
+      "model_decision": 1
+    },
+    "current_individual_delivery_receipts": {
+      "sent": 24
+    },
+    "remaining_provider_failures": 0,
+    "original_batch_complete": true,
+    "recovery_batch_complete": true
+  }
+}
