@@ -17,6 +17,14 @@ from .ai import AIError
 from .gmail import GmailError, email_address
 
 NATIVE_STATES = {"saving", "uncertain", "gmail_draft", "send_review", "sending", "send_uncertain", "sent"}
+DRAFT_REVIEW = re.compile(
+    r"(?:(?:請|幫我)\s*)?(?:查看回覆草稿|回覆草稿|show reply draft|"
+    r"(?:用|使用|沿用)(?:(?:剛剛|剛才|先前|之前)(?:那份|的)?|上一份|這份|那份)?(?:回覆)?草稿(?:回覆)?|"
+    r"(?:use|reuse)\s+(?:the\s+)?(?:(?:previous|last|latest)\s+)?(?:reply\s+)?draft)", re.I)
+
+
+def draft_review_request(text):
+    return bool(DRAFT_REVIEW.fullmatch(text.strip()))
 
 
 class ReplyText(BaseModel):
@@ -34,6 +42,8 @@ class ReplyText(BaseModel):
 
 
 def requires_mail_context(text):
+    if draft_review_request(text):
+        return True
     from .mail_natural_workflow import natural_request, draft_request
     if natural_request(text) and (draft_request(text) or re.search(r"郵件|這封信|追蹤|email|track", text, re.I)):
         return True
@@ -105,9 +115,8 @@ class MailCorrespondence:
             return await self.propose(identifier, draft_match[1])
         if save_match:
             return await self.save(identifier, save_match[1])
-        if instruction.lower() in {"查看回覆草稿", "回覆草稿", "show reply draft"}:
-            state = self.mail.get("reply:" + identifier) or {}
-            return text_result(self.preview(state) if state else "尚無草稿；請回覆「草擬回覆：內容與語氣」。")
+        if draft_review_request(instruction):
+            return await self.review(identifier)
         if instruction.lower() in {"取消回覆草稿", "cancel reply draft"}:
             def cancel():
                 def transition(old):
@@ -120,6 +129,29 @@ class MailCorrespondence:
                 return "回覆草稿\n已取消本機草稿，沒有寄出郵件。"
             return cancel
         return None
+
+    async def review(self, identifier):
+        key = "reply:" + identifier
+        saved = self.mail.get(key)
+        if not saved:
+            return text_result("尚無草稿；請回覆「草擬回覆：內容與語氣」。")
+        if saved.get("status") not in {"review", "needs_information"}:
+            return text_result(self.preview(saved))
+        bound = self.mail.get("message:" + identifier)
+        _, messages = await self.context(identifier)
+        from .mail_meeting_context import verify as verify_meeting, matches as meeting_matches
+        fresh = (fingerprint(messages) == saved.get("source")
+                 and time.time() - saved.get("created_at", 0) <= 86400
+                 and await verify_meeting(self.mail, identifier, saved))
+
+        def apply():
+            if self.mail.get(key) != saved or self.mail.get("message:" + identifier) != bound:
+                return "回覆草稿\n草稿或郵件綁定已被另一個操作更新，請重新查看；沒有寄出。"
+            if not fresh or not meeting_matches(self.mail, identifier, saved):
+                self.mail.patch(key, status="stale")
+                return "回覆草稿\n郵件串、會面狀態或草稿有效期已變更，舊內容不再可用；請依最新內容重新草擬。沒有寄出或建立 Gmail 草稿。"
+            return self.presentation(saved)
+        return apply
 
     def presentation(self, state, preview=None):
         message = {"text": "回覆草稿\n" + (preview if preview is not None else self.preview(state))}
