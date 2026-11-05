@@ -155,6 +155,25 @@ def test_parser_does_not_capture_explicit_read_only_queries():
     assert parse("Find the quote email, draft a reply and track it, don't send")==('quote','draft a reply',None)
 
 
+@pytest.mark.parametrize('text',['搜尋市場資料，草擬報告並追蹤進度','幫我搜尋創業方案，草擬計畫並追蹤成果',
+    'Find market research, draft a report and track progress'])
+def test_nonmail_compound_requests_are_not_mail_commands(text):
+    assert not command(text)
+
+
+def test_nonmail_compound_task_keeps_normal_dispatch(system,monkeypatch):
+    from chronos import main
+    from chronos.tasks import ParsedTask
+    from test_correspondence_webhook import configure
+    client,tasks,bot,gmail,mail=configure(system,monkeypatch)
+    main.ai.parse.return_value=ParsedTask('Research market and draft report')
+    payload={'update_id':95901,'message':{'message_id':95901,'chat':{'id':123},'text':'幫我搜尋市場資料，草擬報告並追蹤進度'}}
+    assert client.post('/telegram/webhook',json=payload,headers={'X-Telegram-Bot-Api-Secret-Token':'test-hook'}).status_code==200
+    main.ai.parse.assert_awaited_once()
+    gmail.search_page.assert_not_awaited()
+    assert len(tasks.list_open())==1
+
+
 def test_webhook_receipt_retry_delivers_without_repreparing(system,monkeypatch):
     from chronos import main
     from test_correspondence_webhook import configure

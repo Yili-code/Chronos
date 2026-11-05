@@ -13,6 +13,9 @@ from .mail_natural_workflow import LocalChange
 def command(text):
     if re.match(r'^(?:搜尋郵件\s*[:：]|/mail_search\b)', text.strip(), re.I):
         return False
+    first_clause = re.split(r'[，,；;]', text.strip(), maxsplit=1)[0]
+    if not re.search(r'郵件|信件|信\s*$|\b(?:email|mail|message)\b', first_clause, re.I):
+        return False
     return bool(re.match(r'^(?:(?:請幫我|幫我|請)\s*)?(?:找出|尋找|搜尋|find\b|search\s+for\b)', text.strip(), re.I)
                 and re.search(r'草擬|起草|撰寫|draft', text, re.I)
                 and re.search(r'追蹤|track', text, re.I))
