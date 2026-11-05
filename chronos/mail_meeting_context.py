@@ -1,4 +1,5 @@
 """Minimal meeting evidence bound to correspondence, separate from thread identity."""
+from datetime import datetime
 from .google_calendar import CalendarError
 from .gmail import GmailError
 from .mail_correspondence import fingerprint
@@ -27,9 +28,12 @@ async def verify(mail, identifier, draft):
     from .meeting_rescheduling import active
     if active(state):
         return False
-    if not state or status in {"review", "needs_information", "cancelled", "invite_cancelled"}:
+    if not state or status in {"needs_information", "cancelled", "invite_cancelled"}:
         return True
-    if status not in {"held", "invite_pending", "invite_accepted", "invite_declined"}:
+    # A metadata-only legacy review makes no concrete availability claim.
+    if status == "review" and not state.get("start") and not state.get("end"):
+        return True
+    if status not in {"review", "held", "invite_pending", "invite_accepted", "invite_declined"}:
         return False
     calendar = getattr(mail, "calendar", None)
     if (not calendar or not calendar.configured()
@@ -38,6 +42,12 @@ async def verify(mail, identifier, draft):
         return False
     try:
         await calendar.verify_owner()
+        if status == "review":
+            start, end = datetime.fromisoformat(state["start"]), datetime.fromisoformat(state["end"])
+            if not start.tzinfo or not end.tzinfo or start >= end or start <= datetime.now(mail.settings.tz):
+                return False
+            busy = await calendar.busy(start, end)
+            return not any(start < stop and end > begin for begin, stop in busy) and matches(mail, identifier, draft)
         event = await calendar.event(state["event_id"])
         if status == "held":
             from .meeting_coordination import MeetingCoordination

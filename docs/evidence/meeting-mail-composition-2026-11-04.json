@@ -1,0 +1,51 @@
+{
+  "phase": "selected-thread meeting, draft and tracking composition",
+  "base": "7c44f4ae057d15bac722c24337030d0443de67d2",
+  "tests": {
+    "tests": 4191,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "seconds": 211.054,
+  "new_regressions": 81,
+  "wheel_runtime_modules": 118,
+  "wheel_sha256": "d9af59be107f0c5808da97aa431c56c9df65f3c0f2c7cbc9825e7cd0027c4f75",
+  "source_match": true,
+  "workflow_catalog": {
+    "definitions": 90,
+    "counts": {
+      "Pass": 80,
+      "Deferred": 10
+    },
+    "executions": 222,
+    "local_report_sha256": "1ffe7e7063e8baf924e328bd5b1f2dedd50f954eaad79335895a329c5b911c1a",
+    "ci_artifact_file": "secretary-workflow-evidence.json",
+    "original_definitions_unchanged": true
+  },
+  "production_deployed": false,
+  "production_case_execution": false,
+  "original_full_acceptance_complete": false,
+  "provider_test_writes": "mocked only",
+  "defect_fix": {
+    "severity": "High",
+    "root_cause": "Timed local meeting reviews bypassed Calendar revalidation before native draft save and send",
+    "fix": "Revalidate concrete candidate time and availability, including after native draft read; fail closed on read failure"
+  },
+  "boundaries": [
+    "selected/bound mail only; search result selection remains explicit",
+    "local candidate only; no event/hold/invitation/send is authorized by the model",
+    "atomic candidate/draft/tracking preparation; failed steps leave no partial state",
+    "unclear requests require complete restatement",
+    "broader original natural-language and cross-platform acceptance remains incomplete"
+  ],
+  "updated_at": "2026-11-05T00:06:57.991776+08:00",
+  "live_model_evidence": "meeting-mail-live-model-2026-11-05.json",
+  "calendar_availability_preflight": {
+    "calendar_account_verified": true,
+    "configured_calendar_availability_verified": true,
+    "event_mutations": 0,
+    "private_event_content_read": false,
+    "scope_changes": 0
+  }
+}

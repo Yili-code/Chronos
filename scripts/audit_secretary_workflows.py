@@ -1,4 +1,4 @@
-"""Observe 70 executable workflow scenarios and 10 explicitly deferred platform cases.
+"""Observe executable workflow scenarios and 10 explicitly deferred platform cases.
 
 This catalog supplements, never regrades, the original natural-language audit.
 It runs existing behavioral assertions and records actual synthetic command/API/
@@ -23,6 +23,16 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / "tests")]
 
 GROUPS = {
+    "composition": ("test_meeting_mail_composition.py", """three_steps_staged_and_committed_once_with_same_meeting_evidence
+staged_draft_can_be_saved_only_after_explicit_native_confirmation
+concurrent_guard_change_aborts_all_three_steps
+failed_step_leaves_no_partial_local_workflow
+thread_change_after_meeting_preparation_aborts_draft_and_tracker
+account_or_calendar_changes_before_claim_abort_all
+timed_review_rechecked_after_send_preview_without_local_changes
+search_result_then_joint_request_preserves_thread_and_replay
+explicit_other_person_cannot_be_silently_replaced_by_bound_sender
+candidate_expiring_before_atomic_commit_is_not_saved"""),
     "email": ("test_mail_search.py", """read_only_search_binds_card_and_enables_follow_on_draft
 next_page_is_versioned_and_old_cursor_cannot_replay
 missing_unbounded_or_control_query_never_reads_mail
@@ -284,7 +294,7 @@ class Observer:
                     + [ROOT / "pyproject.toml", ROOT / "uv.lock", ROOT / ".github/workflows/ci.yml"]
                     + [Path(__file__).resolve()])},
             "total": len(records), "counts": counts, "pytest_exit_code": exit_code,
-            "workflow_regression_gate": exit_code == 0 and counts.get("Pass") == 70
+            "workflow_regression_gate": exit_code == 0 and counts.get("Pass") == len(self.catalog)
                 and all(run["commands"] and run["database_final"] for record in records if record["status"] == "Pass" for run in record["executions"]),
             "all_requested_capabilities_accepted": False,
             "limits": ["Original executive-audit-results.json expectations/outcomes remain unchanged",
