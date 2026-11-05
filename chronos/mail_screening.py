@@ -32,6 +32,7 @@ class MailDecision(BaseModel):
     deadline: str = Field(default="", max_length=100)
     missing_information: list[Annotated[str, Field(min_length=1, max_length=150)]] = Field(default_factory=list, max_length=3)
     expired: bool = False
+    optional_action: bool = False
 
 
 OPPORTUNITY = re.compile(
@@ -139,6 +140,10 @@ async def decide(workflow, mail, saved):
             "opportunities, and say they have ended; do not recommend registering or acting on their old deadlines. "
             "Past receipts/account records are not expired events. No new deadline may be calculated or inferred: "
             "preserve source-relative phrases such as 'five minutes before the contest' rather than inventing a timestamp. "
+            "Set optional_action=true for an upcoming opportunity the owner can choose to join or schedule: "
+            "competitions, practice contests, workshops, events, internships or application openings. This is "
+            "independent of required action. Keep ordinary newsletters/product tips optional_action=false. "
+            "Write facts as short bullets, preferably under 80 Chinese characters each, preserving concrete details. "
             "For FYI set action_required=false, next_step='', owner_question=''; reading, checking details or "
             "optionally registering is not a required action. Put explicit deadlines in deadline without inventing "
             "a time or year. missing_information lists only concrete unknown facts needed for the actual action "
@@ -177,6 +182,28 @@ async def decide(workflow, mail, saved):
     return result
 
 
+def offers_action(mail, decision):
+    text = " ".join([mail.get("subject", ""), decision.summary, *decision.facts])
+    event = re.search(r"競賽|報名|講座|工作坊|招募|面試|competition|contest|workshop|webinar|weekend practice", text, re.I)
+    return decision.tier == "information" and not decision.expired and bool(decision.optional_action or event)
+
+
+def brief_summary(value):
+    text = clean(value, 400)
+    sentences = re.split(r"(?<=[。！？])|(?<=[.!?])\s+", text)
+    selected = ""
+    for sentence in sentences:
+        if len(selected + sentence) > 140:
+            break
+        selected += sentence
+    if selected:
+        return selected.strip()
+    cut = text[:137]
+    if " " in cut and re.search(r"[A-Za-z]$", cut):
+        cut = cut.rsplit(" ", 1)[0]
+    return cut.rstrip("，、；：,;: ") + ("…" if len(text) > len(cut) else "")
+
+
 def format_deadline(value):
     text = clean(value, 100)
     match = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::00)?)?", text)
@@ -189,12 +216,13 @@ def format_decision(mail, decision, account):
     from .mail_workflow import display_text
     sender, address = parseaddr(mail.get("sender", ""))
     title = escape(clean(display_text(mail["subject"]), 160))
-    lines = [f"<b>{title}</b>", escape(clean(sender or address, 100)), "", "<b>重點</b>"]
+    label = "可參加" if offers_action(mail, decision) else "需要處理" if decision.tier == "important" else "需要確認"
+    lines = [f"<b>{label}｜{title}</b>", escape(clean(sender or address, 100)), "", "<b>重點</b>"]
     facts = decision.facts or [decision.summary]
     lines.extend("• " + escape(clean(fact, 220)) for fact in facts)
     if decision.action_required and decision.next_step:
         lines.extend(["", "<b>需要你做的事</b>", escape(clean(decision.next_step, 200))])
-    if decision.owner_question:
+    if decision.owner_question and not decision.action_required:
         lines.extend(["", "<b>需要你確認</b>", escape(clean(decision.owner_question, 180))])
     if decision.deadline:
         lines.extend(["", "<b>期限</b> " + escape(format_deadline(decision.deadline))])
@@ -227,7 +255,7 @@ async def process(workflow, day, identifier, mail, saved, item):
                 await workflow.gmail.archive(identifier)
             workflow.patch("message:" + identifier, auto_archived=True)
             workflow.patch(key, archive_pending=False)
-    if decision.tier in {"important", "review"}:
+    if decision.tier in {"important", "review"} or offers_action(mail, decision):
         workflow.patch("message:" + identifier, last_delivery=key)
         await workflow.deliver(key, format_decision(mail, decision, workflow.settings.gmail_account), identifier)
     workflow.patch(key, screening_done=True)
@@ -238,7 +266,7 @@ async def digest(workflow, day, state):
     snapshot = workflow.get(day + ":screening-digest") or {}
     pages = snapshot.get("pages")
     if pages is None:
-        groups = {"notification": [], "newsletter": [], "other": [], "expired": [], "low_value": []}
+        groups = {"notification": [], "newsletter": [], "other": [], "promotion": [], "expired": [], "low_value": []}
         counts = {"important": 0, "review": 0}
         for identifier in state["ids"]:
             item = workflow.get(day + ":" + identifier) or {}
@@ -246,6 +274,9 @@ async def digest(workflow, day, state):
             if not decision or not item.get("screening_done"):
                 continue
             tier = decision["tier"]
+            mail = (workflow.get("message:" + identifier) or {}).get("mail", {})
+            if offers_action(mail, MailDecision.model_validate(decision)):
+                continue
             if tier in counts:
                 counts[tier] += 1
                 continue
@@ -261,31 +292,29 @@ async def digest(workflow, day, state):
             from .mail_workflow import display_text
             title = escape(clean(display_text(mail.get("subject", "")), 100))
             facts = decision.get("facts") or [decision["summary"]]
-            detail = "\n".join("  " + escape(clean(fact, 220)) for fact in facts)
+            detail = escape(brief_summary(decision["summary"]))
             deadline = ("\n期限：" + escape(format_deadline(decision["deadline"]))) if decision.get("deadline") else ""
             groups[group].append(f'• <a href="{escape(url, quote=True)}">{title}</a>\n'
                                  + detail + deadline)
-        info_count = sum(len(groups[group]) for group in ("notification", "newsletter", "other", "expired"))
         date = re.search(r"\d{4}-\d{2}-\d{2}", day)
         date_label = date[0][5:].replace("-", "/") if date else "本批"
-        lines = [f"<b>郵件整理｜{date_label}</b>\n需處理 {counts['important']} 封 · 需確認 {counts['review']} 封\n"
-                 f"資訊 {info_count} 封 · 已封存 {len(groups['low_value'])} 封"
-                 + ("\n已達本次上限，其餘留待後續整理。" if state["more"] else "")]
-        for group, title in (("notification", "系統通知"), ("newsletter", "電子報與活動"),
-                             ("other", "其他資訊"), ("expired", "過期資訊，無需處理"),
-                             ("low_value", "已封存，可在 Gmail 找回")):
-            if groups[group]:
-                lines.append("<b>" + title + "</b>")
-                lines.extend(groups[group])
-        pages, page = [], ""
-        for line in lines:
-            if len((page + "\n\n" + line).encode("utf-16-le")) // 2 > 2800 and page:
-                pages.append(page)
-                page = ""
-            page += ("\n\n" if page else "") + line
-        if page:
+        pages, categories = [], []
+        labels = {"notification":"系統通知", "newsletter":"電子報", "promotion":"產品與服務消息",
+                  "other":"其他資訊", "expired":"過期資訊，無需處理", "low_value":"已封存，可在 Gmail 找回"}
+        for group, entries in groups.items():
+            if not entries:
+                continue
+            header = "<b>" + labels[group] + "｜" + date_label + "</b>"
+            page = header
+            for entry in entries:
+                if len((page + "\n\n" + entry).encode("utf-16-le")) // 2 > 2800 and page != header:
+                    pages.append(page)
+                    categories.append(group)
+                    page = header
+                page += "\n\n" + entry
             pages.append(page)
-        workflow.patch(day + ":screening-digest", pages=pages, html=True)
+            categories.append(group)
+        workflow.patch(day + ":screening-digest", pages=pages, html=True, categories=categories)
         snapshot = {"html": True}
     for index, page in enumerate(pages):
         await workflow.deliver(f"{day}:screening-digest:{index}", page, html=bool(snapshot.get("html")), retain=True)
