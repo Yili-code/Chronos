@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock
 
 from chronos import main
 from chronos.tasks import ParsedTask
+from chronos.mail_task_event import MailTaskIntent
 from test_system import system
 
 
@@ -17,6 +18,7 @@ def enable(config, monkeypatch):
     config.gmail_client_id = "client"
     config.gmail_client_secret = "secret"
     config.gmail_refresh_token = "refresh"
+    monkeypatch.setattr(main.ai, '_generate_output', AsyncMock(return_value=MailTaskIntent(kind='reading')))
     gmail = AsyncMock()
     monkeypatch.setattr(main, "gmail", gmail)
     mail = main.mail_workflow()

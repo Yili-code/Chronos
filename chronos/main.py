@@ -1099,8 +1099,9 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             await delete_telegram_messages(chat_id, card_id)
         is_proposal = receipt["reply"].startswith("新增這個郵件任務？\n\n")
         is_edit = receipt["reply"] == "請回覆修改後的任務標題。"
-        is_correspondence = receipt["reply"].startswith(("回覆草稿\n", "郵件追蹤\n", "聯絡人\n", "會面協調\n", "郵件附件\n"))
-        task_resolved = (receipt["reply"] == "郵件任務已新增。" or receipt["reply"].startswith("Added task #")
+        is_correspondence = receipt["reply"].startswith(("回覆草稿\n", "郵件追蹤\n", "聯絡人\n", "會面協調\n", "郵件附件\n", "郵件活動\n"))
+        event_resolved = bool((receipt.get("messages") or [{}])[0].get("mail_event_resolved"))
+        task_resolved = (event_resolved or receipt["reply"] == "郵件任務已新增。" or receipt["reply"].startswith("Added task #")
                          or receipt["reply"] == "這封郵件已有任務，未重複新增。"
                          or receipt["reply"].startswith("This email already has task #"))
         callback_action = callback_match.group(1) if callback_match else None
@@ -1121,7 +1122,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                 markup = None
                 identifier = active_binding["mail_id"]
                 context = (receipt.get("messages") or [{}])[0].get("mail_context") or {}
-                question_kind = context.get("kind") if context.get("kind") in {"reply", "meeting"} else None
+                question_kind = context.get("kind") if context.get("kind") in {"reply", "meeting", "task_event"} else None
                 question_version = context.get("version") if question_kind else None
                 question_current = None
                 if question_kind:
@@ -1159,7 +1160,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                     if origin_card_id is not None:
                         binding["origin_message_id"] = origin_card_id
                     mail.patch(f"telegram:{chat_id}:{message_id}", **binding)
-            if receipt["reply"] in {"郵件任務已新增。", "這封郵件已有任務，未重複新增。",
+            if event_resolved or receipt["reply"] in {"郵件任務已新增。", "這封郵件已有任務，未重複新增。",
                     "已取消，沒有新增郵件任務。", "已標為已讀。",
                     "已保留，之後不會自動過濾這封信；若已在垃圾桶，請在 Gmail 還原。",
                     "已封存，可在 Gmail 所有郵件找到；本批完成後傳 /mail_next。"}:

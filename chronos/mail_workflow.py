@@ -78,7 +78,7 @@ def mail_buttons(identifier, backlog=False):
         return None
     return {"inline_keyboard": [[
         {"text": "垃圾桶", "callback_data": f"mail:trash:{identifier}"},
-        {"text": "新增任務", "callback_data": f"mail:task:{identifier}"},
+        {"text": "加入安排", "callback_data": f"mail:task:{identifier}"},
     ], [
         {"text": "封存" if backlog else "保留", "callback_data": f"mail:keep:{identifier}"},
         {"text": "已讀", "callback_data": f"mail:read:{identifier}"},
@@ -351,6 +351,10 @@ class MailWorkflow:
         if not saved:
             return lambda: "找不到這封已整理的信。沒有執行任何動作。"
         instruction = instruction.strip()
+        if context_kind == "task_event":
+            from .mail_task_event import prepare as prepare_event
+            return await prepare_event(self, identifier, now or datetime.now(self.settings.tz),
+                instruction=instruction, version=context_version)
         if context_kind in {"reply", "meeting"} and context_version:
             current = self.get(context_kind + ":" + identifier) or {}
             if current.get("version") != context_version:
@@ -397,6 +401,11 @@ class MailWorkflow:
         action = {"刪除": "trash", "刪掉": "trash", "移到垃圾桶": "trash", "delete": "trash",
                   "保留": "keep", "已讀": "read", "標為已讀": "read", "新增任務": "task",
                   "加到tasks": "task", "加到 tasks": "task"}.get(instruction.lower(), instruction.lower())
+        if action == "task":
+            from .mail_task_event import prepare as prepare_event
+            event_action = await prepare_event(self, identifier, now or datetime.now(self.settings.tz))
+            if event_action is not None:
+                return event_action
         task_action = re.fullmatch(r"(confirm|edit|cancel)_([a-f0-9]{8})", action)
         if action == "task" or task_action or (saved.get("draft_edit") and action not in {"trash", "read", "keep", "archive", "封存"}):
             if saved.get("task_id") is not None:
@@ -408,7 +417,7 @@ class MailWorkflow:
                     if current.get("task_id") is not None:
                         return "這封郵件已有任務，未重複新增。"
                     if current.get("draft_token") != token or not current.get("draft_title"):
-                        return "確認已過期，請從郵件卡片重新選擇新增任務。"
+                        return "確認已過期，請從郵件卡片重新選擇加入安排。"
                     if kind == "cancel":
                         self.patch("message:" + identifier, draft_title=None, draft_token=None, draft_edit=False)
                         return "已取消，沒有新增郵件任務。"
