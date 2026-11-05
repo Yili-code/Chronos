@@ -1,5 +1,13 @@
 # Executive assistant acceptance audit
 
+## Original drafting-language slice (2026-11-05)
+
+[Original-request evidence](evidence/original-drafting-language-2026-11-05.json) preserves the exact input and expected behavior of `DRAFTING-01`, `02`, `04` and `09`. It materializes ambiguous threads, public versus internal negotiation facts, contradictory owner delivery instructions and forged email authorization. Three bound cases use the configured live model; the unbound ambiguity case is correctly resolved at the actual application boundary without a model call. All Gmail/Calendar/Telegram boundaries are synthetic. Recorded model inputs/results, actual replies, API calls and DB states distinguish this from the workflow-double catalog below.
+
+The first live execution had three passes and a failure: contradictory delivery instructions produced a contradictory draft. The repaired execution passed all four unchanged expectations. A factual semantic rubric supplements the decline case; identity, canary disclosure, tool effects and DB state are independently checked by code. Source hashes and both observations are retained. Drafting cases `03`, `05`, `06`, `07`, `08` remain **NotExecuted** in this slice; `10` remains owner-deferred. Other original domains are not evaluated by this slice. The full original80-case acceptance remains incomplete; no expectations were rewritten or unexecuted cases counted as passes.
+
+Reproduce with `python scripts/audit_original_drafting.py --output .pytest-tmp/original-drafts.json --basetemp .pytest-tmp/original-drafts-run`. This uses schema-aware model doubles by default; `--live` explicitly uses configured AI environment credentials, with application services initialized from safe defaults and external writes mocked. CI publishes the mock replay alongside existing exact-source evidence. Live results do not establish real-recipient or individual Production case completion.
+
 ## Current evidence supplement (2026-11-04)
 
 Selected-thread composition adds ten **additional** executable definitions (`COMPOSITION-01` through `COMPOSITION-10`) without changing the prior definitions or original acceptance expectations. Current CI observation reports therefore contain 90 definitions: 80 active workflow definitions and ten deferred messaging definitions. The stored 80-definition snapshot linked below remains its original dated snapshot. Selected search-result cards can now atomically prepare a meeting candidate, draft and tracking, with timed candidate revalidation before native draft saving/sending; automatic search-result selection and full original natural-language acceptance remain incomplete.

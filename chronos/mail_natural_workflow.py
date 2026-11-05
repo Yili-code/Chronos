@@ -31,10 +31,20 @@ class LocalChange:
 
 
 MEETING_REQUEST = re.compile(r"(?:協調|安排|規劃)(?:一[個場]|這[個場])?(?:會面|會議)|(?:會面|會議)(?:候選|協調)|(?:plan|coordinate|schedule|propose)\s+(?:a\s+)?meeting", re.I)
+DRAFT_CUES = re.compile(r"草擬|起草|撰寫|回覆|回信|回給|婉拒|拒絕|答應|draft|reply|respond|decline", re.I)
+IMPLICIT_DRAFT_START = re.compile(r"^(?:(?:請|幫我)\s*)?(?:照|依照|根據|回信|回給|reply\b|respond\b)", re.I)
+NEGATED_OPERATION = re.compile(
+    r"(?:不要|別|不必|不用)(?:\s|幫我|替我|為我|先|再|直接|實際|真的|自動|擅自|現在|目前|暫時)*(?:回覆|回信|草擬|起草|撰寫|追蹤|提醒|協調|安排|更新|刪除|保存|儲存)|"
+    r"\b(?:do\s+not|don't|never)(?:\s+(?:actually|automatically|directly|yet|ever|really|immediately))*\s+(?:draft|reply|respond|track|remind|schedule|update|delete|save)\b", re.I)
+
+
+def draft_request(text):
+    return bool(DRAFT_CUES.search(text))
 
 
 def natural_request(text):
     return bool(re.match(r"^(?:幫我|請幫我|處理這封信\s*[:：]|handle this email\s*:)", text, re.I)
+                or (IMPLICIT_DRAFT_START.match(text) and draft_request(text))
                 or (re.match(r"^(?:草擬|起草|撰寫|draft)", text, re.I)
                     and (re.search(r"追蹤|提醒|track|follow.up", text, re.I) or MEETING_REQUEST.search(text)))
                 or (re.match(r"^(?:協調會面|會面邀約|plan\s+meeting)", text, re.I)
@@ -62,10 +72,12 @@ def explicit_meeting_minutes(instruction):
 async def prepare(mail, identifier, instruction, now=None):
     if len(instruction) > 4000:
         return response("要求超過 4,000 字元，請縮短後重試；尚未套用。")
+    if NEGATED_OPERATION.search(instruction):
+        return response("操作本身含否定或矛盾，請明確指定要執行的步驟；整個流程未套用。")
     # Model output cannot grant remote effects or discard risky clauses.
     if re.search(r"寄|發送|发送|刪|删除|封存|邀請|邀约|行事曆|安排(?!(?:一[個場]|這[個場])?(?:會面|會議))|改期|取消|附件|收件|副本|密件|全體|所有人|reply[ -]?all|搜尋|搜索|找出|建立任務|新增任務|聯絡人|每隔|每天|每週|工作日|"
-                 r"不要|別|不必|不用|如果|若|等.*(?:後|后)|\b(?:send|save|delete|archive|invite|reschedule|calendar|contact|task|every|"
-                 r"cancel|attach\w*|search|bcc|cc|unless|if|after|don't|do not)\b", instruction, re.I):
+                 r"如果|若|等.*(?:後|后)|\b(?:send|save|delete|archive|invite|reschedule|calendar|contact|task|every|"
+                 r"cancel|attach\w*|search|bcc|cc|unless|if|after)\b", instruction, re.I):
         return response("包含條件、否定或需另行確認的操作，請拆開要求。不會自動寄出。可先草擬回覆並設定明確間隔的追蹤；尚未套用。")
     account = mail.settings.gmail_account
     calendar_binding = (mail.settings.calendar_account, mail.settings.calendar_id)
@@ -78,6 +90,8 @@ async def prepare(mail, identifier, instruction, now=None):
             "Interpret only the owner's bound-email request into a local draft, ONE meeting candidate and/or reply tracking. "
             "meeting means explicit meeting coordination, a local tentative candidate only: no hold, invitation or agreement. "
             "Do not mark meeting true for a draft that merely mentions a meeting. Preserve all constraints for each requested step. "
+            "An implicit request to decline/respond using previous correspondence is a local draft request. "
+            "Content constraints such as withholding private information do not negate the drafting operation. "
             "Never return commands, authorization or invented details. draft means a local unsent reply. "
             "tracking_hours requires one explicit elapsed hours/days duration in the owner request. "
             "target may only be an email address explicitly provided by the owner; otherwise null. "
@@ -93,7 +107,7 @@ async def prepare(mail, identifier, instruction, now=None):
     if plan.question:
         return response(plan.question + "\n草稿與追蹤均未套用。")
     draft_words = re.sub(r"追蹤回覆|track\s+repl(?:y|ies)", "", instruction, flags=re.I)
-    draft_requested = bool(re.search(r"草擬|起草|撰寫|回覆|回信|draft|reply", draft_words, re.I))
+    draft_requested = draft_request(draft_words)
     tracking_requested = bool(re.search(r"追蹤|提醒|track|follow.up", instruction, re.I))
     meeting_requested = bool(MEETING_REQUEST.search(instruction))
     if (plan.draft != draft_requested or plan.meeting != meeting_requested
