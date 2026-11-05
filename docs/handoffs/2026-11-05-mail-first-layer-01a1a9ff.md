@@ -19,3 +19,13 @@
 
 - Final local validation 2026-11-05 Asia/Taipei: complete Python suite 4,409 passed/0 failures in 327.01 seconds. The 141 warnings are FastAPI/Starlette deprecation and pytest JUnit record_property compatibility warnings; see ignored .pytest-tmp/screening-full.log and screening-full.xml. Extension suite 21 passed. Compilation and git diff --check passed. Local ruff module unavailable; required undefined-name check remains a CI gate.
 - Preparing one atomic commit and PR. No production deployment or mailbox access performed. Test evidence is local/mock; classification accuracy on real owner mail remains unverified.
+
+- Commit/push: 96ae3d7b66d1d3a5d14d9181666c860286cf1400 pushed to origin/codex/mail-first-layer. PR #148: https://github.com/Yili-code/Chronos/pull/148. CI run 41970196297 in progress; not yet merge-authorized by evidence.
+- Refreshed origin/main e9fd21e; changes since implementation base are release-evidence documents only, with no source overlap. No claim of other-machine synchronization.
+
+- Final PR verification 2026-11-05 Asia/Taipei: CI run 41970196297 succeeded for extension, test (3.11), and test (3.12), including required undefined-name, compilation and documentation checks.
+- PR #148 merged with expected head 96ae3d7b66d1d3a5d14d9181666c860286cf1400. GitHub returned merged=true, merge SHA fedb8c8fdd3c8028dad060bbce379872e9afbbd2. The PR CI result is not a claim that this new merge SHA has completed its separate main-branch CI.
+- Implementation complete and merged; deployment remains NOT performed. No live owner mailbox screening, archiving or Telegram send was invoked during this task. Await owner deployment authorization under AGENTS.md; before deployment verify merge-SHA CI, current production baseline and exact source/version, preserve active Gmail/Calendar credentials and settings, and perform guarded verification.
+- The implementation and initial handoff are committed/pushed. Subsequent PR/CI/merge evidence appended to this handoff remains local/uncommitted, copied to the root handoff for session discovery; other task changes remain untouched. Other-machine synchronization is unverified.
+
+- Deployment authorization received and fulfilled2026-11-05 Asia/Taipei. Independent live verification confirms newer integrated source66669d8750c35343813c178db5ecb5ec68c03f62 includes this feature and receives100% traffic as chronos-passive-expiry-66669d8; exact-current-source CI41971731993 successful, screening explicitly enabled. See dedicated mail-screening-deploy handoff for concurrency guards and real-integration evidence. No manual screening batch invoked.

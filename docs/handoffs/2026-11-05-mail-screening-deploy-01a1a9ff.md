@@ -1,0 +1,18 @@
+# Mail screening deployment
+
+- Updated: 2026-11-05 Asia/Taipei. Owner explicitly authorized deployment after reviewing PR148 screening behavior.
+- Target: fedb8c8fdd3c8028dad060bbce379872e9afbbd2; exact merge CI41970690296 success, required Python3.11/Python3.12/extension jobs all successful.
+- Source: committed archive of target; preserve current production configuration/credential references except release SHA and explicit screening=true. Check production ancestry, zero-traffic readiness/version, authenticated Gmail/Calendar read, exact-source mocked screening regressions and unchanged-baseline traffic before promotion. Retain rollback revision.
+- No manual mail scan or test Telegram send. Existing scheduler should invoke screening on its next new daily batch; existing batches retain their snapshotted mode.
+- Status: preflight/deployment preparation. No production changes yet. Unrelated root/worktree changes preserved. Existing hook sync result supplied ahead=0/behind=0 for root; not proof of deployed source or other-machine sync.
+
+- Preflight: production chronos-executive-8ff04b1 /8ff04b12a41509f539d01372117db64340902480 is ancestor of target. Required merge jobs successful. Daily mail Scheduler ENABLED 0 7 * * * Asia/Taipei.
+- Initial comparison stopped before any deployment because service/revision APIs differed only on container display name (template absent, revision chronos-1). Read-only path comparison verified no other difference; comparison now normalizes this single-container display-name field while retaining all runtime/env/secret comparisons.
+- Candidate build/deploy running in exec session8111; production traffic remains baseline until candidate verification completes. Helper .tmp/mail-screening-release.py uses exact committed archive and post-promotion read-only smoke with conditional rollback guard.
+
+- COMPLETED 2026-11-05 Asia/Taipei: independent verification found newer integrated production source66669d8750c35343813c178db5ecb5ec68c03f62, revision chronos-passive-expiry-66669d8,100% traffic. Git ancestry proves it includes screening target fedb8c8; exact-current-source CI41971731993 succeeded. Screening explicitly enabled in this revision's environment.
+- Concurrent releases advanced production first to bad09cd and then66669d8 during verification. Our fedb8c8 candidate remained zero-traffic and was never promoted. The stale-baseline guard correctly stopped promotion; resumed read-only verification checked the newer source and removed only our candidate tag.
+- Final readback:ready/Firestore/exact current SHA; authenticated Gmail account and Telegram owner-chat GET checks passed; Calendar read verified; send confirmation required/automatic send false. Runtime matched original baseline aside from allowed release SHA/screening setting and API-only container display-name normalization. Scheduler still ENABLED07:00 Asia/Taipei.
+- Observation nuance:an intermediate bad09cd revision had no explicit screening env and used verified source default=true; final66669d8 has explicit screening=true. Final evidence uses the actual serving revision,not service-template assumptions or another task's handoff.
+- No manual daily scan,mailbox archive,Calendar write or test Telegram send was invoked by this task. Real-mail classification accuracy and first scheduled screened batch remain unobserved. New batches use screening; pre-existing in-progress batches retain their stored mode.
+- Sanitized evidence:.tmp/mail-screening-release-fedb8c8.json. Preparing shareable deployment evidence commit/PR; no runtime redeploy needed for documentation-only changes. Other tasks and uncommitted work preserved; other-machine sync unverified.
