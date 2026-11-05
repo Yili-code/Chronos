@@ -1918,3 +1918,85 @@ def test_completion_button_never_reports_planned_minutes_as_actual(setup):
     assert not planner.db.get_task_action_state('learning:profile')
     assert not planner.db.list_open_tasks()
     calendar.insert.assert_not_awaited()
+
+@pytest.mark.parametrize('split', [False, True])
+def test_question_feedback_records_counts_and_continues_remaining_work(setup, split):
+    from chronos.task_actions import task_fields
+    planner, task, calendar, bot = setup
+    planner.db.edit_task(task['id'], '七題練習', datetime.fromisoformat(task['due_at']), task['project'], task['timing'])
+    task = planner.db.get_task(task['id'])
+    planner.update(task['id'], lambda old: {'token': 'questions', 'status': 'awaiting_feedback', 'snapshot': task_fields(task)})
+    if split:
+        reply = planner.partial_reply(task['id'], 'questions', '三個小時')
+        assert '完成幾題' in reply and '頁' not in reply
+        planner = LearningCalendar(planner.db, calendar, bot, planner.settings)
+        reply = planner.partial_reply(task['id'], 'questions', '4/7')
+    else:
+        reply = planner.partial_reply(task['id'], 'questions', '三個小時完成4/7')
+    assert '4/7 題' in reply and '剩下 3 題' in reply and '頁' not in reply
+    state = planner.get(task['id'])
+    assert state['feedback']['actual_minutes'] == 180
+    assert state['progress'] == {'unit': 'questions', 'completed_questions': 4, 'total_questions': 7, 'session_questions': 4}
+    successor = planner.db.get_task(state['successor_task_id'])
+    assert '3 questions remaining' in successor['title']
+    assert planner.get(successor['id'])['requested_minutes'] == 135
+    assert len(planner.db.list_open_tasks()) == 1
+    planner.partial_reply(task['id'], 'questions', '4/7')
+    assert len(planner.db.list_open_tasks()) == 1
+    calendar.insert.assert_not_awaited()
+
+
+@pytest.mark.parametrize('text', ['三小時完成8/7題', '三小時完成7/7題', '三小時完成0/7題', '三小時完成4.5題，共七題'])
+def test_invalid_question_counts_do_not_create_successors(setup, text):
+    from chronos.task_actions import task_fields
+    planner, task, calendar, _ = setup
+    planner.update(task['id'], lambda old: {'token': 'questions', 'status': 'awaiting_feedback', 'snapshot': task_fields(task)})
+    planner.partial_reply(task['id'], 'questions', text)
+    assert 'successor_task_id' not in planner.get(task['id'])
+    assert len(planner.db.list_open_tasks()) == 1
+    calendar.insert.assert_not_awaited()
+
+
+def test_explicit_question_correction_reuses_saved_duration(setup):
+    from chronos.task_actions import task_fields
+    planner, task, calendar, _ = setup
+    planner.update(task['id'], lambda old: {'token': 'questions', 'status': 'awaiting_feedback', 'snapshot': task_fields(task), 'partial_draft': {'minutes': 180}})
+    reply = planner.partial_reply(task['id'], 'questions', '要解七題我完成了四題')
+    assert '剩下 3 題' in reply
+    assert planner.get(task['id'])['feedback']['actual_minutes'] == 180
+    calendar.insert.assert_not_awaited()
+
+@pytest.mark.parametrize('text', ['三小時完成4/7', '4/7'])
+def test_fraction_without_task_unit_records_generic_counts(setup, text):
+    from chronos.task_actions import task_fields
+    planner, task, calendar, _ = setup
+    planner.update(task['id'], lambda old: {'token': 'generic', 'status': 'awaiting_feedback', 'snapshot': task_fields(task), 'partial_draft': {'minutes': 180}})
+    reply = planner.partial_reply(task['id'], 'generic', text)
+    assert '4/7 項' in reply and '剩下 3 項' in reply and '頁' not in reply
+    assert planner.get(task['id'])['progress']['unit'] == 'items'
+    calendar.insert.assert_not_awaited()
+
+
+def test_question_feedback_webhook_preserves_duration_and_deduplicates(system, setup, monkeypatch):
+    from chronos.task_actions import task_fields
+    client, tasks, bot, config = system
+    _, _, calendar, _ = setup
+    config.enable_learning_calendar = True
+    monkeypatch.setattr(main, 'google_calendar', calendar)
+    task = tasks.create('七題練習')
+    planner = main.learning_calendar()
+    planner.update(task['id'], lambda old: {'token': 'questions-webhook', 'status': 'awaiting_feedback', 'snapshot': task_fields(task)})
+    main.db.mutate_task_action_state('learning:edit-chat:123', lambda old: {'task_id': task['id'],
+        'token': 'questions-webhook', 'mode': 'feedback',
+        'expires_at': (datetime.now(config.tz)+timedelta(hours=1)).isoformat()})
+    for index, text in enumerate(['三個小時', '4/7']):
+        payload = {'update_id': 99990 + index, 'message': {'message_id': 99990 + index, 'chat': {'id': 123}, 'text': text}}
+        assert client.post('/telegram/webhook', json=payload, headers={'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}).status_code == 200
+    assert '剩下 3 題' in bot.send_message.await_args.args[1]
+    assert planner.get(task['id'])['feedback']['actual_minutes'] == 180
+    assert not main.db.get_task_action_state('learning:edit-chat:123')
+    calls = bot.send_message.await_count
+    assert client.post('/telegram/webhook', json=payload, headers={'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}).status_code == 200
+    assert bot.send_message.await_count == calls
+    assert len(tasks.list_open()) == 1
+    calendar.insert.assert_not_awaited()

@@ -2,7 +2,7 @@
 import re
 import unicodedata
 
-PROMPT = '這次大概專心讀了多久？讀到第幾頁了？\n例如「讀了兩小時，到第 20 頁，下次從 21 頁開始」。'
+PROMPT = '這次大概專心讀了多久？完成多少進度了？\n例如「讀了兩小時，到第 20 頁」或「三小時，完成 4/7 題」。'
 NUMBER = r'(?:\d+(?:\.\d+)?|[零〇一二兩两三四五六七八九十百]+)'
 
 
@@ -20,11 +20,14 @@ def number(value):
     return result + digit
 
 
-def extract(text):
+def extract(text, *, unit=None):
     text = unicodedata.normalize('NFKC', text).strip()
     pipe = re.fullmatch(r'(\d+)\s*\|\s*(\d+)\s*/\s*(\d+)\s*\|\s*(\d+)', text)
     if pipe:
-        return dict(zip(('minutes', 'completed', 'total', 'next_page'), map(int, pipe.groups())))
+        result = dict(zip(('minutes', 'completed', 'total', 'next_page'), map(int, pipe.groups())))
+        if unit in {'questions', 'items'}:
+            result['unit'] = 'pages'
+        return result
     if re.search(r'(?:^|[，,\s])-\s*\d', text):
         return {'minutes': -1}
     result = {}
@@ -39,6 +42,30 @@ def extract(text):
         value = (number(hours[1]) * 60 + (30 if hours[2] or hours[3] else 0)) if hours else 30 if re.search(r'半(?:個|个)?(?:小時|小时)', focus) else 0
         value += number(mins[1]) if mins else 0
         result['minutes'] = value
+    # A bare fraction is a count only inside an established question report.
+    # Dates in otherwise unrelated text must never become progress.
+    question_context = unit == 'questions' or bool(re.search(r'題|题|questions?|problems?', text, re.I))
+    if question_context:
+        fraction = re.search(r'(?<![\d/])(\d+)\s*/\s*(\d+)(?![\d/])\s*(?:題|题|questions?|problems?)', text, re.I)
+        fraction = fraction or re.search(r'(?:完成|做完|解完|completed)\s*(\d+)\s*/\s*(\d+)(?![\d/])', text, re.I)
+        fraction = fraction or (re.fullmatch(r'(\d+)\s*/\s*(\d+)', text) if unit == 'questions' else None)
+        completed = re.search(rf'(?:完成(?:了)?|做完(?:了)?|解完(?:了)?|做了|解了|completed)\s*({NUMBER})\s*(?:題|题|questions?|problems?)', text, re.I)
+        total = re.search(rf'(?:總共|总共|共|總計|要解|要做|total)\s*({NUMBER})\s*(?:題|题|questions?|problems?)', text, re.I)
+        if fraction or completed or total:
+            result['unit'] = 'questions'
+            if fraction:
+                result.update(completed=int(fraction[1]), total=int(fraction[2]))
+            if completed:
+                result['completed'] = number(completed[1])
+            if total:
+                result['total'] = number(total[1])
+            return result
+    fraction = re.search(r'(?:完成|做完|解完|completed)\s*(\d+)\s*/\s*(\d+)(?![\d/])', text, re.I)
+    if unit == 'items':
+        fraction = fraction or re.fullmatch(r'(\d+)\s*/\s*(\d+)', text)
+    if fraction and not re.search(r'\d+\s*/\s*\d+\s*(?:頁|页|pages?)', text, re.I):
+        result.update(unit='items', completed=int(fraction[1]), total=int(fraction[2]))
+        return result
     pages = re.search(r'(\d+)\s*/\s*(\d+)\s*(?:頁|页|pages?)', text, re.I)
     if pages:
         result.update(completed=int(pages[1]), total=int(pages[2]))
@@ -51,6 +78,8 @@ def extract(text):
         total = total or re.search(rf'(?:總頁數|总页数|total\s+pages)[為为是:：\s]*({NUMBER})', text, re.I)
         if total:
             result['total'] = number(total[1])
+    if unit == 'questions' and re.search(r'頁|页|pages?', text, re.I):
+        result['unit'] = 'pages'
     next_page = re.search(rf'(?:下次(?:從|从)|接著(?:從|从)|next(?:\s+page)?[ :：]*)\s*第?({NUMBER})\s*(?:頁|页)?', text, re.I)
     if next_page:
         result['next_page'] = number(next_page[1])

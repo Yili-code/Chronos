@@ -1063,11 +1063,41 @@ class LearningCalendar:
         if task_fields(task) != state.get('snapshot'):
             from .learning_reply import stale
             return stale(self,task,state)
-        values = {**state.get('partial_draft', {}), **extract_feedback(instruction)}
+        prior_progress = state.get('progress') or {}
+        draft = state.get('partial_draft', {})
+        unit = draft.get('unit') or prior_progress.get('unit')
+        if not unit and re.search(r'(?:[0-9零一二兩三四五六七八九十百]+\s*[題题]|[解習考练練][題题]|題目|questions?|problems?)', task['title'], re.I):
+            unit = 'questions'
+        extracted = extract_feedback(instruction, unit=unit or 'items')
+        if extracted.get('unit') and extracted['unit'] != (draft.get('unit') or 'pages'):
+            draft = {key: value for key, value in draft.items() if key == 'minutes'}
+        values = {**draft, **extracted}
+        if unit == 'questions':
+            values.setdefault('unit', unit)
         for key, value in values.items():
+            if key == 'unit':
+                continue
             if value != int(value) or value < 1 or (key == 'minutes' and value > 720):
-                return '請確認投入時間與頁碼；時間可以用分鐘或小時說明。這次進度還沒記錄。'
+                return '請確認投入時間與完成進度；時間可以用分鐘或小時說明。這次進度還沒記錄。'
             values[key] = int(value)
+        if values.get('unit') in {'questions', 'items'}:
+            suffix = values['unit']
+            label = '題' if suffix == 'questions' else '項'
+            previous = prior_progress.get('completed_' + suffix, 0)
+            total = values.get('total') or prior_progress.get('total_' + suffix)
+            completed = values.get('completed')
+            if completed is not None and (completed <= previous or total is not None and completed >= total):
+                return '請確認完成數量；應比上次增加，若全部完成可以選「已完成」。'
+            if not values.get('minutes') or completed is None:
+                self.update(task_id, lambda old: {**old, 'partial_draft': values}
+                    if old and old.get('token') == token and old.get('status') == 'awaiting_feedback' else old)
+                return (f'已記下投入 {values["minutes"]} 分鐘。這次完成幾{label}了？' if values.get('minutes')
+                        else f'已完成 {completed} {label}。這次投入多久？' if completed is not None
+                        else f'這次投入多久、完成幾{label}？')
+            detail = f'已完成 {completed}/{total} {label}，剩下 {total - completed} {label}。' if total else f'已完成 {completed} {label}。'
+            return self.feedback(task, token, 'partial', values['minutes'], detail,
+                {'unit': suffix, 'completed_' + suffix: completed, 'total_' + suffix: total,
+                 'session_' + suffix: completed - previous})
         previous = (state.get('progress') or {}).get('completed_pages', 0)
         total = values.get('total') or (state.get('progress') or {}).get('total_pages')
         completed = values.get('completed')
@@ -1149,15 +1179,17 @@ class LearningCalendar:
                 recorded["duration_estimate"] = None
                 if progress:
                     recorded["progress"] = progress
-                    if progress.get('total_pages'):
-                        remaining = actual_minutes * (progress["total_pages"] - progress["completed_pages"]) / progress["session_pages"]
+                    suffix = progress.get('unit', 'pages')
+                    if progress.get('total_' + suffix):
+                        remaining = actual_minutes * (progress['total_' + suffix] - progress['completed_' + suffix]) / progress['session_' + suffix]
                         recorded["requested_minutes"] = max(15, min(180, math.ceil(remaining / 15) * 15))
                         recorded["duration_source"] = "owner"
                     else:
                         recorded.pop('requested_minutes', None)
                         recorded.pop('duration_source', None)
                 title = re.sub(r" · Continue.*$", "", task['title'])
-                title += (f" · Continue pages {progress['next_page']}–{progress['total_pages']}"
+                title += (f" · Continue: {progress['total_' + suffix] - progress['completed_' + suffix]} {suffix} remaining"
+                          if progress and suffix in {'questions', 'items'} and progress.get('total_' + suffix) else f" · Continue pages {progress['next_page']}–{progress['total_pages']}"
                           if progress and progress.get('total_pages') else f" · Continue: {reason[:200]}" if reason else " · Continue remaining work")
                 successor = self.db.continue_task(task, title, datetime.now(self.settings.tz))
                 recorded['status'] = 'finished'
@@ -1178,7 +1210,8 @@ class LearningCalendar:
                 from .session_recovery import card
                 return card(self, live, recorded, datetime.now(self.settings.tz))
             return (PROGRESS_COMPLETED_ACK if outcome == 'done'
-                    else (f"已記下這次投入 {actual_minutes} 分鐘，下次從第 {progress['next_page']} 頁繼續。" if progress else '已記下這次進度，剩下的部分會接著安排。') if outcome == "partial"
+                    else (f"已記下這次投入 {actual_minutes} 分鐘，{reason}" if progress and progress.get('unit') in {'questions', 'items'}
+                          else f"已記下這次投入 {actual_minutes} 分鐘，下次從第 {progress['next_page']} 頁繼續。" if progress else '已記下這次進度，剩下的部分會接著安排。') if outcome == "partial"
                     else "Recorded. Use /plan to request another execution plan; writing still requires approval.")
         return self.db._run_task_action(record)
 
