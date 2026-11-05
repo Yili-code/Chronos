@@ -60,8 +60,8 @@ def requires_mail_context(text):
         return True
     if draft_review_request(text) or native_draft_request(text) or recipient_preflight_request(text):
         return True
-    from .mail_natural_workflow import natural_request, draft_request
-    if natural_request(text) and (draft_request(text) or re.search(r"郵件|這封信|追蹤|email|track", text, re.I)):
+    from .mail_natural_workflow import natural_request
+    if natural_request(text) and re.search(r"郵件|這封信|回覆|回信|回給|婉拒|email|reply|respond|decline", text, re.I):
         return True
     return bool(re.match(
         r"^(?:(?:請|幫我)\s*)?(?:草擬(?:郵件)?回覆|起草回覆|撰寫回覆|draft\s+(?:a\s+)?reply|"
