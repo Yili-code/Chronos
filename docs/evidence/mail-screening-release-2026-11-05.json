@@ -1,0 +1,35 @@
+{
+  "sha": "66669d8750c35343813c178db5ecb5ec68c03f62",
+  "revision": "chronos-passive-expiry-66669d8",
+  "traffic_percent": 100,
+  "screening_target": "fedb8c8fdd3c8028dad060bbce379872e9afbbd2",
+  "screening_enabled": true,
+  "ci_run": 41971731993,
+  "screening_configuration_source": "explicit_environment",
+  "target_merge_ci": 41970690296,
+  "readiness": {
+    "status": "ready",
+    "mode": "public",
+    "database": "firestore",
+    "release": "66669d8750c35343813c178db5ecb5ec68c03f62"
+  },
+  "status": {
+    "readiness": "ready",
+    "release": "66669d8750c35343813c178db5ecb5ec68c03f62",
+    "telegram_webhook": "configured",
+    "learning_calendar": "configured",
+    "study": "configured",
+    "gmail": "configured"
+  },
+  "runtime_preserved": true,
+  "gmail_calendar_read_verified": true,
+  "scheduler": {
+    "enabled": true,
+    "cron": "0 7 * * *",
+    "timezone": "Asia/Taipei"
+  },
+  "mailbox_processing_triggered": false,
+  "candidate_tag_removed": true,
+  "own_candidate_promoted": false,
+  "concurrent_release_contains_screening": true
+}
