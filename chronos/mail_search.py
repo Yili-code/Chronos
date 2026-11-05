@@ -11,10 +11,16 @@ from .telegram import TelegramError
 
 
 def command(text):
+    from .mail_search_workflow import command as composite_command
+    if composite_command(text):
+        return True
     return bool(re.match(r"^(?:/mail_search(?:_next)?(?:\s|$)|搜尋郵件(?:\s*[:：]|$))", text.strip(), re.I))
 
 
 async def prepare(mail, text, chat_id):
+    from .mail_search_workflow import command as composite_command, prepare as prepare_composite
+    if composite_command(text):
+        return await prepare_composite(mail, text, chat_id)
     mail.require_config()
     account = mail.settings.gmail_account.strip().lower()
     text = text.strip()
@@ -90,8 +96,14 @@ async def deliver(mail, chat_id, update_id, receipt):
         raise GmailError("Search belongs to another configured account; start a new search")
     for index in range(receipt.get("delivered_count", 0), len(messages)):
         part = messages[index]
+        actions = [a for a in (part.get('mail_actions') or []) if a.get('kind') == 'save_reply'
+                   and re.fullmatch(r'[a-f0-9]{8}', a.get('token', ''))]
+        options = {'reply_markup': {'inline_keyboard': [[{'text': 'Gmail 草稿',
+            'callback_data': f"mail:save_reply_{a['token']}:{part['search_mail_id']}"} for a in actions]]}} if actions else {}
+        if not actions and part.get('mail_context'):
+            options = {'reply_markup': {'force_reply': True, 'input_field_placeholder': '補充草稿資料或回覆取消'}}
         try:
-            result = await mail.telegram.send_message(chat_id, part["text"], parse_mode=part.get("parse_mode"), requires_response=bool(part.get("search_mail_id")))
+            result = await mail.telegram.send_message(chat_id, part["text"], parse_mode=part.get("parse_mode"), requires_response=bool(part.get("search_mail_id")), **options)
         except TelegramError:
             raise GmailError("Search delivery pending; retry the same request") from None
         if not result.get("ok"):
@@ -100,7 +112,13 @@ async def deliver(mail, chat_id, update_id, receipt):
             message_id = result.get("result", {}).get("message_id")
             if not message_id:
                 raise GmailError("Search card delivery identity missing")
-            mail.patch(f"telegram:{chat_id}:{message_id}", mail_id=part["search_mail_id"])
+            binding = {'mail_id': part['search_mail_id']}
+            if len(actions) == 1:
+                binding.update(context_kind='reply', context_version=actions[0]['token'])
+            elif part.get('mail_context'):
+                context = part['mail_context']
+                binding.update(context_kind=context['kind'], context_version=context['version'])
+            mail.patch(f"telegram:{chat_id}:{message_id}", **binding)
         if receipt.get("messages"):
             mail.db.mark_update_message_delivered(update_id, index + 1)
         else:
