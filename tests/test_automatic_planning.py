@@ -227,7 +227,8 @@ def test_mail_schedule_and_feedback_have_compact_titles_full_time_and_source(set
     assert [b['text'] for b in buttons] == ['已完成', '完成一部分', '還沒開始']
 
 
-def test_mail_schedule_receipt_expires_without_losing_plan_or_rebooking(setup, monkeypatch):
+def test_mail_schedule_receipt_delegates_expiry_and_preserves_legacy_recovery(setup, monkeypatch):
+    import time
     from chronos.automatic_planning import receipt, expire_mail_receipts
     from chronos.mail_links import mail_url
     timer = AsyncMock()
@@ -237,12 +238,14 @@ def test_mail_schedule_receipt_expires_without_losing_plan_or_rebooking(setup, m
     state = {'status': 'scheduled', 'token': 'a' * 32, 'delivery': 'scheduled_pending', 'minutes': 30,
              'start': NOW.isoformat(), 'end': (NOW + timedelta(minutes=30)).isoformat()}
     planner.update(task['id'], lambda old: state)
-    bot.request.return_value = {'ok': False, 'error_code': 500}
     asyncio.run(receipt(planner, task, state))
-    timer.assert_awaited_once()
-    assert 0 < timer.await_args.args[0] <= 7
-    assert planner.db.get_task_action_state('learning:mail-schedule-notices')
+    assert bot.send_message.await_args.kwargs['requires_response'] is False
     assert planner.get(task['id'])['status'] == 'scheduled'
+    assert not planner.db.get_task_action_state('learning:mail-schedule-notices')
+    planner.db.mutate_task_action_state('learning:mail-schedule-notices', lambda old: {'52': time.time()-1})
+    bot.request.return_value = {'ok': False, 'error_code': 500}
+    asyncio.run(expire_mail_receipts(planner, wait=True))
+    assert planner.db.get_task_action_state('learning:mail-schedule-notices')
     bot.request.return_value = {'ok': True}
     asyncio.run(expire_mail_receipts(planner, wait=True))
     asyncio.run(receipt(planner, task, planner.get(task['id'])))

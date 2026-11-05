@@ -288,7 +288,7 @@ class LearningCalendar:
             return
         try:
             result = await self.telegram.send_message(self.settings.telegram_chat_id, text,
-                parse_mode="HTML", reply_markup={"inline_keyboard": [buttons[i:i+2] for i in range(0, len(buttons), 2)] if kind == "proposal" else [buttons]})
+                parse_mode="HTML", requires_response=kind != "scheduled", reply_markup={"inline_keyboard": [buttons[i:i+2] for i in range(0, len(buttons), 2)] if kind == "proposal" else [buttons]})
         except Exception:
             self.update(task_id, lambda old: {**old, "delivery": kind + "_uncertain"})
             raise CalendarError("Planning message delivery is uncertain. Inspect /plan before retrying.") from None
@@ -1257,7 +1257,7 @@ class LearningCalendar:
             if health["failures"] >= 2 and not health["notified"]:
                 self.db.mutate_task_action_state("learning:health", lambda old: {**old, "notified": True})
                 await self.telegram.send_message(self.settings.telegram_chat_id,
-                    "Planning assistant needs attention. " + str(error) + " Tasks are saved. Check /plan.")
+                    "Planning assistant needs attention. " + str(error) + " Tasks are saved. Check /plan.", requires_response=True)
             raise
         finally:
             self.db.mutate_task_action_state("learning:tick", lambda old: {**old, "until": now.isoformat()}

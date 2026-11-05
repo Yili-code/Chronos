@@ -155,7 +155,7 @@ async def tick(db, telegram, settings, now=None):
             continue
         status = 'uncertain'
         try:
-            result = await telegram.send_message(item['chat_id'], '<b>A reminder for you, Sir.</b>\n' + line(item, settings), parse_mode='HTML')
+            result = await telegram.send_message(item['chat_id'], '<b>A reminder for you, Sir.</b>\n' + line(item, settings), parse_mode='HTML', requires_response=False)
             if result.get('ok'):
                 status = 'sent'
                 sent += 1

@@ -80,7 +80,7 @@ async def send_deadline_reminders(db, telegram, settings, *, now=None):
         text = (f"<b>A deadline for your attention, Sir.</b>\n{escape(deadline_line)}\n\n"
                 f"<b>{escape(current['title'][:1500])}</b>")
         try:
-            result = await telegram.send_message(settings.telegram_chat_id, text, parse_mode="HTML",
+            result = await telegram.send_message(settings.telegram_chat_id, text, parse_mode="HTML", requires_response=False,
                 reply_markup={"inline_keyboard": [[
                     {"text": "Edit task", "callback_data": f"task:edit:{task['id']}"},
                     {"text": "Plan tasks", "callback_data": f"task:plan:{task['id']}"},

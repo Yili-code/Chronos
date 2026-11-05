@@ -91,7 +91,7 @@ async def deliver(mail, chat_id, update_id, receipt):
     for index in range(receipt.get("delivered_count", 0), len(messages)):
         part = messages[index]
         try:
-            result = await mail.telegram.send_message(chat_id, part["text"], parse_mode=part.get("parse_mode"))
+            result = await mail.telegram.send_message(chat_id, part["text"], parse_mode=part.get("parse_mode"), requires_response=bool(part.get("search_mail_id")))
         except TelegramError:
             raise GmailError("Search delivery pending; retry the same request") from None
         if not result.get("ok"):

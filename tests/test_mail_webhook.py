@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 from chronos import main
 from chronos.tasks import ParsedTask
 from chronos.mail_task_event import MailTaskIntent
-from test_system import system
+from test_system import system, observe_message_lifecycle
 
 
 @pytest.fixture(autouse=True)
@@ -13,6 +13,7 @@ def immediate_notice_timer(monkeypatch):
 
 
 def enable(config, monkeypatch):
+    observe_message_lifecycle(main.telegram, delay=main.asyncio.sleep)
     config.enable_gmail = True
     config.gmail_account = "owner@example.com"
     config.gmail_client_id = "client"
@@ -263,13 +264,14 @@ def test_notice_cleanup_failure_retries_deletion_without_resend(system, monkeypa
             return {"ok": False, "error_code": 500}
         return {"ok": True}
     bot.request.side_effect = delete
-    assert post(client, 9501, callback="mail:task:ab12").status_code == 502
+    assert post(client, 9501, callback="mail:task:ab12").status_code == 200
+    assert bot.expiry.read()
     assert main.db.get_update(9501)["delivered"]
     bot.request.side_effect = None
     bot.request.return_value = {"ok": True}
     assert post(client, 9501, callback="mail:task:ab12").status_code == 200
     bot.send_message.assert_awaited_once()
-    assert main.mail_workflow().get("notice:9501")["deleted"]
+    assert not bot.expiry.read()
 
 
 def test_failed_notice_send_does_not_start_deletion_timer(system, monkeypatch):
@@ -279,4 +281,4 @@ def test_failed_notice_send_does_not_start_deletion_timer(system, monkeypatch):
     bot.send_message.return_value = {"ok": False, "error_code": 500}
     assert post(client, 9502, callback="mail:task:ab12").status_code == 502
     main.asyncio.sleep.assert_not_awaited()
-    assert main.mail_workflow().get("notice:9502") is None
+    assert not bot.expiry.read()
