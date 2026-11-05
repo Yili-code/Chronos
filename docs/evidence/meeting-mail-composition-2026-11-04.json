@@ -23,7 +23,7 @@
     "ci_artifact_file": "secretary-workflow-evidence.json",
     "original_definitions_unchanged": true
   },
-  "production_deployed": false,
+  "production_deployed": true,
   "production_case_execution": false,
   "original_full_acceptance_complete": false,
   "provider_test_writes": "mocked only",
@@ -39,7 +39,7 @@
     "unclear requests require complete restatement",
     "broader original natural-language and cross-platform acceptance remains incomplete"
   ],
-  "updated_at": "2026-11-05T00:06:57.991776+08:00",
+  "updated_at": "2026-11-05T10:27:19.170158+08:00",
   "live_model_evidence": "meeting-mail-live-model-2026-11-05.json",
   "calendar_availability_preflight": {
     "calendar_account_verified": true,
@@ -47,5 +47,52 @@
     "event_mutations": 0,
     "private_event_content_read": false,
     "scope_changes": 0
+  },
+  "production": {
+    "sha": "90baa66589400227d8fc83c87148026a0df213a9",
+    "ci_run": 41954157351,
+    "revision": "chronos-executive-90baa66",
+    "traffic_percent": 100,
+    "rollback": "chronos-executive-7c44f4a",
+    "deployed_at": "2026-11-05T02:22:43.497678+00:00",
+    "runtime_settings_preserved": true,
+    "smoke": {
+      "readiness": "ready",
+      "calendar_read_verified": true,
+      "gmail_enabled": true,
+      "telegram_connected": true,
+      "reports": {
+        "brief": {
+          "parts": 2,
+          "read_only": true
+        },
+        "week": {
+          "parts": 8,
+          "read_only": true
+        },
+        "time": {
+          "parts": 1,
+          "read_only": true
+        }
+      }
+    },
+    "synthetic_production_writes": false
+  },
+  "post_release_calendar_probe": {
+    "calendar_account_verified": true,
+    "configured_calendar_availability_verified": true,
+    "event_mutations": 0,
+    "private_event_content_read": false,
+    "scope_changes": 0
+  },
+  "independent_smoke": {
+    "exact_serving_source_and_traffic": true,
+    "mail_http": 200,
+    "calendar_http": 200,
+    "unauthenticated_mail_http": 403,
+    "automatic_send_enabled": false,
+    "send_confirmation_required": true,
+    "gmail_0700_and_tasks_0800_schedulers": "ENABLED Asia/Taipei",
+    "merge_ci_artifacts": "Both Python artifacts present and unexpired"
   }
 }
