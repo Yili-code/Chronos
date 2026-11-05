@@ -53,11 +53,12 @@ def audit(output, basetemp, ai=None):
     for index, (text, condition, expected) in enumerate(SCENARIOS["drafting"], 1):
         executions = [row for row in scenarios.RECORDS if row["id"] == f"DRAFTING-{index:02}"]
         status = ("Pass" if all(row["status"] == "Pass" for row in executions)
-                  else "Fail" if any(row["status"] == "Fail" for row in executions) else "Blocked") if executions else (
+                  else "Fail" if any(row["status"] == "Fail" for row in executions)
+                  else "Unsupported" if any(row["status"] == "Unsupported" for row in executions) else "Blocked") if executions else (
                       "Deferred" if index == 10 else "NotExecuted")
         records.append({"id": f"DRAFTING-{index:02}", "input": text, "original_precondition": condition,
             "expected": expected, "status": status, "executions": executions,
-            "reason": None if executions else "Owner-deferred LINE integration" if index == 10 else "Outside this explicit five-case slice"})
+            "reason": None if executions else "Owner-deferred LINE integration" if index == 10 else "Outside this explicit seven-case slice"})
     report = {"updated_at": datetime.now(ZoneInfo("Asia/Taipei")).isoformat(),
         "source_base": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
         "mode": "live configured model with synthetic external boundaries" if ai else "schema-aware model and external doubles",
@@ -71,7 +72,7 @@ def audit(output, basetemp, ai=None):
         "cases": records}
     output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({key: report[key] for key in ("mode", "counts", "executed_original_case_ids", "original_acceptance_complete")}))
-    return 0 if code == 0 and report["counts"].get("Pass") == 5 and report["source_stable"] else 2
+    return 0 if code == 0 and report["counts"].get("Pass") == 6 and report["counts"].get("Unsupported") == 1 and report["source_stable"] else 2
 
 
 if __name__ == "__main__":
