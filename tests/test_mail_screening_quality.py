@@ -2,7 +2,7 @@ import pytest
 
 from chronos.ai import AIError
 from chronos.gmail import GmailError
-from chronos.mail_screening import MailDecision, decide, digest, format_decision
+from chronos.mail_screening import MailDecision, decide, digest, evidence_units, format_deadline, format_decision, ground_facts
 from test_mail_workflow import workflow, message  # noqa: F401
 
 
@@ -90,6 +90,41 @@ async def test_ungrounded_specific_facts_are_not_pushed(workflow):
     with pytest.raises(GmailError,match='source evidence'):
         await decide(workflow,message(body='Registration costs 1000 TWD.'),{})
     workflow.telegram.send_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_source_ids_expand_to_original_spans_without_model_quote_copying(workflow):
+    mail=message(subject='Registration confirmation',body='The workshop is on November 22. Admission is free.')
+    units=evidence_units(mail)
+    selected=next(unit for unit in units if 'Admission is free' in unit['text'])
+    workflow.ai._generate_output.return_value=MailDecision(tier='information',confidence=.96,
+        reason='Registration confirmed',summary='活動確認通知。',next_step='',
+        facts=['活動已確認，免費入場。'],fact_evidence_ids=[[selected['id']]])
+    result=await decide(workflow,mail,{})
+    assert result.tier=='information' and result.fact_evidence==[selected['text']]
+
+
+def test_nonexistent_source_references_are_rejected():
+    choice=MailDecision(tier='information',confidence=.99,reason='event',summary='活動',next_step='',
+                        facts=['免費入場。'],fact_evidence_ids=[[512]])
+    with pytest.raises(GmailError,match='source evidence'):
+        ground_facts(message(),choice)
+
+
+def test_evidence_spans_preserve_large_source_and_have_stable_bounded_ids():
+    mail=message(body=('First paragraph. ' * 800)[:12000],alternative_body='Alternate date November 22.')
+    units=evidence_units(mail)
+    assert units==evidence_units(mail)
+    assert len(units)<512 and all(len(unit['text'])<=260 for unit in units)
+    assert any('Alternate date November 22' in unit['text'] for unit in units)
+    assert units[-1]['id']==len(units)
+
+
+def test_deadline_display_removes_machine_timestamp_clutter_without_inference():
+    assert format_deadline('2026-11-07 08:00:00')=='2026/11/07 08:00'
+    assert format_deadline('2026-11-07')=='2026/11/07'
+    assert format_deadline('比賽開始前五分鐘')=='比賽開始前五分鐘'
+    assert format_deadline('11/07 08:00 UTC')=='11/07 08:00 UTC'
 
 
 @pytest.mark.asyncio
