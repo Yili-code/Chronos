@@ -11,6 +11,7 @@ from chronos.mail_natural_workflow import MailPlan
 from chronos.mail_reply_decisions import ReplyDecision
 from executive_scenarios import SCENARIOS
 from test_mail_workflow import workflow
+from test_mail_correspondence import setup, propose, thread
 from test_system import system
 
 
@@ -166,4 +167,35 @@ def test_original_ambiguous_unbound_reply_does_not_choose_a_person(system, monke
         "checks": checks, "status": "Pass" if all(checks.values()) else "Fail",
         "difference": [key for key, value in checks.items() if not value], "severity": None if all(checks.values()) else "High",
         "root_cause": None, "fix_and_regression": "Source-card clarification prevents identity guessing", "production_case_execution": False})
+    assert all(checks.values()), checks
+
+
+@pytest.mark.asyncio
+async def test_original_stale_reply_is_not_reused(workflow):
+    instruction, condition, expected = SCENARIOS['drafting'][5]
+    setup(workflow)
+    await propose(workflow)
+    before = copy.deepcopy(workflow.get('reply:ab12'))
+    messages = thread() + [{**thread()[-1], 'id':'ab13', 'body':'The previous offer is withdrawn; the revised price is USD120,000.', 'received_at':3}]
+    workflow.gmail.thread.return_value = messages
+    workflow.gmail.reset_mock()
+    workflow.ai._generate_output.reset_mock()
+    output = (await workflow.prepare_action('ab12', instruction))()
+    after = workflow.get('reply:ab12')
+    checks = {'stale_state':after['status']=='stale', 'old_body_hidden':before['body'] not in str(output),
+        'requires_new_review':'重新草擬' in str(output), 'full_thread_read':workflow.gmail.thread.await_args.args==('th1',),
+        'account_verified':workflow.gmail.verify_account.await_count==1,
+        'no_external_write':all(getattr(workflow.gmail,n).await_count==0 for n in ('create_reply_draft','send_reviewed_draft','trash','archive','mark_read','read_attachment')),
+        'no_generated_replacement':workflow.ai._generate_output.await_count==0,
+        'only_status_changed':after=={**before,'status':'stale'}}
+    RECORDS.append({'id':'DRAFTING-06','input':instruction,'expected':expected,
+        'preconditions':{'original':condition,'draft_before':before,'new_thread':messages},
+        'mode':'deterministic workflow with external doubles','backend':type(workflow.db).__name__,
+        'actual_reply':output,'tool_calls':[str(c) for c in workflow.gmail.mock_calls],
+        'api_results':{'thread':messages},'database_before':before,'database_after':after,'checks':checks,
+        'status':'Pass' if all(checks.values()) else 'Fail','difference':[k for k,v in checks.items() if not v],
+        'severity':None if all(checks.values()) else 'High',
+        'root_cause':'Cached preview did not verify current thread; original reuse instruction lacked a route',
+        'fix_and_regression':'Shared review reads current thread and invalidates stale local drafts before rendering; no native operation is authorized',
+        'production_case_execution':False})
     assert all(checks.values()), checks

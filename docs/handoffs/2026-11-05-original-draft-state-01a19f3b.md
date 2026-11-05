@@ -1,0 +1,11 @@
+# Original draft state freshness
+
+- Updated 2026-11-05 Asia/Taipei; base 71bda857faddb084bf4e5138ca4f96e1da3306af; branch codex/original-draft-state-1105. User authorized phased fixes and validated direct production deployment.
+- Scope: unchanged original DRAFTING-06, including a newer offer after a local draft. Extend the deterministic original-case replay without recounting prior model results or claiming the full original80 complete. Cases03/05/07/08 remain unexecuted and10 deferred.
+- Current source checks freshness before native save/send, but viewing a local draft renders its cached content and the original reuse phrasing falls through. Repair preview/reuse freshness together, preserve explicit native confirmation and uncertain operation states. No real mailbox/calendar/Telegram writes in testing.
+- Plan: reproduce before fix, shared freshness implementation, concurrency/provider regressions, full local validation, PR and exact merge CI, guarded release, readonly independent smoke. Prior release record PR141 is merged; current runtime must be rechecked before deployment.
+
+- Before repair focused backend executions:11 failed/20 passed. Repaired local-view/reuse controller verifies thread fingerprint, age and meeting context before rendering, preserves uncertain/native states, and guards local state/binding changes before applying. Missing card now requires context; ordinary reuse is review-only.
+- Focused state regressions38 passed, related correspondence/webhook88 passed earlier. Original runner now preserves input/expectation of06 and records5 original Pass/4 NotExecuted/1 deferred across9 executions. New06 is deterministic and makes no model call; prior live-model evidence remains separate. Full suite/build/CI/release pending. No OAuth, dependency, schema or runtime-setting changes.
+
+- Final validation:4302 passed,142 existing warnings,0 failures/errors. Original replay9 executions:5 Pass/4 NotExecuted/1 deferred. Workflow observer222 executions unchanged80 Pass/10 deferred; wheel120 runtime modules exactly match source, undefined-name checks,125 documentation links and diff check pass. Original corpus unchanged. Ready for PR; deployment not yet attempted.
