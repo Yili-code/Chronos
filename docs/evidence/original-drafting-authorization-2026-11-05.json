@@ -2138,10 +2138,90 @@
     "missing_links": 0,
     "diff_check": "Pass"
   },
-  "production_deployed": false,
+  "production_deployed": true,
   "production_case_execution": false,
   "original_acceptance_complete": false,
   "unsupported_capabilities": [
     "Outgoing reply attachment creation or transfer"
-  ]
+  ],
+  "production_release": {
+    "sha": "8ff04b12a41509f539d01372117db64340902480",
+    "ci_run": 41968130806,
+    "revision": "chronos-executive-8ff04b1",
+    "traffic_percent": 100,
+    "rollback": "chronos-mail-event-2236b47",
+    "deployed_at": "2026-11-05T04:35:57.011738+00:00",
+    "runtime_settings_preserved": true,
+    "smoke": {
+      "readiness": "ready",
+      "calendar_read_verified": true,
+      "gmail_enabled": true,
+      "telegram_connected": true,
+      "reports": {
+        "brief": {
+          "parts": 2,
+          "read_only": true
+        },
+        "week": {
+          "parts": 8,
+          "read_only": true
+        },
+        "time": {
+          "parts": 1,
+          "read_only": true
+        }
+      }
+    },
+    "synthetic_production_writes": false
+  },
+  "independent_production_probes": [
+    {
+      "revision": "chronos-executive-8ff04b1",
+      "source": "8ff04b12a41509f539d01372117db64340902480",
+      "traffic": [
+        {
+          "revision": "chronos-executive-8ff04b1",
+          "percent": 100
+        }
+      ]
+    },
+    {
+      "component": "mail",
+      "http": 200,
+      "verified_flags": {
+        "enabled": true,
+        "telegram_connected": true,
+        "send_enabled": true,
+        "send_requires_confirmation": true,
+        "automatic_send_enabled": false
+      }
+    },
+    {
+      "component": "calendar",
+      "http": 200,
+      "verified_flags": {
+        "enabled": true,
+        "calendar_read_verified": true
+      }
+    }
+  ],
+  "unauthenticated_access_probe": {
+    "unauthenticated_mail_status_http": 403,
+    "body_read": false
+  },
+  "pr_number": 146,
+  "pr_head": "705d540b697f97aa0e294081d1f701414226fd1d",
+  "pr_ci": 41967605336,
+  "merge_ci": 41968130806,
+  "required_jobs": [
+    "extension",
+    "test (3.11)",
+    "test (3.12)"
+  ],
+  "required_jobs_conclusion": "success",
+  "merge_source_matches_validated_feature": true,
+  "ci_artifacts": {
+    "python3.11": "available and unexpired",
+    "python3.12": "available and unexpired"
+  }
 }
