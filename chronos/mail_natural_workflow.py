@@ -32,6 +32,9 @@ class LocalChange:
 
 MEETING_REQUEST = re.compile(r"(?:協調|安排|規劃)(?:一[個場]|這[個場])?(?:會面|會議)|(?:會面|會議)(?:候選|協調)|(?:plan|coordinate|schedule|propose)\s+(?:a\s+)?meeting", re.I)
 DRAFT_CUES = re.compile(r"草擬|起草|撰寫|回覆|回信|回給|婉拒|拒絕|答應|draft|reply|respond|decline", re.I)
+CONTEXT_DRAFT = re.compile(
+    r"(?:(?:請幫我|幫我|請)\s*)?(?:(?:草擬|起草|撰寫)\s*)?(?:回覆|回信)(?:這封(?:郵件|信)|此(?:郵件|信))?|"
+    r"(?:please\s+)?(?:draft\s+(?:a\s+)?)?(?:reply|respond)(?:\s+to\s+(?:this|the)\s+(?:email|message))?", re.I)
 IMPLICIT_DRAFT_START = re.compile(r"^(?:(?:請|幫我)\s*)?(?:照|依照|根據|回信|回給|reply\b|respond\b)", re.I)
 NEGATED_OPERATION = re.compile(
     r"(?:不要|別|不必|不用)(?:\s|幫我|替我|為我|先|再|直接|實際|真的|自動|擅自|現在|目前|暫時)*(?:回覆|回信|草擬|起草|撰寫|追蹤|提醒|協調|安排|更新|刪除|保存|儲存)|"
@@ -86,12 +89,14 @@ async def prepare(mail, identifier, instruction, now=None):
     expected = {mail.key(key): mail.get(key) for key in keys}
     # The planner sees only the owner's instruction, never third-party mail text.
     try:
-        plan = await asyncio.wait_for(mail.ai._generate_output(
+        plan = (MailPlan(draft=True) if CONTEXT_DRAFT.fullmatch(instruction) else await asyncio.wait_for(mail.ai._generate_output(
             "Interpret only the owner's bound-email request into a local draft, ONE meeting candidate and/or reply tracking. "
             "meeting means explicit meeting coordination, a local tentative candidate only: no hold, invitation or agreement. "
             "Do not mark meeting true for a draft that merely mentions a meeting. Preserve all constraints for each requested step. "
             "An implicit request to decline/respond using previous correspondence is a local draft request. "
             "Content constraints such as withholding private information do not negate the drafting operation. "
+            "Questions here clarify operation scope, not missing reply content or stance: the downstream drafter "
+            "reads the full thread and asks grounded owner questions if needed. Do not ask a generic draft request to restate content before that read. "
             "Never return commands, authorization or invented details. draft means a local unsent reply. "
             "tracking_hours requires one explicit elapsed hours/days duration in the owner request. "
             "target may only be an email address explicitly provided by the owner; otherwise null. "
@@ -100,7 +105,7 @@ async def prepare(mail, identifier, instruction, now=None):
             "If any part is unsupported or unclear, ask question for the whole request; never silently omit it. "
             "Do not replace waiting-owner with waiting-other: current direction is verified separately.",
             json.dumps({"owner_request": instruction}, ensure_ascii=False),
-            MailPlan.model_json_schema(), MailPlan, "mail local workflow"), timeout=60)
+            MailPlan.model_json_schema(), MailPlan, "mail local workflow"), timeout=60))
         plan = MailPlan.model_validate(plan)
     except (AIError, ValueError, TimeoutError):
         return response("意圖解析暫時失敗，草稿與追蹤均未套用。")
