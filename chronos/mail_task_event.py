@@ -74,8 +74,8 @@ def grounded(value, evidence, source, tz, *, start=None, owner=False, reference=
     return None
 
 
-def answer(text, *, resolved=False):
-    return lambda: {"messages": [{"text": text, **({"mail_event_resolved": True, "delete_after_seconds": 7} if resolved else {})}]}
+def answer(text, *, resolved=False, cancelled=False):
+    return lambda: {"messages": [{"text": text, **({"mail_event_resolved": True, "delete_after_seconds": 7} if resolved else {"mail_event_cancelled": True, "delete_after_seconds": 7} if cancelled else {})}]}
 
 
 def question(mail, identifier, text, **extra):
@@ -105,7 +105,7 @@ async def prepare(mail, identifier, now, *, instruction=None, version=None):
             return answer("活動補充提示已過期，請從原郵件重新選擇 Task。")
         if instruction.strip() in {'取消', '/cancel', 'cancel'}:
             mail.patch('task_event:' + identifier, status='cancelled', version=uuid4().hex[:8])
-            return answer('已取消，沒有新增郵件活動。')
+            return answer('已取消，沒有新增郵件活動。', cancelled=True)
     calendar = mail.calendar
     target = [mail.settings.calendar_account, mail.settings.calendar_id]
     # A previous uncertain write is reconciled by the same deterministic provider ID.
