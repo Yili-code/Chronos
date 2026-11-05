@@ -30,6 +30,7 @@ from .tasks import (
     project_display_name,
 )
 from .telegram import TelegramClient
+from .message_lifecycle import drain_messages
 from .reply_voice import creation_messages
 from .reset_replies import ResetInProgress
 from .runtime_health import (
@@ -67,7 +68,7 @@ tasks = TaskService(db, settings.tz)
 ai_usage = AIUsageRecorder(db, settings.tz)
 ai = ExternalAI(settings, usage=ai_usage, preference_source=lambda:
                 preferences.read(db, settings.telegram_chat_id) if settings.telegram_chat_id is not None else {})
-telegram = TelegramClient(settings.telegram_bot_token)
+telegram = TelegramClient(settings.telegram_bot_token, expiry_store=lambda: db)
 gmail = GmailClient(settings)
 google_calendar = GoogleCalendar(settings)
 scheduler = AsyncIOScheduler(timezone=settings.tz)
@@ -202,6 +203,7 @@ def clear_tasks_reply() -> str:
     return f"Deleted {deleted} {noun}.\n\nNo open tasks, Sir. A welcome state of affairs."
 
 
+@drain_messages(lambda: telegram)
 @tracked_job(lambda: db)
 async def send_daily_tasks() -> None:
     if settings.telegram_chat_id and telegram.enabled:
@@ -258,6 +260,24 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="Chronos", lifespan=lifespan)
 
 
+@app.middleware("http")
+async def expire_passive_messages(request, call_next):
+    response = None
+    try:
+        response = await call_next(request)
+        return response
+    finally:
+        notifying = request.method == "POST" and request.url.path.startswith(("/telegram/", "/internal/"))
+        # Health/status reads must never mutate Telegram or wait on its network.
+        local = getattr(getattr(telegram, 'expiry', None), 'tasks', ())
+        if notifying and (local or response is not None and response.status_code < 400):
+            try:
+                await telegram.flush_expirations()
+            except Exception:
+                logger.warning("Telegram message cleanup pending")
+
+
+
 @app.exception_handler(ResetInProgress)
 async def reset_in_progress(request: Request, error: ResetInProgress):
     return JSONResponse(status_code=503, content={'detail': 'The original reset is still running; retry this update later'})
@@ -281,7 +301,7 @@ async def deliver_learning_reply(chat_id, update_id, receipt):
     if any(m.get('event_reset_result') for m in receipt.get('messages',[])):
         for count,part in enumerate(receipt['messages'][receipt.get('delivered_count',0):],receipt.get('delivered_count',0)+1):
             result = await telegram.send_message(chat_id,part['text'],
-                **{k:part[k] for k in ('parse_mode','reply_markup') if k in part})
+                **{k:part[k] for k in ('parse_mode','reply_markup','requires_response','delete_after_seconds') if k in part})
             if not result.get('ok'):
                 raise HTTPException(status_code=502,detail='Event rebuild receipt delivery pending')
             db.mark_update_message_delivered(update_id,count)
@@ -290,7 +310,7 @@ async def deliver_learning_reply(chat_id, update_id, receipt):
     if any(m.get('replan_token') or m.get('replan_preview_token') for m in receipt.get('messages', [])):
         for count, part in enumerate(receipt['messages'][receipt.get('delivered_count', 0):], receipt.get('delivered_count', 0)+1):
             result = await telegram.send_message(chat_id, part['text'],
-                **{k: part[k] for k in ('parse_mode', 'reply_markup') if k in part})
+                **{k: part[k] for k in ('parse_mode', 'reply_markup', 'requires_response', 'delete_after_seconds') if k in part})
             if not result.get('ok') or result.get('result', {}).get('message_id') is None:
                 raise HTTPException(status_code=502, detail='Calendar preview delivery pending')
             calendar_replan.bind(db, chat_id, result['result']['message_id'], part)
@@ -301,7 +321,7 @@ async def deliver_learning_reply(chat_id, update_id, receipt):
         messages = receipt['messages']
         for count, part in enumerate(messages[receipt.get('delivered_count', 0):], receipt.get('delivered_count', 0) + 1):
             result = await telegram.send_message(chat_id, part['text'],
-                **{k: part[k] for k in ('parse_mode', 'reply_markup') if k in part})
+                **{k: part[k] for k in ('parse_mode', 'reply_markup', 'requires_response', 'delete_after_seconds') if k in part})
             if not result.get('ok') or (part.get('task_review') and result.get('result', {}).get('message_id') is None):
                 raise HTTPException(status_code=502, detail='Task suggestion delivery pending')
             if part.get('task_review'):
@@ -312,7 +332,7 @@ async def deliver_learning_reply(chat_id, update_id, receipt):
     if any(m.get('backward_plan') for m in receipt.get('messages', [])):
         for count, part in enumerate(receipt['messages'][receipt.get('delivered_count', 0):], receipt.get('delivered_count', 0)+1):
             result = await telegram.send_message(chat_id, part['text'],
-                **{k: part[k] for k in ('parse_mode', 'reply_markup') if k in part})
+                **{k: part[k] for k in ('parse_mode', 'reply_markup', 'requires_response', 'delete_after_seconds') if k in part})
             if not result.get('ok') or result.get('result', {}).get('message_id') is None:
                 raise HTTPException(status_code=502, detail='Backward preview delivery pending')
             BackwardPlanner(db, google_calendar, ai, settings).bind(chat_id, result['result']['message_id'], part)
@@ -320,7 +340,7 @@ async def deliver_learning_reply(chat_id, update_id, receipt):
         db.mark_update_delivered(update_id)
         return
     message = (receipt.get("messages") or [{"text": receipt["reply"]}])[0]
-    options = {key: message[key] for key in ("parse_mode", "reply_markup") if key in message}
+    options = {key: message[key] for key in ("parse_mode", "reply_markup", "requires_response", "delete_after_seconds") if key in message}
     result = await telegram.send_message(chat_id, message["text"], **options)
     if not result.get("ok"):
         raise HTTPException(status_code=502, detail="Planning reply pending")
@@ -365,14 +385,7 @@ async def deliver_learning_reply(chat_id, update_id, receipt):
     db.mark_update_delivered(update_id)
     if cleanup_ids:
         await delete_telegram_messages(chat_id, *cleanup_ids)
-    if message.get('delete_after_seconds') == 7 or message['text'] == PROGRESS_COMPLETED_ACK or message['text'].startswith('Updated. Review the new execution plan'):
-        message_id = result.get('result', {}).get('message_id')
-        if message_id is not None:
-            await asyncio.sleep(7)
-            try:
-                await delete_telegram_messages(chat_id, message_id)
-            except (RuntimeError, HTTPException):
-                logging.getLogger(__name__).warning('Planning update notice cleanup failed')
+
 
 
 async def delete_telegram_messages(chat_id: int, *message_ids: int | None) -> None:
@@ -385,6 +398,7 @@ async def delete_telegram_messages(chat_id: int, *message_ids: int | None) -> No
             raise HTTPException(status_code=502, detail="Mail interaction cleanup pending")
 
 
+@drain_messages(lambda: telegram)
 @tracked_job(lambda: db)
 async def send_daily_mail():
     if not settings.enable_gmail:
@@ -415,6 +429,7 @@ async def mail_status(x_chronos_scheduler_secret: str | None = Header(default=No
         raise HTTPException(status_code=503, detail=str(error)) from None
 
 
+@drain_messages(lambda: telegram)
 @tracked_job(lambda: db)
 async def run_study_tick() -> dict:
     await reminders.tick(db, telegram, settings)
@@ -555,11 +570,13 @@ async def trigger_daily_mail(x_chronos_scheduler_secret: str | None = Header(def
     return await send_daily_mail()
 
 
+@drain_messages(lambda: telegram)
 @tracked_job(lambda: db)
 async def run_reminder_tick():
     return await reminders.tick(db, telegram, settings)
 
 
+@drain_messages(lambda: telegram)
 @tracked_job(lambda: db)
 async def run_deadline_reminders():
     await reminders.tick(db, telegram, settings)
@@ -606,6 +623,7 @@ async def executive_report_preview(kind: str, x_chronos_scheduler_secret: str | 
         raise HTTPException(status_code=503, detail='Calendar data is unavailable or incomplete') from None
 
 
+@drain_messages(lambda: telegram)
 @tracked_job(lambda: db)
 async def run_evening_agenda():
     return await send_evening_agenda(db, google_calendar, telegram, settings)
@@ -620,6 +638,7 @@ async def trigger_evening_agenda(x_chronos_scheduler_secret: str | None = Header
         raise HTTPException(status_code=503, detail="Tomorrow agenda delivery requires retry or inspection") from None
 
 
+@drain_messages(lambda: telegram)
 @tracked_job(lambda: db)
 async def run_nightly_planning():
     return await learning_calendar().nightly_proposals()
@@ -1150,7 +1169,12 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                 response_text = receipt["reply"]
                 if question_kind and question_current.get("version") != question_version:
                     response_text = "補充提示已過期，請使用最新提示；沒有重新執行原操作。"
-                result = await telegram.send_message(chat_id, response_text, reply_markup=markup)
+                terminal = event_resolved or event_cancelled or receipt["reply"] in {"郵件任務已新增。", "這封郵件已有任務，未重複新增。",
+                    "已取消，沒有新增郵件任務。", "已標為已讀。",
+                    "已保留，之後不會自動過濾這封信；若已在垃圾桶，請在 Gmail 還原。",
+                    "已封存，可在 Gmail 所有郵件找到；本批完成後傳 /mail_next。"}
+                result = await telegram.send_message(chat_id, response_text, reply_markup=markup,
+                    **({'requires_response': False} if terminal else {}))
                 if not result.get("ok"):
                     raise HTTPException(status_code=502, detail="Mail action reply pending")
                 if is_proposal or is_edit or is_correspondence:
@@ -1163,14 +1187,6 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                     if origin_card_id is not None:
                         binding["origin_message_id"] = origin_card_id
                     mail.patch(f"telegram:{chat_id}:{message_id}", **binding)
-            if event_resolved or event_cancelled or receipt["reply"] in {"郵件任務已新增。", "這封郵件已有任務，未重複新增。",
-                    "已取消，沒有新增郵件任務。", "已標為已讀。",
-                    "已保留，之後不會自動過濾這封信；若已在垃圾桶，請在 Gmail 還原。",
-                    "已封存，可在 Gmail 所有郵件找到；本批完成後傳 /mail_next。"}:
-                message_id = result.get("result", {}).get("message_id")
-                if message_id is not None:
-                    import time
-                    mail.patch(f"notice:{update_id}", message_id=message_id, delete_at=time.time() + 7)
             if receipt.get("messages"):
                 db.mark_update_message_delivered(update_id, 1)
             else:
@@ -1179,12 +1195,11 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             result = await telegram.answer_callback_query(update.callback_query.id)
             if not result.get("ok"):
                 raise HTTPException(status_code=502, detail="Mail callback acknowledgement pending")
-        notice = mail.get(f"notice:{update_id}") or {}
-        if notice.get("message_id") and not notice.get("deleted"):
-            import time
-            await asyncio.sleep(max(0, notice["delete_at"] - time.time()))
-            await delete_telegram_messages(chat_id, notice["message_id"])
-            mail.patch(f"notice:{update_id}", deleted=True)
+        legacy = mail.get(f"notice:{update_id}") or {}
+        if legacy.get('message_id') and not legacy.get('deleted') and not legacy.get('expiry_migrated'):
+            await telegram.track_delivery({'ok': True, 'result': {'message_id': legacy['message_id']}},
+                chat_id, requires_reply=False, deadline=legacy['delete_at'])
+            mail.patch(f"notice:{update_id}", expiry_migrated=True)
         return {"ok": True}
     from .mail_correspondence import requires_mail_context
     if update.message and requires_mail_context(source_message.text or ""):
@@ -1348,6 +1363,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             send_options = {"parse_mode": message.get("parse_mode")}
             if message.get("reply_markup"):
                 send_options["reply_markup"] = message["reply_markup"]
+            send_options.update({k:message[k] for k in ('requires_response','delete_after_seconds') if k in message})
             result = await telegram.send_message(chat_id, message["text"], **send_options)
             if not result.get("ok"):
                 raise HTTPException(status_code=502, detail="Telegram reply failed; waiting for retry")

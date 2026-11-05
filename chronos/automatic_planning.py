@@ -65,13 +65,7 @@ async def receipt(planner, task, state):
         text += f'\n<a href="{escape(url, quote=True)}">開啟郵件</a>'
     await planner.send(task['id'], state, text,
         planner.buttons(task['id'], state, [('adjustbooked', '調整時間')]), 'scheduled')
-    current = planner.get(task['id']) or {}
-    if url and current.get('delivery') == 'scheduled_sent' and current.get('message_id'):
-        import time
-        message_id = str(current['message_id'])
-        planner.db.mutate_task_action_state('learning:mail-schedule-notices', lambda old: {
-            **(old or {}), message_id: time.time() + 7})
-        await expire_mail_receipts(planner, wait=True)
+
 
 
 async def expire_mail_receipts(planner, *, wait=False):

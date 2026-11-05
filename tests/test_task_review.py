@@ -235,16 +235,26 @@ def test_review_result_expires_after_seven_seconds(system, monkeypatch, operatio
     monkeypatch.setattr(main.ai, 'review_tasks', AsyncMock(return_value=output(task)))
     pause = AsyncMock()
     monkeypatch.setattr(main.asyncio, 'sleep', pause)
-    bot.send_message.side_effect = [
+    replies = iter([
         {'ok': True, 'result': {'message_id': 49}},
         {'ok': True, 'result': {'message_id': 50}},
         {'ok': False},
         {'ok': True, 'result': {'message_id': 51}},
-    ]
+    ])
+    async def send(chat_id, text, **options):
+        result = next(replies)
+        await bot.track_delivery(result, chat_id, text, options.get('reply_markup'),
+            requires_reply=options.get('requires_response'), delete_after_seconds=options.get('delete_after_seconds'))
+        return result
+    bot.send_message.side_effect = send
+    bot.expiry.sleep = pause
     headers = {'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}
     assert client.post('/telegram/webhook', headers=headers, json={'update_id': 740,
         'message': {'message_id': 48, 'chat': {'id': 123}, 'text': '/reviewtasks'}}).status_code == 200
-    pause.assert_not_awaited()
+    pause.assert_awaited_once()
+    bot.request.assert_awaited_once_with('deleteMessage', {'chat_id':123, 'message_id':49})
+    pause.reset_mock()
+    bot.request.reset_mock()
     token = main.db.get_update(740)['messages'][1]['task_review']
     payload = {'update_id': 741, 'callback_query': {'id': 'expiry',
         'data': 'taskreview:' + operation + ':' + token,
@@ -253,11 +263,13 @@ def test_review_result_expires_after_seven_seconds(system, monkeypatch, operatio
     pause.assert_not_awaited()
     bot.request.assert_not_awaited()
     async def wait_then_check(seconds):
-        assert seconds == 7
-        bot.request.assert_not_awaited()
+        assert 0 <= seconds <= 7
+        assert not any(call.args == ('deleteMessage', {'chat_id':123, 'message_id':51})
+                       for call in bot.request.await_args_list)
     pause.side_effect = wait_then_check
     assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 200
-    pause.assert_awaited_once_with(7)
+    pause.assert_awaited_once()
+    assert 0 <= pause.await_args.args[0] <= 7
     bot.request.assert_any_await('deleteMessage', {'chat_id': 123, 'message_id': 51})
     assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 200
     pause.assert_awaited_once()

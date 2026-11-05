@@ -115,7 +115,7 @@ async def report(kind, db, calendar, settings, *, now=None):
                 'Actual time is self-reported; this is not complete time tracking. '
                 'Unlinked work, category breakdowns and long-term trends are unknown. '
                 'Record session duration after work to improve coverage.')
-        return [{'text': text, 'parse_mode': 'HTML'}]
+        return [{'text': text, 'parse_mode': 'HTML', 'requires_response': False}]
     tasks = db.list_open_tasks()
     rows = deadline_rows(tasks, start, end, settings.tz)
     if kind == 'brief':
@@ -166,7 +166,7 @@ async def report(kind, db, calendar, settings, *, now=None):
         if not parts or len((parts[-1]+row+'\n').encode('utf-16-le')) // 2 > 3000:
             parts.append('')
         parts[-1] += '\n'+row
-    return [{'text': text, 'parse_mode': 'HTML'} for text in parts]
+    return [{'text': text, 'parse_mode': 'HTML', 'requires_response': False} for text in parts]
 
 
 async def scheduled(db, calendar, telegram, settings, *, now=None):
@@ -191,7 +191,7 @@ async def scheduled(db, calendar, telegram, settings, *, now=None):
                     raise RuntimeError('Executive report delivery needs inspection; no blind retry.')
                 break
             try:
-                result = await telegram.send_message(settings.telegram_chat_id, **state['parts'][state['next']])
+                result = await telegram.send_message(settings.telegram_chat_id, **{**state['parts'][state['next']], 'requires_response': False})
             except TelegramError:
                 db.mutate_task_action_state(key, lambda old: {**old, 'status': 'uncertain'})
                 raise RuntimeError('Executive report delivery is uncertain; inspect before retrying.') from None

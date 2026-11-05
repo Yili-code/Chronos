@@ -192,7 +192,7 @@ def test_cloud_runner_reports_logical_failure_to_request(store, monkeypatch):
     telegram = bot()
     monkeypatch.setattr(cloud_assignment_scan, 'settings', cfg)
     monkeypatch.setattr(cloud_assignment_scan, 'create_database', lambda settings: store)
-    monkeypatch.setattr(cloud_assignment_scan, 'TelegramClient', lambda token: telegram)
+    monkeypatch.setattr(cloud_assignment_scan, 'TelegramClient', lambda token, **kwargs: telegram)
     scan = AsyncMock(return_value={'assignment_scan': 'failure_recorded', 'consecutive_failures': 1})
     monkeypatch.setattr(cloud_assignment_scan, 'run_assignment_scan', scan)
     asyncio.run(cloud_assignment_scan._main())

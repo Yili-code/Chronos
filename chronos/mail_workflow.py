@@ -173,7 +173,7 @@ class MailWorkflow:
         if mail_id:
             markup = mail_buttons(mail_id, (self.get("message:" + mail_id) or {}).get("backlog", False))
         try:
-            result = await self.telegram.send_message(self.settings.telegram_chat_id, text, reply_markup=markup, parse_mode="HTML" if mail_id else None)
+            result = await self.telegram.send_message(self.settings.telegram_chat_id, text, reply_markup=markup, parse_mode="HTML" if mail_id else None, requires_response=bool(mail_id))
         except TelegramError:
             self.patch(delivery_key, delivery="uncertain")
             raise GmailError("Telegram mail delivery outcome is unknown; owner review required") from None

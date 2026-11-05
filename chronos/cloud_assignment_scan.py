@@ -31,23 +31,27 @@ async def _main() -> dict:
         raise RuntimeError("Telegram delivery is not configured")
     db = create_database(settings)
     db.initialize()
-    bot = TelegramClient(settings.telegram_bot_token)
-    now = datetime.now(settings.tz)
-    request = db.get_task_action_state(assignment_access.KEY) or {}
-    interactive = request.get('status') in assignment_access.ACTIVE and request.get('expires_at', '') > now.isoformat()
+    bot = TelegramClient(settings.telegram_bot_token, expiry_store=lambda: db)
     try:
-        if not settings.tronclass_username or not settings.tronclass_password:
-            raise RuntimeError('TronClass credentials are not configured')
-        report = await run_assignment_scan(
-            db, bot, settings.telegram_chat_id, now, settings.tronclass_username, settings.tronclass_password,
-            excluded_course_ids=_excluded_course_ids(settings.tronclass_excluded_course_ids), interactive=interactive)
-    except Exception:
-        report = {'assignment_scan': 'runner_failed'}
-        db.mutate_task_action_state(assignment_access.OUTCOME, lambda old: report)
+        now = datetime.now(settings.tz)
+        request = db.get_task_action_state(assignment_access.KEY) or {}
+        interactive = request.get('status') in assignment_access.ACTIVE and request.get('expires_at', '') > now.isoformat()
+        try:
+            if not settings.tronclass_username or not settings.tronclass_password:
+                raise RuntimeError('TronClass credentials are not configured')
+            report = await run_assignment_scan(
+                db, bot, settings.telegram_chat_id, now, settings.tronclass_username, settings.tronclass_password,
+                excluded_course_ids=_excluded_course_ids(settings.tronclass_excluded_course_ids), interactive=interactive)
+        except Exception:
+            report = {'assignment_scan': 'runner_failed'}
+            db.mutate_task_action_state(assignment_access.OUTCOME, lambda old: report)
+            await assignment_access.finish(db, bot, now, report)
+            raise
         await assignment_access.finish(db, bot, now, report)
-        raise
-    await assignment_access.finish(db, bot, now, report)
-    return report
+        return report
+
+    finally:
+        await bot.flush_expirations()
 
 
 def main() -> int:

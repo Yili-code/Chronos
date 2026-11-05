@@ -17,6 +17,17 @@ from chronos.tasks import ParsedTask, TaskService, format_tasks
 from chronos.telegram import TelegramClient, TelegramError
 
 
+def observe_message_lifecycle(bot, *, delay=None):
+    """Opt into the real lifetime while mocking only the provider send result."""
+    bot.expiry.sleep = delay or AsyncMock()
+    async def observed_send(chat_id, text, **options):
+        result = bot.send_message.return_value
+        await bot.track_delivery(result, chat_id, text, options.get('reply_markup'),
+            requires_reply=options.get('requires_response'), delete_after_seconds=options.get('delete_after_seconds'))
+        return result
+    bot.send_message.side_effect = observed_send
+
+
 @pytest.fixture
 def system(tmp_path, monkeypatch):
     config = Settings(_env_file=None, database_path=tmp_path / 'test.db', learning_auto_accept=False,

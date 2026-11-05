@@ -1654,8 +1654,14 @@ def test_updated_notice_is_deleted_after_seven_seconds(system, monkeypatch):
     telegram.send_message.return_value = {'ok': True, 'result': {'message_id': 987}}
     telegram.request.return_value = {'ok': True}
     receipt = {'delivered': False, 'reply': 'Updated. Review the new execution plan and press Confirm schedule to book it.'}
-    asyncio.run(main.deliver_learning_reply(123, 1234567, receipt))
-    pause.assert_awaited_once_with(7)
+    from test_system import observe_message_lifecycle
+    observe_message_lifecycle(telegram, delay=pause)
+    async def deliver_and_drain():
+        await main.deliver_learning_reply(123, 1234567, receipt)
+        await telegram.flush_expirations()
+    asyncio.run(deliver_and_drain())
+    pause.assert_awaited_once()
+    assert 0 <= pause.await_args.args[0] <= 7
     telegram.request.assert_awaited_with('deleteMessage', {'chat_id': 123, 'message_id': 987})
 
 

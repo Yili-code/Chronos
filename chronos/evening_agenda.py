@@ -150,7 +150,7 @@ async def send_evening_agenda(db, calendar, telegram, settings, now=None):
                 raise RuntimeError("Evening agenda delivery needs inspection; no duplicate was sent.")
             return {"already_sent": True}
         try:
-            result = await telegram.send_message(settings.telegram_chat_id, state["parts"][state["next"]], parse_mode="HTML")
+            result = await telegram.send_message(settings.telegram_chat_id, state["parts"][state["next"]], parse_mode="HTML", requires_response=False)
         except Exception:
             db.mutate_task_action_state(key, lambda old: {**old, "status": "uncertain"})
             raise RuntimeError("Evening agenda delivery is uncertain; inspect before retrying.") from None

@@ -53,7 +53,7 @@ async def tick_study(db, telegram, chat_id: int, now: datetime) -> dict:
         if claim is not None:
             try:
                 result = await telegram.send_message(
-                    chat_id, proposal[0] if proposal else prompt_text(slot.name), parse_mode="HTML",
+                    chat_id, proposal[0] if proposal else prompt_text(slot.name), parse_mode="HTML", requires_response=True,
                     **({'reply_markup': proposal[1]} if proposal else {}),
                 )
             except TelegramError:
@@ -97,7 +97,7 @@ async def tick_study(db, telegram, chat_id: int, now: datetime) -> dict:
             try:
                 result = await telegram.send_message(chat_id,
                     f"尚未收到 {session.course_name} 的課堂進度。請直接回覆原始訊息；我會依此整理後續。",
-                    reply_to_message_id=session.prompt_message_id)
+                    reply_to_message_id=session.prompt_message_id, requires_response=True)
             except TelegramError:
                 ledger.finish(key, claim, now)
                 continue
@@ -133,7 +133,7 @@ async def notify_study_failures(db, telegram, chat_id: int, now: datetime) -> di
             try:
                 result = await telegram.send_message(chat_id,
                     f"{label}的送達狀態無法確認，且已達重試上限。"
-                    f"Chronos 已停止自動重送。{guidance}")
+                    f"Chronos 已停止自動重送。{guidance}", requires_response=True)
             except TelegramError:
                 ledger.finish(key, claim, now)
             else:

@@ -53,7 +53,7 @@ def test_calendar_notices_use_html_parse_mode():
     ledger.finish.return_value = {"status": "sent"}
     with patch("chronos.calendar_scheduler.StudyDeliveryLedger", return_value=ledger):
         asyncio.run(tick_calendar(db, bot, 123, now))
-    bot.send_message.assert_awaited_once_with(123, text, parse_mode="HTML")
+    bot.send_message.assert_awaited_once_with(123, text, parse_mode="HTML", requires_response=False)
 
 
 @pytest.mark.parametrize("classes", [("normal_instruction",), ("exam_period",),

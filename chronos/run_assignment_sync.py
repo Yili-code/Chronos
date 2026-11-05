@@ -23,15 +23,20 @@ async def run(args):
     db = create_database(settings)
     db.initialize()
     store = AssignmentObservationStore(args.observations)
-    telegram = TelegramClient(settings.telegram_bot_token)
-    while True:
-        now = datetime.now(settings.tz)
-        result = sync_assignment_observations(db, store, now)
-        delivery = await tick_assignments(db, telegram, settings.telegram_chat_id, now)
-        print(json.dumps({'assignment_sync': result, **delivery}))
-        if not args.watch:
-            return 0
-        await asyncio.sleep(30)
+    telegram = TelegramClient(settings.telegram_bot_token, expiry_store=lambda: db)
+    try:
+        while True:
+            now = datetime.now(settings.tz)
+            result = sync_assignment_observations(db, store, now)
+            delivery = await tick_assignments(db, telegram, settings.telegram_chat_id, now)
+            await telegram.flush_expirations()
+            print(json.dumps({'assignment_sync': result, **delivery}))
+            if not args.watch:
+                return 0
+            await asyncio.sleep(30)
+
+    finally:
+        await telegram.flush_expirations()
 
 
 def main():
