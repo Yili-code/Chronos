@@ -131,7 +131,7 @@ class MailWorkflow:
         state = self.get("message:" + identifier) or {}
         delivery = self.get(state["last_delivery"]) if state.get("last_delivery") else {}
         # Ambiguous cards require manual reconciliation, never silently resend.
-        return (delivery or {}).get("delivery") in {"sent", "sending", "uncertain"}
+        return bool(state.get("screened")) or (delivery or {}).get("delivery") in {"sent", "sending", "uncertain"}
 
     def require_config(self):
         if not self.settings.enable_gmail:
@@ -279,14 +279,15 @@ class MailWorkflow:
                         self.settings.gmail_max_messages,
                         f"-in:trash -in:spam -in:sent -in:drafts after:{start - 1} before:{end}",
                         skip=self.already_reported, on_page=renew)
-                    state = self.patch(day, ids=ids, more=more, window_start=start, window_end=end)
+                    state = self.patch(day, ids=ids, more=more, window_start=start, window_end=end,
+                                       screening=self.settings.gmail_first_layer_screening)
             for identifier in state["ids"]:
                 if time.monotonic() >= deadline:
                     raise GmailError("Mail digest batch paused at its time limit; retry to continue")
                 renew()
                 item_key = f"{day}:{identifier}"
                 item = self.get(item_key) or {}
-                if item.get("delivery") == "sent" or item.get("skipped"):
+                if item.get("delivery") == "sent" or item.get("skipped") or item.get("screening_done"):
                     continue
                 if item.get("delivery") in {"sending", "uncertain"}:
                     raise GmailError("Telegram mail delivery outcome is unknown; owner review required")
@@ -308,6 +309,10 @@ class MailWorkflow:
                 if saved.get("keep"):
                     reason = None
                 self.patch("message:" + identifier, mail=mail, backlog=backlog)
+                if state.get("screening") and not backlog and not pending:
+                    from .mail_screening import process
+                    await process(self, day, identifier, mail, saved, item)
+                    continue
                 if reason:
                     if "TRASH" not in mail["labels"]:
                         # Re-evaluate after a prior uncertain write: never trash a newly protected/read mail.
@@ -334,6 +339,9 @@ class MailWorkflow:
                 await self.deliver(day + ":end", text)
                 if not state["ids"]:
                     self.patch("backlog", enabled=False)
+            elif state["ids"] and state.get("screening"):
+                from .mail_screening import digest
+                await digest(self, day, state)
             elif state["ids"]:
                 await self.deliver(day + ":end", f"郵件整理完成 · {day[6:]}\n已檢查 {len(state['ids'])} 封新增郵件{suffix}。\n不重複播報；只有你能新增任務。")
             if not backlog and not state["more"]:

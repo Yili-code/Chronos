@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     gmail_discard_account_security_after: int = Field(default=0, ge=0)
     gmail_keep_senders: str = ""  # Comma-separated exact addresses or @domains.
     gmail_max_messages: int = Field(default=100, ge=1, le=500)
+    gmail_first_layer_screening: bool = True
     database_path: Path = Path("chronos.db")
     database_backend: Literal["sqlite", "firestore"] = "sqlite"
     firestore_project_id: str = ""
