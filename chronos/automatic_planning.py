@@ -4,6 +4,7 @@ from html import escape
 
 from .task_actions import task_fields
 from .task_timing import display_date
+from .mail_links import source_url, task_caption
 
 
 def routine(planner, state):
@@ -55,9 +56,41 @@ async def receipt(planner, task, state):
     if not state or state.get('status') != 'scheduled' or state.get('delivery') != 'scheduled_pending':
         return
     start, end = (datetime.fromisoformat(state[k]).astimezone(planner.settings.tz) for k in ('start', 'end'))
-    text = (f"<b>Scheduled, Sir.</b>\n{escape(task['title'])}\n"
+    text = (f"<b>已安排</b>\n{escape(task_caption(task))}\n"
             f"{display_date(start.date().isoformat())} {start:%H:%M}–"
             + (f"{display_date(end.date().isoformat())} " if end.date() != start.date() else '')
             + f"{end:%H:%M}")
+    url = source_url(task)
+    if url:
+        text += f'\n<a href="{escape(url, quote=True)}">開啟郵件</a>'
     await planner.send(task['id'], state, text,
-        planner.buttons(task['id'], state, [('adjustbooked', 'Adjust time')]), 'scheduled')
+        planner.buttons(task['id'], state, [('adjustbooked', '調整時間')]), 'scheduled')
+    current = planner.get(task['id']) or {}
+    if url and current.get('delivery') == 'scheduled_sent' and current.get('message_id'):
+        import time
+        message_id = str(current['message_id'])
+        planner.db.mutate_task_action_state('learning:mail-schedule-notices', lambda old: {
+            **(old or {}), message_id: time.time() + 7})
+        await expire_mail_receipts(planner, wait=True)
+
+
+async def expire_mail_receipts(planner, *, wait=False):
+    """Persist expiry so a later tick can recover interrupted notice cleanup."""
+    import asyncio
+    import time
+    key = 'learning:mail-schedule-notices'
+    notices = planner.db.get_task_action_state(key) or {}
+    for message_id, deadline in notices.items():
+        remaining = deadline - time.time()
+        if remaining > 0 and not wait:
+            continue
+        if remaining > 0:
+            await asyncio.sleep(remaining)
+        try:
+            result = await planner.telegram.request('deleteMessage', {
+                'chat_id': planner.settings.telegram_chat_id, 'message_id': int(message_id)})
+        except RuntimeError:
+            continue
+        if result.get('ok') or (result.get('error_code') == 400 and 'not found' in result.get('description', '').lower()):
+            planner.db.mutate_task_action_state(key, lambda old: {
+                k: v for k, v in (old or {}).items() if k != message_id})

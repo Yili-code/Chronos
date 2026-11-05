@@ -1110,7 +1110,7 @@ def test_feedback_card_combines_time_and_duration_and_explains_input(setup):
     planner.update(task['id'], lambda old: state)
     asyncio.run(planner.deliver_feedback(task, state))
     text = bot.send_message.await_args.args[1]
-    assert '10/19 (Mon) 09:00 · 原訂 10 分鐘' in text
+    assert '原訂 10/19 (Mon) 09:00–09:10' in text
     assert '目前進度到哪裡了？' in text
     assert '/taskupdate' not in text and 'Sir' not in text
     assert [b['text'] for row in bot.send_message.await_args.kwargs['reply_markup']['inline_keyboard'] for b in row] == ['已完成', '完成一部分', '還沒開始']

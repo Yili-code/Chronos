@@ -60,7 +60,7 @@ def view(planner, section="summary", page=0):
                 end = datetime.fromisoformat(state["end"]).astimezone(planner.settings.tz)
                 lines.append(f"{start:%m/%d %H:%M}–{end:%m/%d %H:%M}")
             if state['status'] == 'scheduled' and state.get('token'):
-                rows.append([{'text': 'Adjust time', 'callback_data': f"learn:adjustbooked:{task['id']}:{state['token']}"}])
+                rows.append([{'text': '調整時間', 'callback_data': f"learn:adjustbooked:{task['id']}:{state['token']}"}])
             if state['status'] == 'awaiting_resolution':
                 rows.append([{'text': 'Review next step', 'callback_data': f"learn:recover:{task['id']}:{state['token']}"}])
             if state["status"] in PENDING | {"postponed"}:
