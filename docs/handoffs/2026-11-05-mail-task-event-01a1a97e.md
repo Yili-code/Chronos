@@ -17,3 +17,12 @@
 
 - Final local validation: 4,297 Python tests passed in 212.39s, one pre-existing Starlette deprecation warning. Extension 21 passed; 124 local documentation links checked, zero missing; compilation/diff checks passed. Real Gemini invitation extraction passed separately with synthetic Calendar only. No additional live-model calls needed.
 - Implementation ready for publication: one atomic event-intent/booking change. Commit/push, PR CI, merge-source CI and guarded release next. No production Calendar event was created; the original Task button will invoke the new behavior after release.
+
+- Published atomic commit a5b0ac3def140def45a44ed48aadd991496634bd in PR https://github.com/Yili-code/Chronos/pull/142. PR CI 41963545738 passed Python 3.11, Python 3.12 and extension, including existing original-drafting replay checks. Merged with expected-head guard as 26bc2b99b2b8f02cb1b12659b57f53c01e3d88cd; merge-source CI 41963974792 pending.
+- Concurrent main updates since baseline were documentation-only release evidence; verified chronos/ and tests/ are identical between locally tested head and merge source. Other work preserved. No production event created. Guarded deployment awaits exact source CI.
+
+- Final review found the new event-cancellation terminal reply was outside the seven-second cleanup contract. Added explicit cancellation metadata, cleanup of only the version-bound clarification card (not original mail), and retry-safe expiry of the cancellation acknowledgement. Focused 55 tests passed. Separate atomic cleanup branch codex/mail-event-cancel-cleanup based on merged feature; full suite rerunning before push. No deployment yet.
+
+- Cancellation cleanup final suite: 4,298 tests passed in 210.74s; saved as its own atomic commit. Final edge-case review moved incomplete-source protection after article classification, so truncated article previews still permit reading while incomplete invitations cannot book without owner facts. Added both-store regression; final combined suite next.
+
+- Final combined local validation: 4,300 Python tests passed in 212.97s, one pre-existing Starlette warning. Compilation, diff and documentation checks passed; unchanged extension source retains the 21-passed validation. Core merge CI 41963974792 passed all required jobs. Publishing the two atomic edge-case corrections next; neither core nor corrections have been deployed yet.

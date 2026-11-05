@@ -123,8 +123,6 @@ async def prepare(mail, identifier, now, *, instruction=None, version=None):
             return answer('活動已在行事曆，未重複新增。', resolved=True)
         return answer('先前活動結果尚待核對，或已被修改／取消；沒有重新建立。')
     source_mail = saved.get('mail') or {}
-    if not instruction and (source_mail.get('body_incomplete') or source_mail.get('body_truncated')):
-        return question(mail, identifier, '這封信的內文未完整讀取。請先提供要參加的活動名稱與完整時段，或回覆取消。')
     source = json.dumps({k: source_mail.get(k) for k in ('subject','date','body','alternative_body','snippet')}, ensure_ascii=False)
     # Evidence is checked against raw fields, not escaped JSON or generated summaries.
     raw = '\n'.join(str(source_mail.get(k) or '') for k in ('subject','date','body','alternative_body','snippet'))
@@ -147,6 +145,8 @@ async def prepare(mail, identifier, now, *, instruction=None, version=None):
         return None
     if override and (state.get('source') != hashlib.sha256(raw.encode()).hexdigest() or state.get('target') != target):
         return question(mail, identifier, '郵件或行事曆設定已變更，請重新按 Task 核對活動。')
+    if not instruction and (source_mail.get('body_incomplete') or source_mail.get('body_truncated')):
+        return question(mail, identifier, '這封信的內文未完整讀取。請先提供要參加的活動名稱與完整時段，或回覆取消。')
     full_source = raw + ('\n' + instruction if instruction else '')
     try:
         reference = datetime.fromisoformat(source_mail.get('date', ''))
