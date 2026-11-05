@@ -1,8 +1,14 @@
+import pytest
 from unittest.mock import AsyncMock
 
 from chronos import main
 from chronos.tasks import ParsedTask
 from test_system import system
+
+
+@pytest.fixture(autouse=True)
+def immediate_notice_timer(monkeypatch):
+    monkeypatch.setattr(main.asyncio, "sleep", AsyncMock())
 
 
 def enable(config, monkeypatch):
@@ -171,7 +177,7 @@ def test_task_confirmation_buttons_and_edit_reply(system, monkeypatch):
     assert post(client, 9200, callback="mail:task:ab12").status_code == 200
     assert not tasks.list_open()
     buttons = bot.send_message.call_args.kwargs["reply_markup"]["inline_keyboard"][0]
-    assert [b["text"] for b in buttons] == ["Yes", "Edit", "Cancel"]
+    assert [b["text"] for b in buttons] == ["確認", "修改", "取消"]
     edit = buttons[1]["callback_data"]
     bot.send_message.return_value = {"ok": True, "result": {"message_id": 701}}
     assert post(client, 9201, callback=edit, card=700).status_code == 200
@@ -184,7 +190,7 @@ def test_task_confirmation_buttons_and_edit_reply(system, monkeypatch):
     assert len(tasks.list_open()) == 1
     assert tasks.list_open()[0]["title"] == "Investigate failed deployment"
     deleted = [call.args[1]["message_id"] for call in bot.request.await_args_list]
-    assert deleted == [500, 702]
+    assert deleted == [500, 702, 702]
     assert post(client, 9203, callback=yes, card=702).status_code == 200
     assert len(tasks.list_open()) == 1
 
@@ -227,3 +233,48 @@ def test_daily_mail_endpoint_auth_and_separation(system, monkeypatch):
     assert client.post('/internal/daily', headers=headers).status_code == 200
     daily_tasks.assert_awaited_once()
     mail.assert_awaited_once()
+
+
+@pytest.mark.parametrize("callback", ["mail:read:ab12", "mail:keep:ab12", "mail:task:ab12"])
+def test_terminal_mail_notices_expire_and_replay_does_not_resend(system, monkeypatch, callback):
+    client, tasks, bot, config = system
+    enable(config, monkeypatch)
+    if callback == "mail:task:ab12":
+        main.mail_workflow().patch("message:ab12", task_id=42)
+    bot.send_message.return_value = {"ok": True, "result": {"message_id": 777}}
+    assert post(client, 9500, callback=callback).status_code == 200
+    main.asyncio.sleep.assert_awaited_once()
+    assert 0 <= main.asyncio.sleep.await_args.args[0] <= 7
+    assert bot.request.await_args.args == ("deleteMessage", {"chat_id": 123, "message_id": 777})
+    assert post(client, 9500, callback=callback).status_code == 200
+    bot.send_message.assert_awaited_once()
+    main.asyncio.sleep.assert_awaited_once()
+
+
+def test_notice_cleanup_failure_retries_deletion_without_resend(system, monkeypatch):
+    client, tasks, bot, config = system
+    enable(config, monkeypatch)
+    main.mail_workflow().patch("message:ab12", task_id=42)
+    bot.send_message.return_value = {"ok": True, "result": {"message_id": 777}}
+    async def delete(method, data):
+        if data["message_id"] == 777:
+            return {"ok": False, "error_code": 500}
+        return {"ok": True}
+    bot.request.side_effect = delete
+    assert post(client, 9501, callback="mail:task:ab12").status_code == 502
+    assert main.db.get_update(9501)["delivered"]
+    bot.request.side_effect = None
+    bot.request.return_value = {"ok": True}
+    assert post(client, 9501, callback="mail:task:ab12").status_code == 200
+    bot.send_message.assert_awaited_once()
+    assert main.mail_workflow().get("notice:9501")["deleted"]
+
+
+def test_failed_notice_send_does_not_start_deletion_timer(system, monkeypatch):
+    client, tasks, bot, config = system
+    enable(config, monkeypatch)
+    main.mail_workflow().patch("message:ab12", task_id=42)
+    bot.send_message.return_value = {"ok": False, "error_code": 500}
+    assert post(client, 9502, callback="mail:task:ab12").status_code == 502
+    main.asyncio.sleep.assert_not_awaited()
+    assert main.mail_workflow().get("notice:9502") is None

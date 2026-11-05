@@ -1195,13 +1195,22 @@ class LearningCalendar:
         if datetime.fromisoformat(end.replace("Z", "+00:00")) > now:
             return
         state = self.update(task["id"], lambda old: {**old, "status": "awaiting_feedback",
-            "delivery": "feedback_pending", "feedback_requested_at": now.isoformat()} if old["status"] == "scheduled" else old)
+            "delivery": "feedback_pending", "feedback_requested_at": now.isoformat(),
+            "superseded_schedule_id": old.get("message_id")} if old["status"] == "scheduled" else old)
         await self.deliver_feedback(task, state)
 
     def feedback_content(self, task, state):
-        text = (f"<b>這次學得如何？</b>\n\n{escape(task['title'])}\n"
-                f"{display_time(state['start'], self.settings.tz)} · 原訂 {state['minutes']} 分鐘\n\n"
+        from .mail_links import task_caption, source_url
+        start = datetime.fromisoformat(state['start']).astimezone(self.settings.tz)
+        end = (datetime.fromisoformat(state['end']).astimezone(self.settings.tz) if state.get('end')
+               else start + timedelta(minutes=state['minutes']))
+        end_text = end.strftime('%H:%M') if end.date() == start.date() else display_time(end.isoformat(), self.settings.tz)
+        text = (f"<b>這次任務進度</b>\n\n{escape(task_caption(task))}\n"
+                f"原訂 {display_time(state['start'], self.settings.tz)}–{end_text}\n\n"
                 '目前進度到哪裡了？')
+        url = source_url(task)
+        if url:
+            text += f'\n<a href="{escape(url, quote=True)}">開啟郵件</a>'
         if state.get('outcome_reminder_count'):
             text = '還沒收到這次的進度，有空再告訴我就好。\n\n' + text
         return text, self.buttons(task['id'], state,
@@ -1210,6 +1219,17 @@ class LearningCalendar:
     async def deliver_feedback(self, task, state):
         text, buttons = self.feedback_content(task, state)
         await self.send(task["id"], state, text, buttons, "feedback")
+        current = self.get(task["id"]) or {}
+        previous = current.get("superseded_schedule_id")
+        if current.get("delivery") == "feedback_sent" and previous and previous != current.get("message_id"):
+            try:
+                result = await self.telegram.request("deleteMessage", {"chat_id": self.settings.telegram_chat_id,
+                    "message_id": previous})
+            except RuntimeError:
+                return
+            if result.get("ok") or (result.get("error_code") == 400 and "not found" in result.get("description", "").lower()):
+                self.update(task["id"], lambda old: {**old, "superseded_schedule_id": None}
+                    if old and old.get("superseded_schedule_id") == previous else old)
 
     async def tick(self, now=None, *, force_proposal=False):
         if not self.settings.enable_learning_calendar:
@@ -1250,6 +1270,8 @@ class LearningCalendar:
             return {'waiting_for': 'study rebuild reconciliation'}
         self.sync_queue()
         await self.retire_cards()
+        from .automatic_planning import expire_mail_receipts
+        await expire_mail_receipts(self)
         tasks = self.db.list_open_tasks()
         # Check-ins continue independently of the one-at-a-time approval queue.
         for task in tasks:
@@ -1273,7 +1295,8 @@ class LearningCalendar:
                 await self.book(task, state, now)
                 from .automatic_planning import receipt
                 await receipt(self, task, self.get(task["id"]))
-            elif state["status"] == "scheduled" and state.get("delivery") == "scheduled_pending":
+            elif (state["status"] == "scheduled" and state.get("delivery") == "scheduled_pending"
+                    and datetime.fromisoformat(state["end"]) > now):
                 from .automatic_planning import receipt
                 await receipt(self, task, state)
             elif state["status"] == "scheduled" and datetime.fromisoformat(state["end"]) <= now:
@@ -1281,6 +1304,8 @@ class LearningCalendar:
             elif state["status"] == "awaiting_feedback" and state.get("delivery") == "feedback_pending":
                 await self.deliver_feedback(task, state)
             elif state["status"] == "awaiting_feedback":
+                if state.get("superseded_schedule_id"):
+                    await self.deliver_feedback(task, state)
                 from .session_recovery import unanswered
                 await unanswered(self, task, state, now)
         # The nightly batch may prepare tomorrow's blocks during quiet hours.

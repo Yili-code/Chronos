@@ -352,5 +352,5 @@ def test_default_auto_accept_books_nightly_session_without_preview(setup):
     asyncio.run(planner.nightly_proposals(NIGHT))
     assert planner.get(task['id'])['status'] == 'scheduled'
     calendar.insert.assert_awaited_once()
-    assert 'Scheduled, Sir' in bot.send_message.await_args.args[1]
+    assert '已安排' in bot.send_message.await_args.args[1]
     assert 'Confirm schedule' not in str(bot.send_message.await_args.kwargs)

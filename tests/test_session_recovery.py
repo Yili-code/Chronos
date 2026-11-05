@@ -26,14 +26,14 @@ def action(planner, task, token, name, message=51):
 
 def test_nonstart_asks_reason_then_replans_only_after_owner_choice(setup):
     planner, task, calendar, bot, token, result = missed(setup)
-    assert 'What got in the way' in result['messages'][0]['text']
+    assert '未開始的原因' in result['messages'][0]['text']
     assert planner.get(task['id'])['status'] == 'awaiting_resolution'
     assert len(planner.db.list_open_tasks()) == 1
     asyncio.run(planner.tick(NOW))
     calendar.insert.assert_not_awaited()
     assert planner.get(task['id'])['status'] == 'awaiting_resolution'
     result = action(planner, task, token, 'rload')
-    assert 'Too much planned' in result['messages'][0]['text']
+    assert '安排太多' in result['messages'][0]['text']
     session_recovery.bind(planner, 52, result['messages'][0])
     assert 'already' in action(planner, task, token, 'rshort')
     reply = action(planner, task, token, 'rshort', 52)
@@ -55,7 +55,7 @@ def test_pause_and_stop_preserve_task_deadline_and_calendar(setup, decision):
     planner, task, calendar, bot, token, result = missed(setup, 'No longer needed')
     if decision == 'rconfirm':
         result = action(planner, task, token, 'rstop')
-        assert 'Confirm stop' in str(result)
+        assert '確認停止安排' in str(result)
         assert planner.get(task['id'])['status'] == 'awaiting_resolution'
         session_recovery.bind(planner, 52, result['messages'][0])
     reply = action(planner, task, token, decision, 52 if decision == 'rconfirm' else 51)
@@ -74,8 +74,8 @@ def test_repeated_nonstart_and_deadline_risk_are_visible(setup):
     planner.update(task['id'], lambda old: state)
     result = planner.feedback(task, state['token'], 'skipped', 0)
     text = result['messages'][0]['text']
-    assert '2 reported sessions' in text and 'smaller first step' in text
-    assert 'Deadline:' in text
+    assert '2 次尚未開始' in text and '縮小第一步' in text
+    assert '期限:' in text
     assert len(planner.db.list_open_tasks()) == 1
     assert 'already' in planner.feedback(task, state['token'], 'skipped', 0)
     assert planner.get(task['id'])['recovery']['missed_count'] == 2

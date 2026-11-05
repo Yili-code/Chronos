@@ -14,35 +14,40 @@ ACTIONS = {"recover", "rbusy", "rforgot", "rload", "rlarge", "rirrelevant", "rpr
 def card(planner, task, state, now=None):
     recovery = state["recovery"]
     stage = recovery["stage"]
-    lines = [f"<b>Let’s decide the next step, Sir.</b>\n{escape(task['title'])}",
-             "Recorded as not started. The task remains open."]
+    lines = [f"<b>下一步安排</b>\n{escape(task['title'])}",
+             "這次尚未開始，任務仍保留。"]
     count = recovery.get("missed_count", 1)
     if count >= 2:
-        lines.append(f"Not started in {count} reported sessions. Consider a smaller first step or a different time; rescheduling alone may not help.")
+        lines.append(f"已回報 {count} 次尚未開始。可縮小第一步或換個時段，避免只是不斷延後。")
     from .nightly_planning import deadline
     due = deadline(task, planner.settings)
     if due:
-        label = "Deadline has passed" if due <= (now or datetime.fromisoformat(recovery["reported_at"])) else "Deadline"
-        lines.append(f"{label}: {due:%m/%d %H:%M}. Delay reduces the remaining time; the deadline is unchanged.")
+        label = "期限已過" if due <= (now or datetime.fromisoformat(recovery["reported_at"])) else "期限"
+        lines.append(f"{label}: {due:%m/%d %H:%M}. 延後會減少剩餘時間，原期限不變。")
     if stage == "reason":
-        lines.append("What got in the way? Choose one, or describe it in your own words.")
-        values = [("r" + key, value) for key, value in REASONS.items()] + [("rwrite", "Other reason")]
+        lines.append("這次未開始的原因？可選擇下方項目或自行說明。")
+        values = [("r" + key, {"busy": "臨時有事", "forgot": "忘記了", "load": "安排太多", "large": "任務太大", "irrelevant": "已不需要", "private": "不方便說明"}[key]) for key in REASONS] + [("rwrite", "其他原因")]
     elif stage == "stop_confirm":
-        lines.append("Stop arranging this task? It will stay in your task list, uncompleted. Its deadline and past Calendar event will be retained.")
-        values = [("rconfirm", "Confirm stop planning"), ("rback", "Keep considering")]
+        lines.append("停止安排這個任務？任務會保留為未完成，原期限與過去的 Calendar 行程也會保留。")
+        values = [("rconfirm", "確認停止安排"), ("rback", "返回選擇")]
     else:
-        lines.append("Obstacle: " + escape(recovery.get("reason", "Not specified")))
+        reason = recovery.get("reason", "未指定")
+        labels = {"An interruption": "臨時有事", "Forgot": "忘記了", "Too much planned": "安排太多",
+                  "Task felt too large": "任務太大", "No longer needed": "已不需要", "Prefer not to say": "不方便說明"}
+        lines.append("未開始原因：" + escape(labels.get(reason, reason)))
+        if reason == "Forgot":
+            lines.append("可以重新安排到方便開始的時間；這次回報不會自動新增提醒。")
         if recovery.get('reason') in {'Too much planned', 'Task felt too large'}:
-            lines.append("A shorter first session may be more realistic. It will not reduce the recorded task scope.")
+            lines.append("可以先安排較短的時段，任務範圍仍完整保留。")
         elif recovery.get('reason') == 'No longer needed':
-            lines.append("If this is no longer useful, consider stopping further planning rather than moving it again.")
-        lines.append("Choose another time, a shorter first work session, or pause. " +
-            ("I’ll arrange the session and report the result; exceptions will need your decision." if planner.settings.learning_auto_accept
-             else "A new Calendar block requires a separate confirmation."))
-        values = [("ragain", "Find another time")]
+            lines.append("如果已經不需要，可以停止安排，任務仍會保留。")
+        lines.append("請選擇重新安排、縮短時段或暫緩。 " +
+            ("我會安排時段並回報結果；遇到衝突再請你決定。" if planner.settings.learning_auto_accept
+             else "新的 Calendar 時段會先請你確認。"))
+        values = [("ragain", "重新安排")]
         if state.get('minutes', 30) > 15:
-            values.append(("rshort", "Try a shorter session"))
-        values.extend([("rdefer", "Defer for now"), ("rstop", "Stop planning")])
+            values.append(("rshort", "縮短時段"))
+        values.extend([("rdefer", "暫緩安排"), ("rstop", "停止安排")])
     return {"messages": [{"text": "\n\n".join(lines), "parse_mode": "HTML",
         "reply_markup": {"inline_keyboard": [planner.buttons(task['id'], state, values[i:i+2]) for i in range(0, len(values), 2)]},
         "learning_recovery": {"task_id": task['id'], "token": state['token'], "stage": stage}}]}

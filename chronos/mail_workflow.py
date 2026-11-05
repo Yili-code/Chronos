@@ -8,7 +8,6 @@ import uuid
 from datetime import datetime, timedelta
 from email.utils import parseaddr
 from html import escape
-from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -16,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .ai import AIError
 from .gmail import GmailError, clean
 from .telegram import TelegramError
+from .mail_links import mail_url
 
 
 PROTECTED = re.compile(
@@ -77,18 +77,18 @@ def mail_buttons(identifier, backlog=False):
     if len(identifier) > 32:
         return None
     return {"inline_keyboard": [[
-        {"text": "Trash", "callback_data": f"mail:trash:{identifier}"},
-        {"text": "Task", "callback_data": f"mail:task:{identifier}"},
+        {"text": "垃圾桶", "callback_data": f"mail:trash:{identifier}"},
+        {"text": "新增任務", "callback_data": f"mail:task:{identifier}"},
     ], [
-        {"text": "Archive" if backlog else "Keep", "callback_data": f"mail:keep:{identifier}"},
-        {"text": "Read", "callback_data": f"mail:read:{identifier}"},
+        {"text": "封存" if backlog else "保留", "callback_data": f"mail:keep:{identifier}"},
+        {"text": "已讀", "callback_data": f"mail:read:{identifier}"},
     ]]}
 
 
 def format_mail_card(mail, summary, account):
     excerpt = summary.startswith(("原文摘錄：", "原文摘錄（摘要暫不可用）："))
     summary = re.sub(r"^原文摘錄(?:（摘要暫不可用）)?：", "", summary)
-    label = "Original excerpt" if excerpt else "摘要"
+    label = "原文摘錄" if excerpt else "摘要"
     sender = mail["sender"]
     evidence_notice = ("部分內文或附件未讀取；摘要僅涵蓋可讀內容。\n\n"
                        if mail.get("body_incomplete") or mail.get("body_truncated") else "")
@@ -96,11 +96,11 @@ def format_mail_card(mail, summary, account):
         evidence_notice += "寄件者或收件者標頭有歧義；請先在 Gmail 核對身份與名單。\n\n"
     if mail.get("alternative_body"):
         evidence_notice += "純文字與 HTML 有不同版本，已保留兩者供核對；未自動清理。\n\n"
-    url = f"https://mail.google.com/mail/u/{quote(account, safe='@')}/#all/{quote(mail['id'], safe='')}"
-    return (f"📬 <b>{escape(display_text(mail['subject']))}</b>\n\n"
+    url = mail_url(mail, account)
+    return (f"<b>{escape(display_text(mail['subject']))}</b>\n\n"
             f"<b>寄件者</b>  {escape(sender)}\n\n"
             f"<b>{label}</b>\n{evidence_notice}{escape(display_text(summary))}\n\n"
-            f'<a href="{escape(url, quote=True)}">Open email</a>')
+            f'<a href="{escape(url, quote=True)}">開啟郵件</a>')
 
 
 class MailSummary(BaseModel):
@@ -328,9 +328,9 @@ class MailWorkflow:
             suffix = "（達本次上限，其餘新信留待後續整理）" if state["more"] else ""
             if backlog:
                 text = (f"歷史郵件第 {progress['number']} 批 · {len(state['ids'])} 封\n"
-                        "請選 Trash、Archive 或 Read；完成後傳 /mail_next。Read 會保留在收件匣，但不再列入整理。")
+                        "請選垃圾桶、封存或已讀；完成後傳 /mail_next。已讀會保留在收件匣，但不再列入整理。")
                 if not state["ids"]:
-                    text = "歷史郵件整理完成。選擇 Read 的信仍在收件匣；新郵件由每日排程接手。"
+                    text = "歷史郵件整理完成。標為已讀的信仍在收件匣；新郵件由每日排程接手。"
                 await self.deliver(day + ":end", text)
                 if not state["ids"]:
                     self.patch("backlog", enabled=False)
@@ -400,39 +400,39 @@ class MailWorkflow:
         task_action = re.fullmatch(r"(confirm|edit|cancel)_([a-f0-9]{8})", action)
         if action == "task" or task_action or (saved.get("draft_edit") and action not in {"trash", "read", "keep", "archive", "封存"}):
             if saved.get("task_id") is not None:
-                return lambda: f"This email already has task #{saved['task_id']}. No duplicate was added."
+                return lambda: "這封郵件已有任務，未重複新增。"
             if task_action:
                 kind, token = task_action.groups()
                 def apply_draft():
                     current = self.get("message:" + identifier) or {}
                     if current.get("task_id") is not None:
-                        return f"This email already has task #{current['task_id']}. No duplicate was added."
+                        return "這封郵件已有任務，未重複新增。"
                     if current.get("draft_token") != token or not current.get("draft_title"):
-                        return "That confirmation has expired. Tap Task to prepare a fresh one."
+                        return "確認已過期，請從郵件卡片重新選擇新增任務。"
                     if kind == "cancel":
                         self.patch("message:" + identifier, draft_title=None, draft_token=None, draft_edit=False)
-                        return "Understood. No task was added."
+                        return "已取消，沒有新增郵件任務。"
                     if kind == "edit":
                         self.patch("message:" + identifier, draft_edit=True)
-                        return "Reply with the revised task title."
+                        return "請回覆修改後的任務標題。"
                     if current.get("draft_edit"):
-                        return "Enter the revised task title before confirming."
+                        return "請先輸入修改後的任務標題。"
                     title = current["draft_title"]
                     def create_confirmed(old):
                         if old.get("task_id") is not None:
                             return old
                         task = self.db.create_task(title, None, None, now or datetime.now(self.settings.tz),
-                            {"source_text": f"Gmail: https://mail.google.com/mail/u/{self.settings.gmail_account}/#all/{identifier}"})
+                            {"source_text": "Gmail: " + mail_url({**(current.get("mail") or saved["mail"]), "id": identifier}, self.settings.gmail_account)})
                         return {**old, "task_id": task["id"], "draft_edit": False, "draft_token": None}
                     state = self.db.mutate_mail_state(self.key("message:" + identifier), create_confirmed)
-                    return f"Added task #{state['task_id']}: {title}"
+                    return "郵件任務已新增。"
                 return apply_draft
-            title = ("Read email: " + display_text(saved["mail"]["subject"])) if action == "task" else instruction
+            title = ("郵件閱讀｜" + display_text(saved["mail"]["subject"])) if action == "task" else instruction
             title = clean(title, 200)
             token = hashlib.sha256(title.encode()).hexdigest()[:8]
             def propose():
                 self.patch("message:" + identifier, draft_title=title, draft_token=token, draft_edit=False)
-                return "Create this task?\n\n" + title
+                return "新增這個郵件任務？\n\n" + title
             return propose
         if action in {"封存", "archive"} or (action == "keep" and saved.get("backlog")):
             await self.gmail.verify_account()
@@ -459,7 +459,7 @@ class MailWorkflow:
         match = re.fullmatch(r"(?:新增任務|加到\s*tasks|task|todo|/task)\s*[:：]?\s*(.*)", instruction, re.I | re.S)
         if action == "task" or match:
             if saved.get("task_id") is not None:
-                return lambda: f"This email already has task #{saved['task_id']}. No duplicate was added."
+                return lambda: "這封郵件已有任務，未重複新增。"
             mail = saved["mail"]
             detail = match.group(1) if match else ""
             source = json.dumps({"owner_request": detail or "Create a follow-up task for this email.",
@@ -470,7 +470,7 @@ class MailWorkflow:
                 return lambda: "任務解析暫時失敗，尚未新增。請回覆「新增任務：具體要做的事」重試。"
             # Retain the source mail without treating any mail text as executable commands.
             parsed.timing = {**parsed.timing, "source_text": ((parsed.timing.get("source_text") or "")[:1700] +
-                f"\nGmail: https://mail.google.com/mail/u/{self.settings.gmail_account}/#all/{identifier}")}
+                "\nGmail: " + mail_url({**mail, "id": identifier}, self.settings.gmail_account))}
             def create():
                 def transition(old):
                     if old.get("task_id") is not None:
@@ -479,7 +479,7 @@ class MailWorkflow:
                                                now or datetime.now(self.settings.tz), parsed.timing)
                     return {**old, "task_id": task["id"]}
                 state = self.db.mutate_mail_state(self.key("message:" + identifier), transition)
-                return f"Added task #{state['task_id']}: {parsed.title}"
+                return "郵件任務已新增。"
             return create
         pending = [(kind, self.get(kind + ":" + identifier) or {}) for kind in ("reply", "meeting")]
         pending = [(kind, state) for kind, state in pending if state.get("status") == "needs_information"

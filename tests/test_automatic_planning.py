@@ -43,14 +43,14 @@ def test_default_books_then_notifies_without_proposal_or_accept_button(setup):
     calendar.insert.assert_awaited_once()
     bot.send_message.assert_awaited_once()
     text = bot.send_message.await_args.args[1]
-    assert 'Scheduled, Sir' in text and task['title'] in text and 'proposed' not in text
+    assert '已安排' in text and task['title'] in text and 'proposed' not in text
     from datetime import datetime
     from chronos.task_timing import display_date
     start = datetime.fromisoformat(state['start'])
     assert display_date(start.date().isoformat()) in text
     assert 'minutes' not in text
     assert 'Confirm schedule' not in str(bot.send_message.await_args.kwargs)
-    assert 'Adjust time' in str(bot.send_message.await_args.kwargs)
+    assert '調整時間' in str(bot.send_message.await_args.kwargs)
     asyncio.run(planner.tick(NOW))
     calendar.insert.assert_awaited_once()
     bot.send_message.assert_awaited_once()
@@ -169,3 +169,83 @@ def test_booked_receipt_opens_adjustment_without_changing_the_event(system, setu
     assert not main.db.get_task_action_state('learning:edit-chat:123')
     assert planner.get(task['id'])['status'] == 'scheduled'
     calendar.insert.assert_awaited_once()
+
+
+def test_overdue_pending_receipt_goes_directly_to_feedback(setup):
+    planner, task, calendar, bot = setup
+    token = 'a' * 32
+    state = {'status': 'scheduled', 'token': token, 'delivery': 'scheduled_pending', 'minutes': 30,
+             'start': (NOW - timedelta(hours=1)).isoformat(), 'end': (NOW - timedelta(minutes=30)).isoformat(),
+             'event_id': 'event', 'message_id': 40, 'snapshot': task_fields(task)}
+    planner.update(task['id'], lambda old: state)
+    calendar.event.return_value = {'end': {'dateTime': state['end']},
+        'extendedProperties': {'private': {'chronosToken': token}}}
+    asyncio.run(planner.tick(NOW))
+    assert planner.get(task['id'])['status'] == 'awaiting_feedback'
+    bot.send_message.assert_awaited_once()
+    assert '這次任務進度' in bot.send_message.await_args.args[1]
+    assert '已安排' not in bot.send_message.await_args.args[1]
+
+
+def test_feedback_replaces_old_schedule_only_after_delivery_and_retries_cleanup(setup):
+    planner, task, calendar, bot = setup
+    state = {'status': 'awaiting_feedback', 'token': 'a' * 32, 'delivery': 'feedback_pending', 'minutes': 30,
+             'start': NOW.isoformat(), 'end': (NOW + timedelta(minutes=30)).isoformat(),
+             'superseded_schedule_id': 40, 'message_id': 40}
+    planner.update(task['id'], lambda old: state)
+    bot.send_message.return_value = {'ok': False}
+    with pytest.raises(CalendarError):
+        asyncio.run(planner.deliver_feedback(task, state))
+    bot.request.assert_not_awaited()
+    bot.send_message.return_value = {'ok': True, 'result': {'message_id': 51}}
+    bot.request.return_value = {'ok': False, 'error_code': 500}
+    asyncio.run(planner.deliver_feedback(task, planner.get(task['id'])))
+    assert planner.get(task['id'])['superseded_schedule_id'] == 40
+    bot.request.return_value = {'ok': True}
+    asyncio.run(planner.deliver_feedback(task, planner.get(task['id'])))
+    assert bot.send_message.await_count == 2
+    assert planner.get(task['id'])['superseded_schedule_id'] is None
+    bot.request.assert_awaited_with('deleteMessage', {'chat_id': planner.settings.telegram_chat_id, 'message_id': 40})
+
+
+def test_mail_schedule_and_feedback_have_compact_titles_full_time_and_source(setup, monkeypatch):
+    monkeypatch.setattr(asyncio, "sleep", AsyncMock())
+    from chronos.automatic_planning import receipt
+    planner, task, calendar, bot = setup
+    task = {**task, 'title': 'Read email: ' + 'Networking ' * 25,
+            'timing': {'source_text': 'Gmail: https://mail.google.com/mail/u/owner@example.com/#all/ab12'}}
+    state = {'status': 'scheduled', 'token': 'a' * 32, 'delivery': 'scheduled_pending', 'minutes': 30,
+             'start': NOW.isoformat(), 'end': (NOW + timedelta(minutes=30)).isoformat()}
+    planner.update(task['id'], lambda old: state)
+    asyncio.run(receipt(planner, task, state))
+    scheduled = bot.send_message.await_args.args[1]
+    feedback, buttons = planner.feedback_content(task, state)
+    for text in [scheduled, feedback]:
+        assert 'Read email:' not in text and 'Sir' not in text
+        assert '郵件閱讀｜' in text and '…' in text
+        assert '09:00–09:30' in text and '開啟郵件</a>' in text
+    assert [b['text'] for b in buttons] == ['已完成', '完成一部分', '還沒開始']
+
+
+def test_mail_schedule_receipt_expires_without_losing_plan_or_rebooking(setup, monkeypatch):
+    from chronos.automatic_planning import receipt, expire_mail_receipts
+    from chronos.mail_links import mail_url
+    timer = AsyncMock()
+    monkeypatch.setattr(asyncio, 'sleep', timer)
+    planner, task, calendar, bot = setup
+    task = {**task, 'timing': {'source_text': 'Gmail: ' + mail_url({'id': 'ab12'}, 'owner@example.com')}}
+    state = {'status': 'scheduled', 'token': 'a' * 32, 'delivery': 'scheduled_pending', 'minutes': 30,
+             'start': NOW.isoformat(), 'end': (NOW + timedelta(minutes=30)).isoformat()}
+    planner.update(task['id'], lambda old: state)
+    bot.request.return_value = {'ok': False, 'error_code': 500}
+    asyncio.run(receipt(planner, task, state))
+    timer.assert_awaited_once()
+    assert 0 < timer.await_args.args[0] <= 7
+    assert planner.db.get_task_action_state('learning:mail-schedule-notices')
+    assert planner.get(task['id'])['status'] == 'scheduled'
+    bot.request.return_value = {'ok': True}
+    asyncio.run(expire_mail_receipts(planner, wait=True))
+    asyncio.run(receipt(planner, task, planner.get(task['id'])))
+    assert not planner.db.get_task_action_state('learning:mail-schedule-notices')
+    bot.send_message.assert_awaited_once()
+    calendar.insert.assert_not_awaited()
