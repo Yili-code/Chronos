@@ -1683,7 +1683,90 @@
     "missing_links": 0,
     "diff_check": "Pass"
   },
-  "production_deployed": false,
+  "production_deployed": true,
   "production_case_execution": false,
-  "original_acceptance_complete": false
+  "original_acceptance_complete": false,
+  "production_release": {
+    "sha": "e36c7d4cb79d6e4d84f15cf054651db1df51fd4f",
+    "ci_run": 41964508181,
+    "revision": "chronos-executive-e36c7d4",
+    "traffic_percent": 100,
+    "rollback": "chronos-executive-b85901d",
+    "deployed_at": "2026-11-05T04:00:23.277839+00:00",
+    "runtime_settings_preserved": true,
+    "smoke": {
+      "readiness": "ready",
+      "calendar_read_verified": true,
+      "gmail_enabled": true,
+      "telegram_connected": true,
+      "reports": {
+        "brief": {
+          "parts": 2,
+          "read_only": true
+        },
+        "week": {
+          "parts": 8,
+          "read_only": true
+        },
+        "time": {
+          "parts": 1,
+          "read_only": true
+        }
+      }
+    },
+    "synthetic_production_writes": false
+  },
+  "independent_production_probes": [
+    {
+      "revision": "chronos-executive-e36c7d4",
+      "source": "e36c7d4cb79d6e4d84f15cf054651db1df51fd4f",
+      "traffic": [
+        {
+          "revision": "chronos-executive-e36c7d4",
+          "percent": 100
+        }
+      ]
+    },
+    {
+      "component": "mail",
+      "http": 200,
+      "verified_flags": {
+        "enabled": true,
+        "telegram_connected": true,
+        "send_enabled": true,
+        "send_requires_confirmation": true,
+        "automatic_send_enabled": false
+      }
+    },
+    {
+      "component": "calendar",
+      "http": 200,
+      "verified_flags": {
+        "enabled": true,
+        "calendar_read_verified": true
+      }
+    }
+  ],
+  "unauthenticated_access_probe": {
+    "unauthenticated_mail_status_http": 403,
+    "body_read": false
+  },
+  "pr_number": 143,
+  "pr_head": "1b27e2c508d7041d434db6a712f8a26320106f9f",
+  "pr_ci": 41964107066,
+  "merge_ci": 41964508181,
+  "required_jobs": [
+    "extension",
+    "test (3.11)",
+    "test (3.12)"
+  ],
+  "required_jobs_conclusion": "success",
+  "combined_source_validation": {
+    "additional_runtime": "Concurrent email attendance-event feature merged before this release",
+    "targeted_local_tests": 82,
+    "wheel_runtime_modules": 121,
+    "wheel_sha256": "f784e2a7619ef059ce9307e024a6f2a492df1c7854831d6e19c4b7ef7285dca1",
+    "wheel_matches_exact_merge_source": true,
+    "full_validation": "Exact merge CI all required jobs successful"
+  }
 }
