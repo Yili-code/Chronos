@@ -24,3 +24,20 @@ def test_date_and_next_page_are_not_completed_page_measurements():
     assert values['completed'] == 20 and 'total' not in values
     assert extract('下次從第21頁開始') == {'next_page':21}
     assert 'total' not in extract('總共兩小時，到第20頁')
+
+@pytest.mark.parametrize('text', ['三個小時完成 4/7', '三個小時完成 4/7 題', '三小時，完成四題，共七題', '三小時，要解七題我完成了四題'])
+def test_question_counts_preserve_units(text):
+    assert extract(text, unit='questions') == {'minutes': 180, 'unit': 'questions', 'completed': 4, 'total': 7}
+
+
+def test_bare_fraction_requires_question_context_and_dates_stay_dates():
+    assert extract('4/7', unit='questions') == {'unit': 'questions', 'completed': 4, 'total': 7}
+    assert extract('4/7') == {}
+    assert extract('11/5 讀三小時，完成四題，共七題')['total'] == 7
+    assert 'total' not in extract('11/5 讀三小時', unit='questions')
+
+def test_generic_counts_do_not_invent_question_or_page_units():
+    assert extract('三小時完成4/7') == {'minutes': 180, 'unit': 'items', 'completed': 4, 'total': 7}
+    assert extract('4/7', unit='items') == {'unit': 'items', 'completed': 4, 'total': 7}
+    assert extract('完成4/7頁') == {'completed': 4, 'total': 7}
+    assert extract('到第4頁', unit='questions') == {'unit': 'pages', 'completed': 4}
