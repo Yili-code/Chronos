@@ -47,6 +47,9 @@ jobs:
       - name: Observe secretary workflow cases
         run: uv run python scripts/audit_secretary_workflows.py --output secretary-workflow-evidence.json --basetemp .pytest-secretary-workflow
 
+      - name: Replay original drafting request slice
+        run: uv run python scripts/audit_original_drafting.py --output original-drafting-evidence.json --basetemp .pytest-original-drafting
+
       - name: Upload validation evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -56,6 +59,7 @@ jobs:
             release-evidence.json
             python-test-results.xml
             secretary-workflow-evidence.json
+            original-drafting-evidence.json
           if-no-files-found: error
           retention-days: 30
 

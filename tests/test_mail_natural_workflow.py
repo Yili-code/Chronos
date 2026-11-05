@@ -128,6 +128,27 @@ def test_task_request_keeps_task_router():
     assert not requires_mail_context("幫我新增買牛奶的任務")
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", ["幫我不要草擬回覆", "幫我不用追蹤回覆", "handle this email: do not reply", "handle this email: never draft a reply",
+    "幫我不要替我回覆", "幫我不用幫我草擬回覆", "handle this email: don't actually reply", "handle this email: do not automatically draft a reply"])
+async def test_negated_operations_do_not_become_local_drafts(workflow, text):
+    configure(workflow, MailPlan(draft=True))
+    assert "未套用" in await act(workflow, text)
+    assert workflow.get("reply:ab12") is None
+    workflow.ai._generate_output.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", ["幫我草擬回覆，不要透露內部數字", "handle this email: draft a reply, do not disclose private figures",
+    "handle this email: draft a one-line reply, do not disclose private figures"])
+async def test_content_restrictions_reach_the_model_without_becoming_operation_negation(workflow, text):
+    configure(workflow, MailPlan(draft=True))
+    assert "僅本機" in await act(workflow, text)
+    assert workflow.get("reply:ab12")["owner_request"] == text
+    assert text in workflow.ai._generate_output.call_args.args[1]
+    workflow.gmail.send_reviewed_draft.assert_not_awaited()
+
+
 def test_webhook_composite_replay_and_followup_card_binding(system, monkeypatch):
     from test_correspondence_webhook import configure as configure_webhook
     from test_mail_webhook import post
