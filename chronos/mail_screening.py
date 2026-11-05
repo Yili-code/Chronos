@@ -288,4 +288,4 @@ async def digest(workflow, day, state):
         workflow.patch(day + ":screening-digest", pages=pages, html=True)
         snapshot = {"html": True}
     for index, page in enumerate(pages):
-        await workflow.deliver(f"{day}:screening-digest:{index}", page, html=bool(snapshot.get("html")))
+        await workflow.deliver(f"{day}:screening-digest:{index}", page, html=bool(snapshot.get("html")), retain=True)
