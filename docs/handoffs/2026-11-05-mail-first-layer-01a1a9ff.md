@@ -1,0 +1,21 @@
+# Mail first-layer screening
+
+- Updated: 2026-11-05 Asia/Taipei.
+- Baseline: codex/production-ack-evidence / 7dc2264; supplied sync hook evidence ahead=0 behind=0. Existing unrelated local modifications preserved.
+- Goal: Chronos should reduce owner mail decisions through first-layer screening rather than forward each message as a notification.
+- Read: AGENTS.md, PROJECT_STATUS.md, Gmail activation/diagnosis handoffs, docs/gmail.md, actual mail_workflow.py, gmail.py and settings.py.
+- Verified local behavior: deterministic promotional/security trash rules precede per-message AI summary and Telegram card. Summary schema has summary/next_step only; no relevance or notification-tier decision. Every filtered message also gets an individual trash notice. Daily scan covers read/unread new mail; protected mail and explicit keep state affect filtering.
+- Proposed policy: actionable or consequential mail receives an individual card with reason/action/deadline; informational mail joins a digest; clear low-value bulk mail is quietly organized with aggregate counts; uncertain mail remains visible for review. Relevance must account for owner interests rather than treating all newsletters as junk. No inferred deadlines, eligibility or task creation.
+- Pending: owner preference requested asynchronously for automatic archive vs notification-only vs promotional trash. This controls real mailbox side effects; no new archive authority assumed while awaiting response.
+- No source edits, mailbox operations, outgoing messages, commit, push or deployment. Current production behavior not independently queried during this diagnosis.
+- Next: settle scope, use isolated codex branch/worktree, implement structured triage and durable digest/retry behavior while preserving both stores, keep overrides and existing delivery uncertainty protection; run required full suite and PR CI. Deployment requires applicable authorization.
+
+- Updated 2026-11-05 Asia/Taipei: owner selected automatic low-value archiving with tiered notifications. This authorizes reversible mailbox organization as feature behavior; deployment is not yet authorized.
+- Isolated implementation: .worktrees/mail-first-layer, branch codex/mail-first-layer, base origin/main 8ff04b1. Root checkout and other tasks untouched. This supersedes the original baseline for implementation.
+- Implemented: MailDecision structured screening; deterministic protection of attachments/ambiguous MIME/personal/important/starred/allowlisted/kept/task-linked/actionable/opportunity mail; important/review individual cards; FYI aggregate; low-value bulk archive and aggregate reasons/links. Current Gmail evidence is re-read before archive. Default enabled for newly created daily batches; legacy in-progress batches and manual backlog retain their original contract.
+- Durable per-message decisions, archive intent, handled state and immutable paginated digest snapshots use existing store APIs. Existing uncertain-delivery handling is reused; no schema migration. No auto task creation or new send capability.
+- Validation: 120 targeted screening/workflow/webhook tests passed using SQLite and Firestore fake. Documentation links: 177 Markdown files /126 links/0 missing. Full Python suite running; not yet a full-pass claim. Restricted execution initially failed on temp-directory setup; a subsequent restricted run stalled and was stopped; approved mock-test execution passed.
+- Remaining: full suite, source/diff checks, atomic English commit, PR CI and merge only after required jobs succeed. Production activation/deployment remains pending separate authorization. No live mailbox writes or provider-classification accuracy claim.
+
+- Final local validation 2026-11-05 Asia/Taipei: complete Python suite 4,409 passed/0 failures in 327.01 seconds. The 141 warnings are FastAPI/Starlette deprecation and pytest JUnit record_property compatibility warnings; see ignored .pytest-tmp/screening-full.log and screening-full.xml. Extension suite 21 passed. Compilation and git diff --check passed. Local ruff module unavailable; required undefined-name check remains a CI gate.
+- Preparing one atomic commit and PR. No production deployment or mailbox access performed. Test evidence is local/mock; classification accuracy on real owner mail remains unverified.

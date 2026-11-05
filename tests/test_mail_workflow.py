@@ -48,7 +48,8 @@ def workflow(request, tmp_path, monkeypatch):
     else:
         db = Database(tmp_path / "mail.db")
         db.initialize()
-    config = Settings(_env_file=None, enable_gmail=True, gmail_account="owner@example.com",
+    # Legacy delivery/reconciliation contracts remain covered independently of screening.
+    config = Settings(_env_file=None, enable_gmail=True, gmail_first_layer_screening=False, gmail_account="owner@example.com",
                       gmail_client_id="client", gmail_client_secret="secret", gmail_refresh_token="refresh",
                       telegram_chat_id=123, telegram_bot_token="token", telegram_webhook_secret="hook")
     gmail = AsyncMock()
