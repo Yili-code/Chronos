@@ -10,6 +10,7 @@ from chronos.gmail import GmailError
 from chronos.mail_workflow import MailWorkflow, MailSummary, filter_reason
 from chronos.settings import Settings
 from chronos.tasks import ParsedTask
+from chronos.mail_task_event import MailTaskIntent
 from chronos.telegram import TelegramError
 
 
@@ -64,6 +65,9 @@ def workflow(request, tmp_path, monkeypatch):
     ai = AsyncMock()
     ai._generate_output.return_value = MailSummary(summary="待完成報告", next_step="確認期限")
     ai.parse.return_value = ParsedTask("Finish report")
+    async def generate(*args, **kwargs):
+        return MailTaskIntent(kind='reading') if args[-2] is MailTaskIntent else ai._generate_output.return_value
+    ai._generate_output.side_effect = generate
     return MailWorkflow(db, gmail, bot, ai, config)
 
 
@@ -220,7 +224,7 @@ def test_mail_card_escapes_html_and_hides_display_noise():
     assert "開啟郵件</a>" in text
     assert "7693d1e" in mail["subject"]
     buttons = mail_buttons("ab12", True)["inline_keyboard"]
-    assert [b["text"] for row in buttons for b in row] == ["垃圾桶", "新增任務", "封存", "已讀"]
+    assert [b["text"] for row in buttons for b in row] == ["垃圾桶", "加入安排", "封存", "已讀"]
 
 
 @pytest.mark.parametrize("subject", ["安全性快訊", "New sign-in on Windows", "Unusual login activity", "Your password was changed", "密碼已變更"])
