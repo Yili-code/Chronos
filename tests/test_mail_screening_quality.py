@@ -2,6 +2,9 @@ import pytest
 
 from chronos.ai import AIError
 from chronos.gmail import GmailError
+from chronos.message_lifecycle import KEY
+from chronos.telegram import TelegramClient
+from unittest.mock import AsyncMock
 from chronos.mail_screening import MailDecision, decide, digest, evidence_units, format_deadline, format_decision, ground_facts
 from test_mail_workflow import workflow, message  # noqa: F401
 
@@ -164,3 +167,31 @@ async def test_old_plain_digest_snapshot_keeps_its_original_delivery_contract(wo
     await digest(workflow,'daily:2026-11-05',{'ids':[],'more':False})
     call=workflow.telegram.send_message.call_args
     assert call.args[1]=='Old plain A & B' and call.kwargs['parse_mode'] is None
+
+
+@pytest.mark.asyncio
+async def test_reference_digest_survives_expiry_flush_and_worker_restart(workflow):
+    bot=TelegramClient('test-token',expiry_store=lambda:workflow.db)
+    bot.request=AsyncMock(return_value={'ok':True,'result':{'message_id':800}})
+    workflow.telegram=bot
+    workflow.patch('daily:2026-11-05:screening-digest',pages=['<b>Other mail</b>'],html=True)
+    await digest(workflow,'daily:2026-11-05',{'ids':[],'more':False})
+    assert not workflow.db.get_task_action_state(KEY)
+    await bot.flush_expirations()
+    assert [call.args[0] for call in bot.request.call_args_list]==['sendMessage']
+    fresh=TelegramClient('test-token',expiry_store=lambda:workflow.db)
+    fresh.request=AsyncMock()
+    await fresh.flush_expirations()
+    fresh.request.assert_not_awaited()
+    assert workflow.get('daily:2026-11-05:screening-digest:0')['delivery']=='sent'
+
+
+@pytest.mark.asyncio
+async def test_ordinary_completion_still_expires_when_digest_retention_is_added(workflow,monkeypatch):
+    monkeypatch.setattr('chronos.message_lifecycle.asyncio.sleep',AsyncMock())
+    bot=TelegramClient('test-token',expiry_store=lambda:workflow.db)
+    bot.request=AsyncMock(side_effect=[{'ok':True,'result':{'message_id':801}},{'ok':True}])
+    workflow.telegram=bot
+    await workflow.deliver('ordinary-completion','郵件操作完成。')
+    await bot.flush_expirations()
+    bot.request.assert_any_await('deleteMessage',{'chat_id':123,'message_id':801})
