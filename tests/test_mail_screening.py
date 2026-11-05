@@ -32,7 +32,7 @@ async def test_daily_screens_before_notification_without_trash_or_task(workflow)
              "ab13": message("ab13", subject="Weekly technology digest", body="New tools", snippet="New tools"),
              "ab14": message("ab14", subject="Interview", body="Reply by Friday", unsubscribe=False)}
     now = setup_screening(workflow, mails, [decision(), decision("information"),
-        decision("important", reason="面試需要回覆。", next_step="週五前回覆。")])
+        decision("important", reason="面試需要回覆。", action_required=True, next_step="週五前回覆。")])
     await workflow.daily(now)
     workflow.gmail.archive.assert_awaited_once_with("ab12")
     workflow.gmail.trash.assert_not_awaited()
@@ -41,9 +41,10 @@ async def test_daily_screens_before_notification_without_trash_or_task(workflow)
     assert "UNREAD" in mails["ab12"]["labels"]
     assert workflow.telegram.send_message.await_count == 2
     card, aggregate = workflow.telegram.send_message.call_args_list
-    assert "需要你留意" in card.args[1]
+    assert "需要你做的事" in card.args[1]
     assert workflow.binding(123, 100)["mail_id"] == "ab14"
-    assert "一般資訊 1 封｜低價值封存 1 封" in aggregate.args[1]
+    assert "資訊 1 封 · 已封存 1 封" in aggregate.args[1]
+    assert aggregate.kwargs['parse_mode'] == 'HTML'
     assert "Weekly technology digest" in aggregate.args[1]
     assert "mail.google.com" in aggregate.args[1]
     assert all(workflow.already_reported(identifier) for identifier in mails)
@@ -66,30 +67,32 @@ async def test_low_value_model_advice_cannot_override_protected_evidence(workflo
     workflow.ai._generate_output.return_value = decision()
     workflow.ai._generate_output.side_effect = None
     result = await decide(workflow, message(**changes), {})
-    assert result.tier in {"review", "important"}
+    assert result.tier == "information"
     workflow.gmail.archive.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_keep_allowlist_low_confidence_and_action_require_attention(workflow):
+async def test_keep_allowlist_and_low_confidence_protect_archive_without_forcing_cards(workflow):
     workflow.ai._generate_output.return_value = decision()
-    assert (await decide(workflow, message(), {"keep": True})).tier == "review"
+    assert (await decide(workflow, message(), {"keep": True})).tier == "information"
     workflow.settings.gmail_keep_senders = "@shop.example"
-    assert (await decide(workflow, message(), {})).tier == "review"
+    assert (await decide(workflow, message(), {})).tier == "information"
     workflow.settings.gmail_keep_senders = ""
     workflow.ai._generate_output.return_value = decision(confidence=.5)
-    assert (await decide(workflow, message(), {})).tier == "review"
-    workflow.ai._generate_output.return_value = decision(next_step="請回覆。")
+    assert (await decide(workflow, message(), {})).tier == "information"
+    workflow.ai._generate_output.return_value = decision(action_required=True, next_step="請回覆面試可出席時段。")
     assert (await decide(workflow, message(), {})).tier == "important"
 
 
 @pytest.mark.asyncio
-async def test_provider_failure_preserves_original_and_individual_review(workflow):
+async def test_provider_failure_preserves_original_without_sending_fallback_cards(workflow):
     now = setup_screening(workflow, {"ab12": message()}, AIError("unavailable"))
-    await workflow.daily(now)
+    with pytest.raises(GmailError):
+        await workflow.daily(now)
     workflow.gmail.archive.assert_not_awaited()
-    assert "待你判斷" in workflow.telegram.send_message.call_args_list[0].args[1]
-    assert workflow.get("message:ab12")["screening"]["tier"] == "review"
+    workflow.telegram.send_message.assert_not_awaited()
+    assert not workflow.get("daily:2026-11-05").get("complete")
+    assert not workflow.get("message:ab12").get("screened")
 
 
 @pytest.mark.asyncio
@@ -120,8 +123,8 @@ async def test_new_protection_cancels_pending_archive(workflow):
     mails["ab12"]["labels"].append("STARRED")
     await workflow.daily(now + timedelta(days=1))
     assert workflow.gmail.archive.await_count == 1
-    assert workflow.get("message:ab12")["screening"]["tier"] == "review"
-    assert "待你判斷" in workflow.telegram.send_message.call_args_list[0].args[1]
+    assert workflow.get("message:ab12")["screening"]["tier"] == "information"
+    assert workflow.telegram.send_message.await_count == 1  # Digest only, not an owner-decision card.
 
 
 @pytest.mark.asyncio
