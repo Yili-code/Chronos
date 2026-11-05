@@ -39,17 +39,19 @@ async def test_daily_screens_before_notification_without_trash_or_task(workflow)
     workflow.gmail.mark_read.assert_not_awaited()
     workflow.ai.parse.assert_not_awaited()
     assert "UNREAD" in mails["ab12"]["labels"]
-    assert workflow.telegram.send_message.await_count == 2
-    card, aggregate = workflow.telegram.send_message.call_args_list
+    assert workflow.telegram.send_message.await_count == 3
+    card, aggregate, archived = workflow.telegram.send_message.call_args_list
     assert "需要你做的事" in card.args[1]
     assert workflow.binding(123, 100)["mail_id"] == "ab14"
-    assert "資訊 1 封 · 已封存 1 封" in aggregate.args[1]
+    assert "其他資訊" in aggregate.args[1]
+    assert "已封存" in archived.args[1]
+    assert "Weekly technology digest" not in archived.args[1]
     assert aggregate.kwargs['parse_mode'] == 'HTML'
     assert "Weekly technology digest" in aggregate.args[1]
     assert "mail.google.com" in aggregate.args[1]
     assert all(workflow.already_reported(identifier) for identifier in mails)
     await workflow.daily(now)
-    assert workflow.telegram.send_message.await_count == 2
+    assert workflow.telegram.send_message.await_count == 3
 
 
 @pytest.mark.parametrize("changes", [

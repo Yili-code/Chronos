@@ -131,22 +131,24 @@ def test_deadline_display_removes_machine_timestamp_clutter_without_inference():
 
 
 @pytest.mark.asyncio
-async def test_digest_preserves_event_cost_and_eligibility_in_later_facts(workflow):
+async def test_opportunity_has_individual_controls_and_preserves_decision_facts(workflow):
+    from chronos.mail_screening import process, fingerprint
     day='daily:2026-11-05'
-    mail=message(subject='<Workshop> (abcdef123)',body='Event announcement')
-    choice=MailDecision(tier='information',confidence=.96,source_kind='newsletter',
-        reason='Optional event',summary='Optional workshop',next_step='',deadline='11/08',
-        facts=['主題為軟體測試。','11/10於線上舉行。','大學生可參加。','免費，限50名。'])
+    mail=message(subject='Weekend Practice #31',body='November 08 at 12:00 UTC; duration 2 hours')
+    choice=MailDecision(tier='information',confidence=.96,source_kind='notification',
+        optional_action=True,reason='Optional contest',summary='可選擇參加的程式競賽。',next_step='',
+        facts=['11/08 12:00 UTC開始。','競賽2小時。','可獲得點數獎勵。'])
     workflow.patch('message:ab12',mail=mail)
-    workflow.patch(day+':ab12',screening_done=True,screening=choice.model_dump())
-    await digest(workflow,day,{'ids':['ab12'],'more':False})
+    item=workflow.patch(day+':ab12',screening=choice.model_dump(),mail_fingerprint=fingerprint(mail))
+    await process(workflow,day,'ab12',mail,{},item)
     call=workflow.telegram.send_message.call_args
-    assert call.kwargs['parse_mode']=='HTML'
     assert all(fact in call.args[1] for fact in choice.facts)
-    assert '&lt;Workshop&gt;' in call.args[1]
-    assert 'abcdef123' not in call.args[1]
-    assert '11/08' in call.args[1] and '電子報與活動' in call.args[1]
-    assert 'mail.google.com' in call.args[1]  # Linked title, not a separate raw URL line.
+    assert '可參加' in call.args[1]
+    assert workflow.binding(123,100)['mail_id']=='ab12'
+    buttons=[button for row in call.kwargs['reply_markup']['inline_keyboard'] for button in row]
+    assert any(b['callback_data']=='mail:task:ab12' and b['text']=='加入安排' for b in buttons)
+    await digest(workflow,day,{'ids':['ab12'],'more':False})
+    assert workflow.telegram.send_message.await_count==1
 
 
 @pytest.mark.asyncio
@@ -195,3 +197,37 @@ async def test_ordinary_completion_still_expires_when_digest_retention_is_added(
     await workflow.deliver('ordinary-completion','郵件操作完成。')
     await bot.flush_expirations()
     bot.request.assert_any_await('deleteMessage',{'chat_id':123,'message_id':801})
+
+
+@pytest.mark.asyncio
+async def test_digest_messages_never_mix_categories(workflow):
+    day='daily:2026-11-05'
+    for identifier,kind in [('ab12','notification'),('ab13','newsletter'),('ab14','promotion')]:
+        workflow.patch('message:'+identifier,mail=message(identifier,subject=kind))
+        choice=information().model_copy(update={'source_kind':kind,'summary':kind+' short summary'})
+        workflow.patch(day+':'+identifier,screening_done=True,screening=choice.model_dump())
+    await digest(workflow,day,{'ids':['ab12','ab13','ab14'],'more':False})
+    calls=workflow.telegram.send_message.call_args_list
+    assert len(calls)==3
+    for call,kind in zip(calls,['notification','newsletter','promotion']):
+        assert kind+' short summary' in call.args[1]
+        assert all(other+' short summary' not in call.args[1] for other in ['notification','newsletter','promotion'] if other!=kind)
+        assert call.kwargs['requires_response'] is True
+
+
+@pytest.mark.asyncio
+async def test_weekend_action_control_reaches_event_booking_contract(workflow):
+    from test_mail_task_event import event_setup,NOW,text,START
+    from chronos.mail_screening import process,fingerprint
+    from datetime import datetime
+    event_setup(workflow)
+    mail=workflow.get('message:ab12')['mail']
+    choice=information().model_copy(update={'optional_action':True})
+    item=workflow.patch('daily:2026-11-05:ab12',screening=choice.model_dump(),mail_fingerprint=fingerprint(mail))
+    await process(workflow,'daily:2026-11-05','ab12',mail,{},item)
+    identifier=workflow.binding(123,100)['mail_id']
+    result=await workflow.prepare_action(identifier,'task',NOW)
+    assert '11/08 20:00' in text(result)
+    assert datetime.fromisoformat(workflow.calendar.insert.await_args.args[0]['start']['dateTime'])==datetime.fromisoformat(START)
+    workflow.gmail.send_reviewed_draft.assert_not_awaited()
+    assert not workflow.db.list_open_tasks()
