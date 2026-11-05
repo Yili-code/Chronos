@@ -64,3 +64,18 @@ def test_spoofed_event_callback_is_rejected_before_ai_or_calendar(system, monkey
     assert post(client, 9803, callback='mail:task:ab13').status_code == 403
     main.ai._generate_output.assert_not_awaited()
     calendar.insert.assert_not_awaited()
+
+
+def test_cancelled_event_question_cleans_prompt_and_notice_but_keeps_source(system, monkeypatch):
+    client, tasks, bot, config = system
+    calendar = setup_event(system, monkeypatch, missing_end=True)
+    assert post(client, 9810, callback='mail:task:ab12').status_code == 200
+    bot.send_message.return_value = {'ok': True, 'result': {'message_id': 778}}
+    assert post(client, 9811, text='取消', card=777).status_code == 200
+    deleted = [c.args[1]['message_id'] for c in bot.request.await_args_list]
+    assert deleted == [777, 778] and 500 not in deleted
+    main.asyncio.sleep.assert_awaited_once()
+    calendar.insert.assert_not_awaited()
+    assert post(client, 9811, text='取消', card=777).status_code == 200
+    assert bot.send_message.await_count == 2
+    main.asyncio.sleep.assert_awaited_once()

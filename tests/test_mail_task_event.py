@@ -191,3 +191,18 @@ def test_yearless_past_date_is_not_rolled_forward():
     from zoneinfo import ZoneInfo
     quote = 'November 08 at 12:00 UTC'
     assert grounded('2027-11-08T12:00:00+00:00', quote, quote, ZoneInfo('Asia/Taipei'), reference=datetime(2026, 11, 9)) is None
+
+
+@pytest.mark.asyncio
+async def test_incomplete_article_remains_reading_but_incomplete_invitation_needs_facts(workflow):
+    plan, events = event_setup(workflow)
+    source = message(subject='Networking article', body='Read this article', body_truncated=True)
+    workflow.patch('message:ab12', mail=source)
+    workflow.ai._generate_output.return_value = MailTaskIntent(kind='reading')
+    result = await workflow.prepare_action('ab12', 'task', NOW)
+    assert result().startswith('新增這個郵件任務？')
+    workflow.patch('message:ab12', mail=message(subject=plan.title, body=EVIDENCE, body_incomplete=True))
+    workflow.ai._generate_output.return_value = plan
+    prompt = (await workflow.prepare_action('ab12', 'task', NOW))()
+    assert '未完整' in prompt['messages'][0]['text']
+    workflow.calendar.insert.assert_not_awaited()

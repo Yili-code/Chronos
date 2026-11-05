@@ -1110,6 +1110,9 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         origin_card_id = (active_binding or {}).get("origin_message_id")
         if callback_action == "task" and origin_card_id is None:
             origin_card_id = active_card_id
+        event_cancelled = bool((receipt.get("messages") or [{}])[0].get("mail_event_cancelled"))
+        if event_cancelled and origin_card_id and origin_card_id != active_card_id:
+            await delete_telegram_messages(chat_id, active_card_id)
         if task_resolved:
             await delete_telegram_messages(chat_id, origin_card_id or active_card_id, active_card_id)
         elif callback_action and callback_action.startswith(("edit_", "cancel_")):
@@ -1160,7 +1163,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                     if origin_card_id is not None:
                         binding["origin_message_id"] = origin_card_id
                     mail.patch(f"telegram:{chat_id}:{message_id}", **binding)
-            if event_resolved or receipt["reply"] in {"郵件任務已新增。", "這封郵件已有任務，未重複新增。",
+            if event_resolved or event_cancelled or receipt["reply"] in {"郵件任務已新增。", "這封郵件已有任務，未重複新增。",
                     "已取消，沒有新增郵件任務。", "已標為已讀。",
                     "已保留，之後不會自動過濾這封信；若已在垃圾桶，請在 Gmail 還原。",
                     "已封存，可在 Gmail 所有郵件找到；本批完成後傳 /mail_next。"}:
