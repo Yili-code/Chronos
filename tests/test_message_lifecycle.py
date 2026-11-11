@@ -195,3 +195,54 @@ async def test_legacy_absolute_deadline_is_not_restarted_after_upgrade(monkeypat
     await bot.flush_expirations()
     timer.assert_awaited_once_with(0)
     bot.request.assert_awaited_once_with('deleteMessage',{'chat_id':123,'message_id':51})
+
+
+def test_owner_message_expires_after_success_and_retry_keeps_original_deadline(system, monkeypatch):
+    from types import SimpleNamespace
+    from chronos import main, message_lifecycle
+
+    client, tasks, bot, _ = system
+    task = tasks.create('Finish this task')
+    now = 1794434400
+    clock = SimpleNamespace(time=lambda: now)
+    monkeypatch.setattr(message_lifecycle, 'time', clock)
+    bot.expiry.sleep = AsyncMock()
+
+    async def delete(method, payload):
+        assert method == 'deleteMessage'
+        assert payload == {'chat_id': 123, 'message_id': 40}
+        assert main.db.get_update(99003)['delivered']
+        assert main.db.get_task(task['id'])['status'] == 'done'
+        if now > message['date']:
+            return {'ok': False, 'error_code': 400, 'description': 'message to delete not found'}
+        return {'ok': True}
+
+    bot.request.side_effect = delete
+    message = {'message_id': 40, 'chat': {'id': 123, 'type': 'private'}, 'date': now, 'text': '/done 1'}
+    payload = {'update_id': 99003, 'message': message}
+    headers = {'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}
+    assert client.post('/telegram/webhook', json=payload, headers=headers).status_code == 200
+    bot.expiry.sleep.assert_awaited_once_with(7)
+    now += 8
+    assert client.post('/telegram/webhook', json=payload, headers=headers).status_code == 200
+    assert bot.expiry.sleep.await_args.args == (0,)
+    bot.send_message.assert_awaited_once()
+    assert not bot.expiry.read()
+
+
+@pytest.mark.parametrize(('kind', 'chat_type', 'secret', 'status'), [
+    ('message', 'group', 'test-hook', 200),
+    ('edited_message', 'private', 'test-hook', 200),
+    ('message', 'private', 'wrong', 403),
+    ('message', 'private', 'test-hook', 502),
+])
+def test_owner_cleanup_ignores_nonprivate_edits_and_unsuccessful_webhooks(system, kind, chat_type, secret, status):
+    client, _, bot, _ = system
+    if status == 502:
+        bot.send_message.return_value = {'ok': False}
+    payload = {'update_id': 99004, kind: {'message_id': 41, 'chat': {'id': 123, 'type': chat_type},
+               'date': 1794434400, 'text': '/tasks'}}
+    assert client.post('/telegram/webhook', json=payload,
+                       headers={'X-Telegram-Bot-Api-Secret-Token': secret}).status_code == status
+    bot.request.assert_not_awaited()
+    assert not bot.expiry.read()

@@ -30,7 +30,7 @@ from .tasks import (
     project_display_name,
 )
 from .telegram import TelegramClient
-from .message_lifecycle import drain_messages
+from .message_lifecycle import SECONDS, drain_messages
 from .reply_voice import creation_messages
 from .reset_replies import ResetInProgress
 from .runtime_health import (
@@ -265,6 +265,16 @@ async def expire_passive_messages(request, call_next):
     response = None
     try:
         response = await call_next(request)
+        owner_message = getattr(request.state, "owner_message_expiry", None)
+        if response.status_code < 400 and owner_message is not None:
+            chat_id, message_id, deadline = owner_message
+            try:
+                await telegram.track_delivery(
+                    {"ok": True, "result": {"message_id": message_id}},
+                    chat_id, requires_reply=False, deadline=deadline,
+                )
+            except Exception:
+                logger.warning("Owner Telegram message cleanup could not be scheduled")
         return response
     finally:
         notifying = request.method == "POST" and request.url.path.startswith(("/telegram/", "/internal/"))
@@ -465,6 +475,7 @@ async def trigger_study(x_chronos_scheduler_secret: str | None = Header(default=
 class TelegramChat(BaseModel):
     model_config = ConfigDict(strict=True)
     id: int = Field(ge=-(2**63), le=2**63 - 1)
+    type: str | None = None
 
 
 class TelegramReplyReference(BaseModel):
@@ -712,6 +723,10 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
     chat_id = source_message.chat.id
     if settings.telegram_chat_id and chat_id != settings.telegram_chat_id:
         raise HTTPException(status_code=403, detail="Unauthorized chat")
+    if (update.message is source_message and settings.telegram_webhook_secret
+            and chat_id == settings.telegram_chat_id and source_message.chat.type == "private"
+            and source_message.message_id is not None and source_message.date is not None):
+        request.state.owner_message_expiry = (chat_id, source_message.message_id, source_message.date + SECONDS)
     update_id = update.update_id
     saved_reply = db.get_update(update_id)
     if saved_reply and any(part.get('resolved_learning_prompt_ids') for part in saved_reply.get('messages', [])):
