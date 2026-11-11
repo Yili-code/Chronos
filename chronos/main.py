@@ -1370,6 +1370,11 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         }]
         delivered_count = receipt.get("delivered_count", 0)
         for index, message in enumerate(messages[delivered_count:], start=delivered_count + 1):
+            if expiry := message.get("course_card_expiry"):
+                await telegram.track_delivery(
+                    {"ok": True, "result": {"message_id": expiry["message_id"]}},
+                    chat_id, requires_reply=False, deadline=expiry["deadline"],
+                )
             send_options = {"parse_mode": message.get("parse_mode")}
             if message.get("reply_markup"):
                 send_options["reply_markup"] = message["reply_markup"]
