@@ -37,7 +37,9 @@ def card(state):
     if state.get('ordered_sequence'):
         from .sequence_replan import card as ordered_card
         return ordered_card(state)
-    lines = ['<b>行程調整提案</b>',f"範圍：{escape(state['start'][:16].replace('T',' '))} → {escape(state['end'][11:16])}"]
+    start_label = state['start'][:16].replace('T', ' ')
+    end_label = state['end'][11:16] if state['start'][:10] == state['end'][:10] else state['end'][:16].replace('T', ' ')
+    lines = ['<b>行程調整提案</b>', f"範圍：{escape(start_label)} → {escape(end_label)}"]
     if state.get('focus_reservation'):lines.append('保留給：'+escape(state['focus_reservation']['title']))
     if state.get('focus_task'):lines.append('這是專注時段保留，不會標記任務完成；原有目標工作時段保留。')
     if state.get('owner_window'):lines.append(f"工作會限制在這個範圍，間隔休息 {state.get('break_minutes',0)} 分鐘。")
@@ -74,8 +76,22 @@ def bind(db, chat_id, message_id, message):
                                     if old and old.get('token') == token else old)
 
 
+def clears_all_day_tomorrow(instruction):
+    return bool(re.fullmatch(
+        r"\s*(?:幫我|帮我)?\s*(?:清空|騰出|腾出|空出)\s*(?:明天|明日)\s*"
+        r"(?:整天|全天)\s*的?\s*(?:所有|全部)?\s*(?:行程|安排|活動|活动)"
+        r"(?:[，,。]\s*(?:我有|我要|因為|因为).+)?[。！!]?[\s]*",
+        instruction,
+    ))
+
+
 def explicit_window(instruction, now):
-    """Resolve a complete, explicit same-day request without model ambiguity."""
+    """Resolve a complete, explicit request without model ambiguity."""
+    if clears_all_day_tomorrow(instruction):
+        start = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(days=1)
+        return ReplanOutput(actionable=True, start=start.isoformat(), end=end.isoformat(),
+                            destination_start=end.isoformat())
     normalized = re.sub(r"\s+", "", instruction)
     if re.search(r'(?:今天|今日)下午.*(?:留給|留给).{1,120}(?:準備|准备)',instruction,re.I):
         start=max(now,now.replace(hour=13,minute=0,second=0,microsecond=0))
