@@ -232,3 +232,65 @@ def test_break_followup_keeps_original_scope_and_replaces_old_break_length():
     assert 'DB03,04,05' in combined and '今天早上九點' in combined
     assert rest_minutes(combined)==2
     assert revision_instruction('明天下午安排另一份報告',previous)=='明天下午安排另一份報告'
+
+
+@pytest.mark.parametrize('direct', [False, True])
+def test_clear_tomorrow_during_reading_feedback_previews_exact_day(system, monkeypatch, direct):
+    client, _, bot, config = system
+    config.enable_learning_calendar = True
+    config.calendar_account = 'owner@example.com'
+    now = datetime.fromisoformat('2026-11-11T18:49:00+08:00')
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now.astimezone(tz)
+
+    from chronos import intents
+    monkeypatch.setattr(intents, 'datetime', Clock)
+    monkeypatch.setattr(main, 'datetime', Clock)
+    task = main.tasks.create('Reading task')
+    planner = main.learning_calendar()
+    reading = {'status': 'awaiting_feedback', 'token': TOKEN, 'snapshot': task_fields(task),
+               'partial_draft': {'minutes': 180}}
+    planner.update(task['id'], lambda _: reading)
+    binding = {'task_id': task['id'], 'token': TOKEN, 'mode': 'feedback',
+               'expires_at': (now + timedelta(hours=2)).isoformat()}
+    main.db.mutate_task_action_state('learning:edit-chat:123', lambda _: binding)
+    main.db.mutate_task_action_state('learning:edit-message:123:50', lambda _: binding)
+    calendar = AsyncMock()
+    calendar.agenda.return_value = [
+        {'id': 'movable', 'summary': 'Personal work', 'etag': 'v1', '_calendar_id': 'primary',
+         'creator': {'email': config.calendar_account}, 'organizer': {'self': True},
+         'start': {'dateTime': '2026-11-12T10:00:00+08:00'},
+         'end': {'dateTime': '2026-11-12T11:00:00+08:00'}},
+        {'id': 'fixed', 'summary': 'Fixed event', '_calendar_id': 'primary',
+         'start': {'date': '2026-11-12'}, 'end': {'date': '2026-11-13'}},
+    ]
+    monkeypatch.setattr(main, 'google_calendar', calendar)
+    bot.send_message.return_value = {'ok': True, 'result': {'message_id': 90}}
+    text = '清空明天整天的行程，我有活動要去台大'
+    message = {'message_id': 8103, 'chat': {'id': 123}, 'text': text, 'date': int(now.timestamp())}
+    if direct:
+        message['reply_to_message'] = {'message_id': 50}
+    payload = {'update_id': 8103, 'message': message}
+    headers = {'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}
+    for _ in range(2):
+        assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 200
+
+    state = main.db.get_task_action_state(calendar_replan.key(123))
+    assert state['status'] == 'pending'
+    assert state['start'] == '2026-11-12T00:00:00+08:00'
+    assert state['end'] == '2026-11-13T00:00:00+08:00'
+    assert state['calendar_moves'][0]['start'] >= state['end']
+    assert [item['event_id'] for item in state['blocked_events']] == ['fixed']
+    assert '2026-11-12 00:00 → 2026-11-13 00:00' in bot.send_message.await_args.args[1]
+    assert bot.send_message.await_count == 1
+    assert bot.send_message.await_args.kwargs['reply_markup']['inline_keyboard'][0][0]['text'] == 'Allow'
+    assert planner.get(task['id']) == reading
+    assert not main.db.get_task_action_state('learning:edit-chat:123')
+    main.ai.classify_intent.assert_not_awaited()
+    calendar.agenda.assert_awaited_once()
+    calendar.move_event.assert_not_awaited()
+    calendar.insert.assert_not_awaited()
+    calendar.delete.assert_not_awaited()

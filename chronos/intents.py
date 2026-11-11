@@ -96,6 +96,16 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
     now = datetime.now(app.settings.tz)
     key = f"intent:clarify:{chat_id}"
     persistent = chat_id is not None and update_id is not None
+    if app.calendar_replan.clears_all_day_tomorrow(text):
+        if not persistent or not app.settings.enable_learning_calendar:
+            return lambda: "請在已啟用排程的 Telegram 對話操作。"
+        if request_date is not None and request_date < now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp():
+            return lambda: "這則訊息是在前一天送出的。請重新指定要空出的日期。"
+        try:
+            preview = await app.calendar_replan.preview(app.learning_calendar(), chat_id, text, update_id, now=now)
+        except CalendarError:
+            preview = "目前無法讀取行程，請稍後再試。"
+        return lambda: preview
     pending = app.db.get_task_action_state(key) if persistent else None
     if pending and pending.get("expires_at", "") <= now.isoformat():
         pending = None
