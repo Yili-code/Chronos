@@ -2000,3 +2000,45 @@ def test_question_feedback_webhook_preserves_duration_and_deduplicates(system, s
     assert bot.send_message.await_count == calls
     assert len(tasks.list_open()) == 1
     calendar.insert.assert_not_awaited()
+
+
+@pytest.mark.parametrize('setup', ['sqlite', 'firestore'], indirect=True)
+@pytest.mark.parametrize(('reply_id', 'text', 'expected'), [
+    (50, '我已經完成這個任務了', 'Completed'),
+    (50, '我已完成部分', '請用卡片按鈕'),
+    (49, '我已經完成這個任務了', '這張卡片目前無法辨識'),
+])
+def test_no_slot_card_reply_uses_exact_task_binding(system, setup, monkeypatch, reply_id, text, expected):
+    from chronos.task_actions import task_fields
+    from chronos.tasks import TaskService
+
+    client, _, bot, config = system
+    planner, task, calendar, _ = setup
+    config.enable_learning_calendar = True
+    monkeypatch.setattr(main, 'db', planner.db)
+    monkeypatch.setattr(main, 'tasks', TaskService(planner.db, config.tz))
+    monkeypatch.setattr(main, 'google_calendar', calendar)
+    other = planner.db.create_task('Another open task', None, None, NOW)
+    original = {'status': 'no_slot', 'token': 'no-slot', 'delivery': 'proposal_sent',
+                'message_id': 50, 'snapshot': task_fields(task)}
+    planner.update(task['id'], lambda _: original)
+    planner.db.mutate_task_action_state('learning:proposal-queue', lambda _: {'active_task_id': task['id']})
+    payload = {'update_id': 200, 'message': {'message_id': 201, 'chat': {'id': 123},
+               'text': text, 'reply_to_message': {'message_id': reply_id}}}
+    headers = {'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}
+    for _ in range(2):
+        assert client.post('/telegram/webhook', json=payload, headers=headers).status_code == 200
+    assert bot.send_message.await_count == 1
+    assert expected in bot.send_message.await_args.args[1]
+    if expected == 'Completed':
+        state = planner.get(task['id'])
+        assert state['status'] == 'finished'
+        assert state['feedback']['actual_minutes'] is None
+        queue = planner.db.get_task_action_state('learning:proposal-queue')
+        assert queue['active_task_id'] is None and queue['retire_message_ids'] == [50]
+        assert [entry['id'] for entry in planner.db.list_open_tasks()] == [other['id']]
+    else:
+        assert planner.get(task['id']) == original
+        assert {entry['id'] for entry in planner.db.list_open_tasks()} == {task['id'], other['id']}
+    calendar.insert.assert_not_awaited()
+    calendar.patch.assert_not_awaited()

@@ -127,6 +127,15 @@ def find_slot(task, now, busy, reservations, config, minutes, booked_minutes=Non
     return choice(candidates) if candidates else None
 
 
+def is_completion_reply(text):
+    return bool(re.fullmatch(
+        r"(?:已完成|已經完成|已经完成|完成了|全部完成|done|already done|completed"
+        r"|(?:我\s*)?(?:已經|已经|已)\s*完成\s*(?:這個|这个|這項|这项|此)?\s*(?:任務|任务)\s*了?)"
+        r"[。.!！\s]*",
+        text.strip(), re.IGNORECASE,
+    ))
+
+
 class LearningCalendar:
     def __init__(self, db, calendar, telegram, settings, ai=None):
         self.db, self.calendar, self.telegram, self.settings = db, calendar, telegram, settings
@@ -134,6 +143,19 @@ class LearningCalendar:
 
     def get(self, task_id):
         return self.db.get_task_action_state(f"learning:task:{task_id}")
+
+    def active_proposal_reply(self, message_id, text):
+        queue = self.db.get_task_action_state("learning:proposal-queue") or {}
+        task_id = queue.get("active_task_id")
+        state = self.get(task_id) if task_id is not None else None
+        if (not state or state.get("message_id") != message_id
+                or state.get("status") not in {"proposed", "editing", "no_slot"}):
+            return None
+        if not is_completion_reply(text):
+            return lambda: "這是工作時段規劃卡。請用卡片按鈕調整安排，或回覆「已完成」結束這項任務。"
+        return lambda: self.complete_unbooked(
+            {"id": task_id, "title": state["snapshot"]["title"]}, state, datetime.now(self.settings.tz)
+        )
 
     def update(self, task_id, transition):
         return self.db.mutate_task_action_state(f"learning:task:{task_id}", transition)
@@ -770,7 +792,7 @@ class LearningCalendar:
         task = next((t for t in self.db.list_open_tasks() if t["id"] == task_id), None)
         if not task:
             return "This task is no longer open."
-        if re.fullmatch(r"(?:已完成|已經完成|已经完成|完成了|全部完成|done|already done|completed)[。.!！\s]*", instruction.strip(), re.IGNORECASE):
+        if is_completion_reply(instruction):
             return self.complete_unbooked(task, state, now)
         pending = state.get("pending_late")
         answer = instruction.strip().casefold()
@@ -907,7 +929,8 @@ class LearningCalendar:
             pending = self.db.get_task_action_state(pending_key)
             live = self.db._load_task_action(task["id"])
             if (not current or current.get("token") != state["token"]
-                    or current.get("status") not in {"proposed", "editing"}
+                    or current.get("status") not in {"proposed", "editing", "no_slot"}
+                    or current.get("message_id") != state.get("message_id")
                     or queue.get("active_task_id") != task["id"]
                     or not live or live["task"] != state["snapshot"]):
                 return False

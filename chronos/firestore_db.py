@@ -596,7 +596,7 @@ class FirestoreDatabase(TaskActions):
             query = self.course_sessions.where(filter=FieldFilter("prompt_message_id", "==", prompt_id))
             snapshots = list(query.stream(transaction=transaction))
             if len(snapshots) != 1:
-                return "這則回覆未對應到課後進度問題。請直接回覆原始訊息。"
+                return "這張卡片目前無法辨識。請用 /tasks 查看待辦，或用 /plan 查看最新規劃。"
             snapshot = snapshots[0]
             session = session_from_firestore(snapshot.to_dict())
             if is_no_change_reply(text):
