@@ -658,7 +658,7 @@ class Database(TaskActions):
                 "SELECT * FROM course_sessions WHERE prompt_message_id = ?", (prompt_id,)
             ).fetchone()
             if row is None:
-                return "這則回覆未對應到課後進度問題。請直接回覆原始訊息。"
+                return "這張卡片目前無法辨識。請用 /tasks 查看待辦，或用 /plan 查看最新規劃。"
             session = session_from_firestore(dict(row))
             if is_no_change_reply(text):
                 return "收到"

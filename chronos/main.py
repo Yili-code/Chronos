@@ -1304,6 +1304,11 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                 import sys
                 action = await agenda_context.prepare(sys.modules[__name__], agenda, text,
                                                       chat_id=chat_id, update_id=update_id)
+            elif (settings.enable_learning_calendar and chat_id == settings.telegram_chat_id
+                    and source_message.reply_to_message is not None
+                    and (proposal_reply := learning_calendar().active_proposal_reply(
+                        source_message.reply_to_message.message_id, text)) is not None):
+                action = proposal_reply
             elif source_message.reply_to_message is not None:
                 if source_message.message_id is None:
                     raise HTTPException(status_code=422, detail="Reply message id is required")
