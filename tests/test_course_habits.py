@@ -1,10 +1,11 @@
 import asyncio
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
-from chronos import course_habits as habits, main
+from chronos import course_habits as habits, main, message_lifecycle
 from chronos.course_tracking import TAIPEI, COURSE_SCHEDULE, new_session
 from chronos.db import Database
 from chronos.study_scheduler import tick_study
@@ -49,7 +50,10 @@ def test_after_class_individual_approval_and_replay(db):
     assert click(db, 0) == first
     click(db, 0, update=2)
     assert len(db.list_open_tasks()) == 1
-    click(db, 1, 'skip', update=3)
+    assert not first.get('messages')
+    final = click(db, 1, 'skip', update=3)
+    assert final['messages'][0]['course_card_expiry'] == {'message_id': 81, 'deadline': NOW.timestamp() + 7}
+    assert click(db, 1, 'skip', update=3) == final
     assert len(db.list_open_tasks()) == 1
     click(db, 1, update=4)
     assert len(db.list_open_tasks()) == 1
@@ -117,6 +121,8 @@ def test_webhook_accepts_only_after_click_and_replays_receipt(system, monkeypatc
             return NOW.astimezone(tz)
     monkeypatch.setattr(main, 'datetime', Clock)
     client, tasks, bot, cfg = system
+    monkeypatch.setattr(message_lifecycle, 'time', SimpleNamespace(time=lambda: NOW.timestamp()))
+    bot.expiry.sleep = AsyncMock()
     db = main.db
     start(db)
     session = db.get_course_session_by_prompt(81)
@@ -131,6 +137,18 @@ def test_webhook_accepts_only_after_click_and_replays_receipt(system, monkeypatc
     assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 200
     assert len(tasks.list_open()) == 1
     assert bot.send_message.await_count == 1
+    bot.expiry.sleep.assert_not_awaited()
+    bot.request.assert_not_awaited()
+
+    payload['update_id'] = 72
+    payload['callback_query'].update(id='skip', data=f'chabit:{token}:1:skip')
+    assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 200
+    bot.expiry.sleep.assert_awaited_once_with(7)
+    bot.request.assert_awaited_once_with('deleteMessage', {'chat_id': 123, 'message_id': 81})
+    assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 200
+    assert bot.request.await_count == 1
+    assert bot.send_message.await_count == 2
+    assert len(tasks.list_open()) == 1
 
 
 def test_exam_report_skips_only_pending_day_proposals_without_changing_habits(db):

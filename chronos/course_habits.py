@@ -9,6 +9,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .ai import AIError
+from .message_lifecycle import SECONDS
 
 from .course_tracking import COURSE_SCHEDULE, ProgressStatus, progress_is_exam_day
 
@@ -200,4 +201,8 @@ def respond(db, data, chat_id, message_id, now):
     items = list(state['items'])
     items[index] = item
     db._save_task_action_state('course-proposal:' + token, {**state, 'items': items})
+    if all(entry['status'] != 'pending' for entry in items):
+        return {'messages': [{'text': reply, 'course_card_expiry': {
+            'message_id': message_id, 'deadline': now.timestamp() + SECONDS,
+        }}]}
     return reply
