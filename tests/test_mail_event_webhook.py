@@ -47,6 +47,7 @@ def test_event_question_has_bound_reply_context_and_finishes_from_owner_facts(sy
     assert post(client, 9801, callback='mail:task:ab12').status_code == 200
     calendar.insert.assert_not_awaited()
     assert bot.send_message.await_args.kwargs['reply_markup']['force_reply']
+    assert bot.send_message.await_args.kwargs['delete_after_seconds'] == 60
     binding = main.mail_workflow().binding(123, 777)
     assert binding['context_kind'] == 'task_event' and binding['origin_message_id'] == 500
     owner = '2027-11-08 20:00–22:00 台北'
@@ -70,6 +71,10 @@ def test_cancelled_event_question_cleans_prompt_and_notice_but_keeps_source(syst
     client, tasks, bot, config = system
     calendar = setup_event(system, monkeypatch, missing_end=True)
     assert post(client, 9810, callback='mail:task:ab12').status_code == 200
+    bot.request.assert_awaited_once_with('deleteMessage', {'chat_id': 123, 'message_id': 777})
+    assert 59 < main.asyncio.sleep.await_args.args[0] <= 60
+    bot.request.reset_mock()
+    main.asyncio.sleep.reset_mock()
     bot.send_message.return_value = {'ok': True, 'result': {'message_id': 778}}
     assert post(client, 9811, text='取消', card=777).status_code == 200
     deleted = [c.args[1]['message_id'] for c in bot.request.await_args_list]

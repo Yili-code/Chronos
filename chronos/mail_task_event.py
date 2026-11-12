@@ -78,12 +78,14 @@ def answer(text, *, resolved=False, cancelled=False):
     return lambda: {"messages": [{"text": text, **({"mail_event_resolved": True, "delete_after_seconds": 7} if resolved else {"mail_event_cancelled": True, "delete_after_seconds": 7} if cancelled else {})}]}
 
 
-def question(mail, identifier, text, **extra):
+def question(mail, identifier, text, *, delete_after_seconds=None, **extra):
     version = uuid4().hex[:8]
     mail.patch("task_event:" + identifier, status="question", version=version,
         conflict_plan=extra.pop("conflict_plan", None), source=extra.pop("source", None), **extra)
-    return lambda: {"messages": [{"text": "郵件活動\n" + text,
-        "mail_context": {"kind": "task_event", "version": version}}]}
+    message = {"text": "郵件活動\n" + text, "mail_context": {"kind": "task_event", "version": version}}
+    if delete_after_seconds is not None:
+        message["delete_after_seconds"] = delete_after_seconds
+    return lambda: {"messages": [message]}
 
 
 def matches(event, body):
@@ -159,7 +161,9 @@ async def prepare(mail, identifier, now, *, instruction=None, version=None):
         owner=bool(instruction and plan.start_evidence in instruction), reference=reference)
     end = grounded(plan.end, plan.end_evidence, full_source, mail.settings.tz, start=start, owner=bool(instruction and plan.end_evidence in instruction))
     if plan.kind != 'event' or not start or not end or end <= start or not plan.title or plan.title not in raw:
-        return question(mail, identifier, plan.question or '要參加這個活動，請補充明確的開始、結束時間與時區；不會替你安排成閱讀時段。')
+        return question(mail, identifier,
+                        plan.question or '要參加這個活動，請補充明確的開始、結束時間與時區；不會替你安排成閱讀時段。',
+                        delete_after_seconds=60)
     if start <= now:
         return question(mail, identifier, '信中的活動開始時間已過，請提供要參加的正確日期與時段，或回覆取消。')
     if calendar is None or not calendar.configured():
