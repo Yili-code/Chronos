@@ -97,7 +97,7 @@ async def tick_study(db, telegram, chat_id: int, now: datetime) -> dict:
             try:
                 result = await telegram.send_message(chat_id,
                     f"尚未收到 {session.course_name} 的課堂進度。請直接回覆原始訊息；我會依此整理後續。",
-                    reply_to_message_id=session.prompt_message_id, requires_response=True)
+                    reply_to_message_id=session.prompt_message_id, delete_after_seconds=60)
             except TelegramError:
                 ledger.finish(key, claim, now)
                 continue

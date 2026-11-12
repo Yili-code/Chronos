@@ -267,3 +267,20 @@ def test_owner_cleanup_ignores_nonprivate_edits_and_unsuccessful_webhooks(system
                        headers={'X-Telegram-Bot-Api-Secret-Token': secret}).status_code == status
     bot.request.assert_not_awaited()
     assert not bot.expiry.read()
+
+
+@pytest.mark.asyncio
+async def test_one_minute_notice_expires_even_with_force_reply(monkeypatch):
+    from types import SimpleNamespace
+    from chronos import message_lifecycle
+
+    monkeypatch.setattr(message_lifecycle, 'time', SimpleNamespace(time=lambda: 1000))
+    bot = TelegramClient('test-token')
+    bot.expiry.sleep = AsyncMock()
+    bot.request = AsyncMock(side_effect=[{'ok': True, 'result': {'message_id': 44}}, {'ok': True}])
+    await bot.send_message(123, '請補充活動時間。', reply_markup={'force_reply': True}, delete_after_seconds=60)
+    assert bot.expiry.read()['123:44']['delete_at'] == 1060
+    await bot.flush_expirations()
+    bot.expiry.sleep.assert_awaited_once_with(60)
+    assert bot.request.await_args.args == ('deleteMessage', {'chat_id': 123, 'message_id': 44})
+    assert not bot.expiry.read()

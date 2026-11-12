@@ -61,10 +61,9 @@ class MessageExpiry:
         if requires_response(text, markup, requires_reply, delete_after_seconds):
             self.mutate(lambda old: {k:v for k,v in old.items() if k != key})
             return
-        if deadline is None:
-            delay = SECONDS if delete_after_seconds is None else delete_after_seconds
-            deadline = time.time() + delay
-        entry = {'chat_id': chat_id, 'message_id': message_id, 'delete_at': deadline}
+        delay = SECONDS if delete_after_seconds is None else delete_after_seconds
+        entry = {'chat_id': chat_id, 'message_id': message_id,
+                 'delete_at': deadline if deadline is not None else time.time() + delay}
         self.mutate(lambda old: {**old, key: entry})
         task = asyncio.create_task(self.expire(key, entry))
         self.tasks.add(task)
