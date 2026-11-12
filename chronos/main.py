@@ -1758,8 +1758,12 @@ async def prepare_message(text: str, *, update_id: int | None = None, chat_id: i
     if command in {"start", "task", "tasks"}:
         def list_tasks() -> dict:
             items = tasks.list_open()
-            return message_bundle({"text": task_list_text(items), "parse_mode": "HTML",
-                                   **({'reply_markup': task_review.OPEN_KEYBOARD} if items else {})})
+            message = {"text": task_list_text(items), "parse_mode": "HTML"}
+            if items:
+                message["reply_markup"] = task_review.OPEN_KEYBOARD
+            if command == "task":
+                message["delete_after_seconds"] = 30
+            return message_bundle(message)
         return list_tasks
     if command == "undo":
         return prepare_undo()

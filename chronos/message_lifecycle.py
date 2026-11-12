@@ -23,7 +23,7 @@ QUESTION = re.compile(r'[?？]\s*$', re.M)
 def requires_response(text, markup=None, explicit=None, delete_after_seconds=None):
     if explicit is not None:
         return bool(explicit)
-    if delete_after_seconds == SECONDS:
+    if delete_after_seconds is not None:
         return False
     markup = markup or {}
     if markup.get('force_reply'):
@@ -61,7 +61,10 @@ class MessageExpiry:
         if requires_response(text, markup, requires_reply, delete_after_seconds):
             self.mutate(lambda old: {k:v for k,v in old.items() if k != key})
             return
-        entry = {'chat_id': chat_id, 'message_id': message_id, 'delete_at': deadline if deadline is not None else time.time() + SECONDS}
+        if deadline is None:
+            delay = SECONDS if delete_after_seconds is None else delete_after_seconds
+            deadline = time.time() + delay
+        entry = {'chat_id': chat_id, 'message_id': message_id, 'delete_at': deadline}
         self.mutate(lambda old: {**old, key: entry})
         task = asyncio.create_task(self.expire(key, entry))
         self.tasks.add(task)
