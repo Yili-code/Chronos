@@ -1,5 +1,6 @@
 import asyncio
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -141,6 +142,26 @@ def test_explicit_pending_question_is_retained_even_without_question_words(syste
     assert client.post('/telegram/webhook', json=payload, headers={'X-Telegram-Bot-Api-Secret-Token':'test-hook'}).status_code == 200
     bot.request.assert_not_awaited()
     assert not bot.expiry.read()
+
+
+@pytest.mark.parametrize('command, seconds', [('/task', 30), ('/tasks', 7), ('/start', 7)])
+@pytest.mark.parametrize('populated', [False, True])
+def test_task_list_reply_expires_after_its_command_lifetime(system, monkeypatch, command, seconds, populated):
+    client, tasks, bot, config = system
+    if populated:
+        tasks.create('Project requirements')
+    before = tasks.list_open()
+    monkeypatch.setattr('chronos.message_lifecycle.time', SimpleNamespace(time=lambda: 100))
+    observe_message_lifecycle(bot)
+    bot.send_message.return_value = {'ok': True, 'result': {'message_id': 42}}
+    payload = {'update_id': 99003, 'message': {'chat': {'id': 123}, 'text': command}}
+    headers = {'X-Telegram-Bot-Api-Secret-Token': config.telegram_webhook_secret}
+
+    assert client.post('/telegram/webhook', json=payload, headers=headers).status_code == 200
+
+    bot.expiry.sleep.assert_awaited_once_with(seconds)
+    bot.request.assert_awaited_once_with('deleteMessage', {'chat_id': 123, 'message_id': 42})
+    assert tasks.list_open() == before
 
 
 @pytest.mark.asyncio
