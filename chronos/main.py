@@ -1188,8 +1188,10 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                     "已取消，沒有新增郵件任務。", "已標為已讀。",
                     "已保留，之後不會自動過濾這封信；若已在垃圾桶，請在 Gmail 還原。",
                     "已封存，可在 Gmail 所有郵件找到；本批完成後傳 /mail_next。"}
-                result = await telegram.send_message(chat_id, response_text, reply_markup=markup,
-                    **({'requires_response': False} if terminal else {}))
+                send_options = {'requires_response': False} if terminal else {}
+                if delete_after := (receipt.get("messages") or [{}])[0].get("delete_after_seconds"):
+                    send_options["delete_after_seconds"] = delete_after
+                result = await telegram.send_message(chat_id, response_text, reply_markup=markup, **send_options)
                 if not result.get("ok"):
                     raise HTTPException(status_code=502, detail="Mail action reply pending")
                 if is_proposal or is_edit or is_correspondence:
