@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from chronos import course_habits as habits, main, message_lifecycle
+from chronos import course_habits as habits, course_tracking_store, main, message_lifecycle
 from chronos.course_tracking import TAIPEI, COURSE_SCHEDULE, new_session
 from chronos.db import Database
 from chronos.study_scheduler import tick_study
@@ -197,3 +197,40 @@ def test_webhook_exam_report_bypasses_recurring_habit_classifier(system,monkeypa
     assert saved.report_kind is ProgressReportKind.NO_PROGRESS and saved.reply_message_id==99
     ai._generate_output.assert_not_awaited()
     assert not main.db.list_open_tasks()
+
+
+@pytest.mark.parametrize(('text', 'suggestion', 'expires'), [
+    ('Chapter 4', False, True),
+    ('今天期中考', False, True),
+    ('收到', False, False),
+    ('Chapter 4', True, False),
+])
+def test_webhook_expires_only_answered_course_progress_prompts(system, db, monkeypatch, text, suggestion, expires):
+    client, _, bot, config = system
+    monkeypatch.setattr(main, 'db', db)
+    monkeypatch.setattr(course_tracking_store, 'time', lambda: 100)
+    monkeypatch.setattr(message_lifecycle, 'time', SimpleNamespace(time=lambda: 100))
+    bot.expiry.sleep = AsyncMock()
+    now = datetime.now(config.tz)
+    session = new_session(COURSE_SCHEDULE[0], now.date(), 81)
+    db.create_course_session(session)
+    if suggestion:
+        db._run_task_action(lambda: db._save_task_action_state(
+            'course-proposal:' + habits.token_for(session),
+            {'items': [{'title': 'Review lecture', 'status': 'pending'}]},
+        ))
+    payload = {'update_id': 99802, 'message': {'message_id': 99, 'chat': {'id': 123},
+        'text': text, 'reply_to_message': {'message_id': 81}}}
+    headers = {'X-Telegram-Bot-Api-Secret-Token': config.telegram_webhook_secret}
+
+    for _ in range(2):
+        assert client.post('/telegram/webhook', json=payload, headers=headers).status_code == 200
+
+    if expires:
+        bot.expiry.sleep.assert_awaited_once_with(7)
+        bot.request.assert_awaited_once_with('deleteMessage', {'chat_id': 123, 'message_id': 81})
+        assert db.get_update(99802)['messages'][0]['course_card_expiry'] == {'message_id': 81, 'deadline': 107}
+    else:
+        bot.request.assert_not_awaited()
+    assert db.get_course_session(session.session_id).reported_progress == (None if text == '收到' else text)
+    bot.send_message.assert_awaited_once()

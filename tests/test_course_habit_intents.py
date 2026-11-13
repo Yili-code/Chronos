@@ -47,7 +47,7 @@ def test_unknown_course_and_ordinary_progress_never_call_ai(db):
     start(db)
     ai = AsyncMock()
     assert asyncio.run(habits.prepare_reply(db, ai, 999, '以後每週都做兩題')) is None
-    assert asyncio.run(habits.prepare_reply(db, ai, 81, '今天上到動態規劃')) is None
+    assert callable(asyncio.run(habits.prepare_reply(db, ai, 81, '今天上到動態規劃')))
     ai._generate_output.assert_not_awaited()
 
 

@@ -59,23 +59,34 @@ async def prepare_reply(db, ai, prompt_id, text, *, message_id=0, local_date=Non
     session = db.get_course_session_by_prompt(prompt_id)
     if session is None:
         return None
+    proposal_key = 'course-proposal:' + token_for(session)
+
+    def record_progress(proposal):
+        return db.record_course_reply(
+            prompt_id, message_id, text, local_date=local_date,
+            expire_prompt=proposal is None,
+        )
+
+    def record_plain_progress():
+        return record_progress(db.get_task_action_state(proposal_key))
+
     if progress_is_exam_day(text):
         def record_exam():
             current = db.get_course_session_by_prompt(prompt_id)
-            proposal = db.get_task_action_state('course-proposal:' + token_for(session))
-            reply = db.record_course_reply(prompt_id, message_id, text, local_date=local_date)
+            proposal = db.get_task_action_state(proposal_key)
+            reply = record_progress(proposal)
             if current and current.status not in {ProgressStatus.ANSWERED, ProgressStatus.MISSED} and proposal:
                 items = [{**item, 'status': 'skipped'} if item.get('status') == 'pending' else item
                          for item in proposal['items']]
-                db._save_task_action_state('course-proposal:' + token_for(session), {**proposal, 'items': items})
+                db._save_task_action_state(proposal_key, {**proposal, 'items': items})
             return reply
         return record_exam
     # Ordinary progress retains the original route and does not spend an AI call.
     if not re.search(r'通常|平常|每週|每次|以後|往後|固定|習慣|記住|第一項|第二項|照.{0,30}做|'
                      r'\b(?:every|usually|routine|remember|from now|instead)\b', text, re.I):
-        return None
+        return record_plain_progress
     previous = preference(db, session.course_key)
-    proposal = db.get_task_action_state('course-proposal:' + token_for(session))
+    proposal = db.get_task_action_state(proposal_key)
     shown = [item['title'] for item in proposal['items']] if proposal else []
     if not shown and re.fullmatch(
             r'(?:以後|往後|每次).{0,12}照(?:今天|這次|這樣|剛才|之前).{0,10}(?:做|安排)[。.!！]?', text.strip()):
@@ -89,7 +100,7 @@ async def prepare_reply(db, ai, prompt_id, text, *, message_id=0, local_date=Non
     except (AIError, ValueError):
         return lambda: '暫時無法確認課後偏好，沒有變更偏好或進度。請重試，或使用 /coursehabit 明確設定。'
     if intent.action == 'progress':
-        return None
+        return record_plain_progress
     if intent.action == 'clarify':
         return lambda: CLARIFY_TEXT
     items = [intent.first, intent.second] if intent.action == 'set' else []
