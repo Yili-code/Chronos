@@ -11,7 +11,7 @@ from typing import Callable, Iterator
 from .course_tags import assignment_project
 from .reply_policy import is_no_change_reply
 from .course_tracking import ProgressReportKind, ProgressSession, accept_reply, mark_missed_at_day_end
-from .course_tracking_store import session_from_firestore, session_to_firestore
+from .course_tracking_store import course_progress_receipt, session_from_firestore, session_to_firestore
 from .assignments import Assignment, to_record, from_record, set_deadline, owner_deadline_edit
 from .task_timing import normalize_timing, task_sort_key
 from .task_actions import TaskActions, task_fields
@@ -651,7 +651,10 @@ class Database(TaskActions):
             ).fetchone()
         return session_from_firestore(dict(row)) if row else None
 
-    def record_course_reply(self, prompt_id: int, message_id: int, text: str, *, local_date=None) -> str:
+    def record_course_reply(
+        self, prompt_id: int, message_id: int, text: str, *, local_date=None,
+        expire_prompt: bool = False,
+    ) -> str | dict:
         """Called inside process_update, sharing the webhook receipt transaction."""
         with self.connect() as connection:
             row = connection.execute(
@@ -680,14 +683,7 @@ class Database(TaskActions):
                 now = datetime.now().astimezone()
                 self.complete_task(session.survey_task_id, now)
             self.save_course_session(answered)
-            if answered.report_kind is ProgressReportKind.UNKNOWN_SCOPE:
-                return (f"已記錄 {session.course_name}（{session.class_date:%m/%d}）：範圍尚待確認。\n"
-                        "填寫進度代辦已完成，已新增確認上課範圍代辦。")
-            if answered.report_kind is ProgressReportKind.NO_PROGRESS:
-                return (f"已記錄 {session.course_name}（{session.class_date:%m/%d}）：今天無課或沒有進度。\n"
-                        "填寫進度代辦已完成，其他代辦保持不變。")
-            return (f"已記錄 {session.course_name}（{session.class_date:%m/%d}）的進度。\n"
-                    "填寫進度代辦已完成，其他代辦保持不變。")
+            return course_progress_receipt(answered, expire_prompt=expire_prompt)
 
     def get_course_session(self, session_id: str) -> ProgressSession | None:
         with self.connect() as connection:

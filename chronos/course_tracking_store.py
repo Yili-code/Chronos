@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from datetime import date
+from time import time
 from typing import Protocol
 
 from .course_tracking import ProgressReportKind, ProgressSession, ProgressStatus, classify_progress
+from .message_lifecycle import SECONDS
 
 
 class CourseSessionStore(Protocol):
@@ -35,6 +37,21 @@ class InMemoryCourseSessionStore:
             raise KeyError(session.session_id)
         self._sessions[session.session_id] = session
         return session
+
+
+def course_progress_receipt(session: ProgressSession, *, expire_prompt: bool) -> str | dict:
+    course = f"{session.course_name}（{session.class_date:%m/%d}）"
+    if session.report_kind is ProgressReportKind.UNKNOWN_SCOPE:
+        text = f"已記錄 {course}：範圍尚待確認。\n填寫進度代辦已完成，已新增確認上課範圍代辦。"
+    elif session.report_kind is ProgressReportKind.NO_PROGRESS:
+        text = f"已記錄 {course}：今天無課或沒有進度。\n填寫進度代辦已完成，其他代辦保持不變。"
+    else:
+        text = f"已記錄 {course}的進度。\n填寫進度代辦已完成，其他代辦保持不變。"
+    if not expire_prompt:
+        return text
+    return {"messages": [{"text": text, "course_card_expiry": {
+        "message_id": session.prompt_message_id, "deadline": time() + SECONDS,
+    }}]}
 
 
 def session_to_firestore(session: ProgressSession) -> dict:
