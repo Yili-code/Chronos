@@ -45,7 +45,11 @@ def invitation_window(mail, timing, tz):
     return start.astimezone(tz), end.astimezone(tz) if end and end > start else None
 
 
-def agenda_lines(events, day, label):
+def weekday_date(day):
+    return f"{day:%m/%d}（星期{'一二三四五六日'[day.weekday()]}）"
+
+
+def agenda_lines(events, day, label, *, include_date=True):
     following = day + timedelta(days=1)
     rows = []
     for event, start, end in events:
@@ -57,7 +61,8 @@ def agenda_lines(events, day, label):
             window = f"{max(day, start):%H:%M}–{end:%H:%M}" if end < following else f"{max(day, start):%H:%M}–24:00"
         title = escape(clean(event.get("summary") or "未命名行程", 48))
         rows.append(f"• {window}　{title}")
-    lines = ["", f"<b>{label} · {day:%m/%d}</b>", *(rows[:5] or ["行事曆上沒有安排。"])]
+    heading = f"{label} · {weekday_date(day)}" if include_date else label
+    lines = ["", f"<b>{heading}</b>", *(rows[:5] or ["行事曆上沒有安排。"])]
     if len(rows) > 5:
         lines.append(f'另有 {len(rows) - 5} 項，<a href="https://calendar.google.com/calendar/r/day/{day:%Y/%m/%d}">查看完整行程</a>。')
     return lines
@@ -135,11 +140,11 @@ async def participation_context(workflow, mail, timing, summary, *, now=None):
     day = datetime.combine(start.date(), time.min, tz)
     following = day + timedelta(days=1)
     day_after = following + timedelta(days=1)
-    window = f"{start:%m/%d %H:%M}"
+    window = f"{weekday_date(start)}{start:%H:%M}"
     if end is None:
         window += " 起（結束時間待確認）"
     else:
-        window += f"–{end:%H:%M}" if end.date() == start.date() else f"–{end:%m/%d %H:%M}"
+        window += f"–{end:%H:%M}" if end.date() == start.date() else f"–{weekday_date(end)}{end:%H:%M}"
     lines = ["", f"<b>行程核對 · {window}</b>"]
     calendar = workflow.calendar
     if calendar is None or not calendar.configured():
@@ -159,4 +164,4 @@ async def participation_context(workflow, mail, timing, summary, *, now=None):
             pass
     travel, _ = await travel_context(workflow.settings, mail, timing.venue, events, start)
     return [*lines, *conflict_lines(workflow, events, start, end, now, escape(clean(summary, 110)), busy), *travel,
-            *agenda_lines(events, day, "活動當天"), *agenda_lines(events, following, "隔天")]
+            *agenda_lines(events, day, "活動當天", include_date=False), *agenda_lines(events, following, "隔天")]

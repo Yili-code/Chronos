@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .ai import AIError
 from .gmail import GmailError, clean
 from .mail_links import mail_url
-from .mail_event_context import InvitationTiming, participation_context
+from .mail_event_context import InvitationTiming, invitation_window, participation_context
 
 
 class MailDecision(BaseModel):
@@ -150,6 +150,7 @@ async def decide(workflow, mail, saved):
             "explicit timezone or Taipei venue in the evidence; an explicitly stated duration can support the end. "
             "For a physical event set venue to its exact address or venue name quoted from the source, preferring the address. "
             "For online or unconfirmed locations use an empty venue. "
+            "Put time, venue and registration deadline in separate fact bullets from benefits, food, eligibility or other facts. "
             "For month/day without a year, use the email date's year only if the event is on or after that email date in that year. "
             "Never use a registration deadline, application window, publication time or email date as an event time. "
             "For multiple possible sessions, unclear time or timezone, or non-event opportunities, use invitation=null. "
@@ -222,23 +223,69 @@ def format_deadline(value):
     return "/".join(match.group(1, 2, 3)) + (" " + match[4] + ":" + match[5] if match[4] else "")
 
 
-def format_decision(mail, decision, account, *, participation=()):
+def date_pattern(day):
+    return re.compile(
+        rf"(?:(?:\b{day.year}[-/]|(?<![\d/-]))0?{day.month}[-/]0?{day.day}(?!\d)"
+        rf"|(?<!\d)(?:{day.year}\s*年\s*)?0?{day.month}\s*月\s*0?{day.day}\s*[日號])"
+        r"(?:\s*[（(](?:星期|週)?[一二三四五六日天][）)])?"
+    )
+
+
+def invitation_facts(facts, start, end, venue, deadline):
+    """Omit logistics already shown while keeping independent clauses in each fact."""
+    date = date_pattern(start)
+    for fact in facts:
+        kept = []
+        for clause in re.split(r"(?<=[。！？；])|，|,\s+", fact):
+            clause = clause.strip()
+            if not clause:
+                continue
+            if deadline and re.search(r"截止|期限|deadline", clause, re.I) and deadline.search(clause):
+                continue
+            if venue and venue in clause:
+                continue
+            if (end and date.search(clause)
+                    and all(re.search(rf"(?<!\d)0?{value.hour}:{value.minute:02d}(?!\d)", clause)
+                            for value in (start, end))):
+                continue
+            kept.append(clause)
+        if kept:
+            yield "，".join(kept).replace("。，", "。").replace("；，", "；")
+
+
+def format_decision(mail, decision, account, *, participation=(), tz=None):
     from .mail_workflow import display_text
     sender, address = parseaddr(mail.get("sender", ""))
-    title = escape(clean(display_text(mail["subject"]), 160))
+    title = clean(display_text(mail["subject"]), 160)
     label = (
         ("活動邀請" if decision.invitation else "參與機會") if offers_action(mail, decision)
         else "需要處理" if decision.tier == "important" else "需要確認"
     )
-    lines = [f"<b>{label}｜{title}</b>", escape(clean(sender or address, 100)), *participation, "", "<b>重點</b>"]
     facts = decision.facts or [decision.summary]
-    lines.extend("• " + escape(clean(fact, 220)) for fact in facts)
+    deadline_text = format_deadline(decision.deadline)
+    if participation and tz and decision.invitation:
+        start, end = invitation_window(mail, decision.invitation, tz)
+        venue = decision.invitation.venue
+        # Remove a venue fact only when the same venue is visible in the route section.
+        shown_venue = venue if venue and any(escape(venue) in line for line in participation) else ""
+        source_deadline = re.search(r"(?:\d{4}[-/])?(\d{1,2})[-/](\d{1,2})(?!\d)", deadline_text)
+        deadline = None
+        if source_deadline:
+            month, day = map(int, source_deadline.groups())
+            deadline = re.compile(rf"(?<!\d)0?{month}[-/月]0?{day}(?!\d)")
+        if start and any(line.startswith("<b>行程核對 · ") for line in participation):
+            shortened = date_pattern(start).sub("", title)
+            title = re.sub(r"\s{2,}", " ", shortened).strip() or title
+            facts = list(invitation_facts(facts, start, end, shown_venue, deadline))
+    lines = [f"<b>{label}｜{escape(title)}</b>", escape(clean(sender or address, 100)), *participation]
+    if facts:
+        lines.extend(["", "<b>重點</b>", *("• " + escape(clean(fact, 220)) for fact in facts)])
     if decision.action_required and decision.next_step:
         lines.extend(["", "<b>需要你做的事</b>", escape(clean(decision.next_step, 200))])
     if decision.owner_question and not decision.action_required:
         lines.extend(["", "<b>需要你確認</b>", escape(clean(decision.owner_question, 180))])
     if decision.deadline:
-        lines.extend(["", "<b>期限</b> " + escape(format_deadline(decision.deadline))])
+        lines.extend(["", f"<b>{'報名期限' if label == '活動邀請' else '期限'}</b> " + escape(deadline_text)])
     if decision.missing_information:
         lines.extend(["", "<b>尚缺資訊</b>"])
         lines.extend("• " + escape(clean(fact, 150)) for fact in decision.missing_information)
@@ -275,7 +322,7 @@ async def process(workflow, day, identifier, mail, saved, item):
         if opportunity and item.get("delivery") not in {"sent", "sending", "uncertain"}:
             participation = await participation_context(workflow, mail, decision.invitation, brief_summary(decision.summary))
         await workflow.deliver(key, format_decision(
-            mail, decision, workflow.settings.gmail_account, participation=participation,
+            mail, decision, workflow.settings.gmail_account, participation=participation, tz=workflow.settings.tz,
         ), identifier)
     workflow.patch(key, screening_done=True)
     workflow.patch("message:" + identifier, screened=True, screening=decision.model_dump())
