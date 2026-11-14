@@ -380,6 +380,14 @@ class MailWorkflow:
             return await MailCorrespondence(self).recipient_preflight(identifier)
         if draft_review_request(instruction):
             return await MailCorrespondence(self).review(identifier)
+        if context_kind is None:
+            from .mail_event_followup import prepare_invitation_followup
+
+            invitation_answer = await prepare_invitation_followup(
+                self, saved, instruction, now or datetime.now(self.settings.tz),
+            )
+            if invitation_answer is not None:
+                return lambda: invitation_answer
         from .mail_natural_workflow import natural_request, prepare as prepare_natural
         if natural_request(instruction):
             return await prepare_natural(self, identifier, instruction, now)

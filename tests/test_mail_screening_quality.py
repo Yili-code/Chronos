@@ -214,8 +214,8 @@ async def test_invitation_push_checks_both_days_and_preserves_actions(workflow, 
     assert text.index('行程核對') < text.index('活動當天') < text.index('隔天') < text.index('重點')
     assert '09:00–10:00　隔日面試' in text
     if mode == 'conflicts':
-        assert '固定或未確認可取消</b>\n• 必修課 &lt;實驗&gt; · 重疊 60 分鐘' in text
-        assert '可調整的個人安排</b>\n• 複習作業系統 · 重疊 60 分鐘' in text
+        assert '固定或未確認可取消</b>\n• 16:00–17:00　必修課 &lt;實驗&gt;' in text
+        assert '可調整的個人安排</b>\n• 15:00–16:00　複習作業系統' in text
         assert '與創業者交流' in text and '須另排「複習作業系統」' in text
     elif mode == 'open':
         assert '沒有查到衝突' in text

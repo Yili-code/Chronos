@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     calendar_account: str = ""
     calendar_id: str = "primary"
     calendar_busy_ids: str = "primary"
+    google_maps_routes_api_key: str = ""
+    mail_event_default_origin: str = "奇浩聚會所"
     learning_enabled_since: str = ""
     learning_start_hour: int = Field(default=9, ge=0, le=20)
     learning_end_hour: int = Field(default=21, ge=1, le=24)
