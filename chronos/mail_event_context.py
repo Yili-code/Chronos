@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .gmail import clean
 from .google_calendar import CalendarError
+from .mail_event_travel import travel_context
 from .mail_task_event import grounded
 from .study_reflow import bounds, movable, verified_booking
 
@@ -18,6 +19,7 @@ class InvitationTiming(BaseModel):
     end: str | None = Field(max_length=50)
     start_evidence: str = Field(max_length=1000)
     end_evidence: str = Field(max_length=1000)
+    venue: str = Field(default="", max_length=250)
 
 
 def invitation_window(mail, timing, tz):
@@ -61,6 +63,12 @@ def agenda_lines(events, day, label):
     return lines
 
 
+def time_range(start, end):
+    clock = "%H:%M:%S" if any(value.second or value.microsecond for value in (start, end)) else "%H:%M"
+    end_format = clock if start.date() == end.date() else "%m/%d " + clock
+    return f"{start:{clock}}–{end:{end_format}}"
+
+
 def adjustable(workflow, event, now):
     props = event.get("extendedProperties", {}).get("private", {})
     if props.get("chronosMailEvent"):
@@ -80,10 +88,8 @@ def conflict_lines(workflow, events, start, end, now, benefit, busy):
         if begin >= end or finish <= start or event.get("transparency") == "transparent":
             continue
         title = escape(clean(event.get("summary") or "未命名行程", 48))
-        overlap = min(end, finish) - max(start, begin)
-        minutes = int(overlap.total_seconds() // 60)
         target = flexible if adjustable(workflow, event, now) else fixed
-        target.append((title, minutes))
+        target.append((title, time_range(max(start, begin), min(end, finish))))
     # Some calendars can report availability without exposing event details.
     if busy is None:
         notice = "空閒狀態未能完整核對。"
@@ -106,8 +112,7 @@ def conflict_lines(workflow, events, start, end, now, benefit, busy):
     for label, rows in (("固定或未確認可取消", fixed), ("可調整的個人安排", flexible)):
         if rows:
             lines.append(f"<b>{label}</b>")
-            lines.extend(f"• {title} · 重疊 {f'{minutes} 分鐘' if minutes else '不到 1 分鐘'}"
-                         for title, minutes in rows[:3])
+            lines.extend(f"• {window}　{title}" for title, window in rows[:3])
             if len(rows) > 3:
                 lines.append(f"另有 {len(rows) - 3} 項重疊。")
     if flexible:
@@ -121,10 +126,10 @@ def conflict_lines(workflow, events, start, end, now, benefit, busy):
     return lines
 
 
-async def participation_context(workflow, mail, timing, summary):
+async def participation_context(workflow, mail, timing, summary, *, now=None):
     tz = workflow.settings.tz
     start, end = invitation_window(mail, timing, tz)
-    now = datetime.now(tz)
+    now = now or datetime.now(tz)
     if start is None or (end or start) <= now:
         return ["", "<b>行程核對</b>", "未確認可用的活動日期與開始時間，無法核對當天及隔天行程。"]
     day = datetime.combine(start.date(), time.min, tz)
@@ -152,5 +157,6 @@ async def participation_context(workflow, mail, timing, summary):
             busy = await asyncio.wait_for(calendar.busy(start, end), timeout=8)
         except (CalendarError, TimeoutError):
             pass
-    return [*lines, *conflict_lines(workflow, events, start, end, now, escape(clean(summary, 110)), busy),
+    travel, _ = await travel_context(workflow.settings, mail, timing.venue, events, start)
+    return [*lines, *conflict_lines(workflow, events, start, end, now, escape(clean(summary, 110)), busy), *travel,
             *agenda_lines(events, day, "活動當天"), *agenda_lines(events, following, "隔天")]

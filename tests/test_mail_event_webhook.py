@@ -1,9 +1,46 @@
 from unittest.mock import AsyncMock, Mock
+from datetime import datetime, timedelta
 
 from chronos import main
+from chronos.mail_screening import MailDecision
+from chronos.mail_event_context import InvitationTiming
 from chronos.mail_task_event import MailTaskIntent
 from test_system import system
 from test_mail_webhook import enable, post, immediate_notice_timer
+
+
+def test_invitation_reply_lists_options_without_moving_meeting(system, monkeypatch):
+    client, tasks, bot, config = system
+    calendar = setup_event(system, monkeypatch)
+    day = (datetime.now(config.tz) + timedelta(days=10)).replace(hour=0, minute=0, second=0, microsecond=0)
+    start, end = day + timedelta(hours=14), day + timedelta(hours=17)
+    evidence = f"{start.isoformat()} 到 {end.isoformat()}，台北"
+    timing = InvitationTiming(start=start.isoformat(), end=end.isoformat(),
+                              start_evidence=evidence, end_evidence=evidence)
+    decision = MailDecision(tier='information', confidence=.9, reason='Invitation',
+                            summary='交流活動', next_step='', optional_action=True, invitation=timing)
+    main.mail_workflow().patch('message:ab12', screening=decision.model_dump(),
+                               mail={'id': 'ab12', 'subject': 'School Party', 'body': evidence})
+    meeting_start, meeting_end = start + timedelta(hours=1), start + timedelta(hours=2)
+    calendar.agenda.return_value = [{
+        'summary': '小組會議', 'start': {'dateTime': meeting_start.isoformat()},
+        'end': {'dateTime': meeting_end.isoformat()}, 'attendees': [{'email': 'guest@example.test'}],
+    }]
+    calendar.busy.return_value = [(meeting_start, meeting_end)]
+
+    for _ in range(2):
+        assert post(client, 9781, text='小組會議可以移到什麼時候', card=500).status_code == 200
+    bot.send_message.assert_awaited_once()
+    text = bot.send_message.await_args.args[1]
+    assert '「小組會議」的改期候選' in text and '請先與主辦人或其他參與者確認' in text
+    assert '15:00–16:00' not in text
+    calendar.agenda.assert_awaited_once()
+    calendar.insert.assert_not_awaited()
+    calendar.move_event.assert_not_awaited()
+    main.ai._generate_output.assert_not_awaited()
+    assert not tasks.list_open()
+    assert post(client, 9782, text='交通怎麼去？', card=500).status_code == 200
+    assert bot.send_message.await_args.kwargs['parse_mode'] == 'HTML'
 
 
 def setup_event(system, monkeypatch, *, missing_end=False):

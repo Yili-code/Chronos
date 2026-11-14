@@ -148,6 +148,8 @@ async def decide(workflow, mail, saved):
             "For a single actual invitation to attend at a specific time, populate invitation with its start and, when stated, end. "
             "Use timezone-aware ISO timestamps and exact supporting source quotes. Include the event date, 24-hour time and "
             "explicit timezone or Taipei venue in the evidence; an explicitly stated duration can support the end. "
+            "For a physical event set venue to its exact address or venue name quoted from the source, preferring the address. "
+            "For online or unconfirmed locations use an empty venue. "
             "For month/day without a year, use the email date's year only if the event is on or after that email date in that year. "
             "Never use a registration deadline, application window, publication time or email date as an event time. "
             "For multiple possible sessions, unclear time or timezone, or non-event opportunities, use invitation=null. "

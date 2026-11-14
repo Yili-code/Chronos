@@ -1189,8 +1189,8 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                     "已保留，之後不會自動過濾這封信；若已在垃圾桶，請在 Gmail 還原。",
                     "已封存，可在 Gmail 所有郵件找到；本批完成後傳 /mail_next。"}
                 send_options = {'requires_response': False} if terminal else {}
-                if delete_after := (receipt.get("messages") or [{}])[0].get("delete_after_seconds"):
-                    send_options["delete_after_seconds"] = delete_after
+                message = (receipt.get("messages") or [{}])[0]
+                send_options.update({key: message[key] for key in ("parse_mode", "delete_after_seconds") if key in message})
                 result = await telegram.send_message(chat_id, response_text, reply_markup=markup, **send_options)
                 if not result.get("ok"):
                     raise HTTPException(status_code=502, detail="Mail action reply pending")
