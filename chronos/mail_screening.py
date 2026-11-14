@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .ai import AIError
 from .gmail import GmailError, clean
 from .mail_links import mail_url
+from .mail_event_context import InvitationTiming, participation_context
 
 
 class MailDecision(BaseModel):
@@ -33,6 +34,7 @@ class MailDecision(BaseModel):
     missing_information: list[Annotated[str, Field(min_length=1, max_length=150)]] = Field(default_factory=list, max_length=3)
     expired: bool = False
     optional_action: bool = False
+    invitation: InvitationTiming | None = None
 
 
 OPPORTUNITY = re.compile(
@@ -143,6 +145,12 @@ async def decide(workflow, mail, saved):
             "Set optional_action=true for an upcoming opportunity the owner can choose to join or schedule: "
             "competitions, practice contests, workshops, events, internships or application openings. This is "
             "independent of required action. Keep ordinary newsletters/product tips optional_action=false. "
+            "For a single actual invitation to attend at a specific time, populate invitation with its start and, when stated, end. "
+            "Use timezone-aware ISO timestamps and exact supporting source quotes. Include the event date, 24-hour time and "
+            "explicit timezone or Taipei venue in the evidence; an explicitly stated duration can support the end. "
+            "For month/day without a year, use the email date's year only if the event is on or after that email date in that year. "
+            "Never use a registration deadline, application window, publication time or email date as an event time. "
+            "For multiple possible sessions, unclear time or timezone, or non-event opportunities, use invitation=null. "
             "Write facts as short bullets, preferably under 80 Chinese characters each, preserving concrete details. "
             "For FYI set action_required=false, next_step='', owner_question=''; reading, checking details or "
             "optionally registering is not a required action. Put explicit deadlines in deadline without inventing "
@@ -212,12 +220,15 @@ def format_deadline(value):
     return "/".join(match.group(1, 2, 3)) + (" " + match[4] + ":" + match[5] if match[4] else "")
 
 
-def format_decision(mail, decision, account):
+def format_decision(mail, decision, account, *, participation=()):
     from .mail_workflow import display_text
     sender, address = parseaddr(mail.get("sender", ""))
     title = escape(clean(display_text(mail["subject"]), 160))
-    label = "可參加" if offers_action(mail, decision) else "需要處理" if decision.tier == "important" else "需要確認"
-    lines = [f"<b>{label}｜{title}</b>", escape(clean(sender or address, 100)), "", "<b>重點</b>"]
+    label = (
+        ("活動邀請" if decision.invitation else "參與機會") if offers_action(mail, decision)
+        else "需要處理" if decision.tier == "important" else "需要確認"
+    )
+    lines = [f"<b>{label}｜{title}</b>", escape(clean(sender or address, 100)), *participation, "", "<b>重點</b>"]
     facts = decision.facts or [decision.summary]
     lines.extend("• " + escape(clean(fact, 220)) for fact in facts)
     if decision.action_required and decision.next_step:
@@ -255,9 +266,15 @@ async def process(workflow, day, identifier, mail, saved, item):
                 await workflow.gmail.archive(identifier)
             workflow.patch("message:" + identifier, auto_archived=True)
             workflow.patch(key, archive_pending=False)
-    if decision.tier in {"important", "review"} or offers_action(mail, decision):
+    opportunity = offers_action(mail, decision)
+    if decision.tier in {"important", "review"} or opportunity:
         workflow.patch("message:" + identifier, last_delivery=key)
-        await workflow.deliver(key, format_decision(mail, decision, workflow.settings.gmail_account), identifier)
+        participation = ()
+        if opportunity and item.get("delivery") not in {"sent", "sending", "uncertain"}:
+            participation = await participation_context(workflow, mail, decision.invitation, brief_summary(decision.summary))
+        await workflow.deliver(key, format_decision(
+            mail, decision, workflow.settings.gmail_account, participation=participation,
+        ), identifier)
     workflow.patch(key, screening_done=True)
     workflow.patch("message:" + identifier, screened=True, screening=decision.model_dump())
 

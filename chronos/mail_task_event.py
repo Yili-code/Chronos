@@ -26,7 +26,7 @@ class MailTaskIntent(BaseModel):
     question: str = Field(default="", max_length=250)
 
 
-def grounded(value, evidence, source, tz, *, start=None, owner=False, reference=None):
+def grounded(value, evidence, source, tz, *, start=None, owner=False, reference=None, invitation=False):
     if not value or not evidence or evidence not in source:
         return None
     try:
@@ -41,10 +41,19 @@ def grounded(value, evidence, source, tz, *, start=None, owner=False, reference=
             if duration:
                 minutes = int(duration[1]) * (60 if duration[2].lower().startswith(('hour', 'hr')) or duration[2] == '小時' else 1)
                 return result if result == start + timedelta(minutes=minutes) else None
-        zone = timezone.utc if re.search(r"\b(?:UTC|GMT)\b", evidence) else tz if owner or re.search(r"Asia/Taipei|Taipei|台北|臺北", evidence, re.I) else None
+        if invitation and re.search(r"\b(?:UTC|GMT)\s*[+-]", evidence):
+            return None
+        zone = timezone.utc if re.search(r"\b(?:UTC|GMT)\b", evidence) else tz if owner or re.search(r"Asia/Taipei|Taipei|台北|臺北|台灣時間|臺灣時間", evidence, re.I) else None
         if zone is None:
             return None
         date = re.search(r"(20\d{2})[年/-](\d{1,2})[月/-](\d{1,2})日?", evidence)
+        if not date and invitation and reference:
+            short_date = re.search(r"(?<![\d/])(\d{1,2})[/月](\d{1,2})日?(?![\d/])", evidence)
+            if short_date:
+                day = datetime(reference.year, int(short_date[1]), int(short_date[2])).date()
+                if day < reference.date():
+                    return None
+                date = [None, str(day.year), str(day.month), str(day.day)]
         if not date:
             months = r"January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec"
             month_date = re.search(r"\b(" + months + r")\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(20\d{2}))?", evidence, re.I)
@@ -66,6 +75,8 @@ def grounded(value, evidence, source, tz, *, start=None, owner=False, reference=
             return None
         local = result.astimezone(zone)
         expected_date = (int(date[1]), int(date[2]), int(date[3])) if date else ((start.astimezone(zone).year, start.astimezone(zone).month, start.astimezone(zone).day) if start else None)
+        if invitation and re.search(r"\b(?:am|pm)\b|上午|下午|晚上|中午", evidence, re.I):
+            return None  # Require independently verifiable 24-hour evidence for the preview.
         clock = tuple(map(int, times[-1] if start else times[0]))
         if expected_date == (local.year, local.month, local.day) and clock == (local.hour, local.minute):
             return result

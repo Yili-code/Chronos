@@ -1,11 +1,15 @@
+from datetime import datetime, timedelta
+from unittest.mock import AsyncMock, Mock
+
 import pytest
 
 from chronos.ai import AIError
 from chronos.gmail import GmailError
 from chronos.message_lifecycle import KEY
 from chronos.telegram import TelegramClient
-from unittest.mock import AsyncMock
-from chronos.mail_screening import MailDecision, decide, digest, evidence_units, format_deadline, format_decision, ground_facts
+from chronos.google_calendar import CalendarError
+from chronos.mail_event_context import InvitationTiming, invitation_window
+from chronos.mail_screening import MailDecision, decide, digest, evidence_units, fingerprint, format_deadline, format_decision, ground_facts, process
 from test_mail_workflow import workflow, message  # noqa: F401
 
 
@@ -132,7 +136,6 @@ def test_deadline_display_removes_machine_timestamp_clutter_without_inference():
 
 @pytest.mark.asyncio
 async def test_opportunity_has_individual_controls_and_preserves_decision_facts(workflow):
-    from chronos.mail_screening import process, fingerprint
     day='daily:2026-11-05'
     mail=message(subject='Weekend Practice #31',body='November 08 at 12:00 UTC; duration 2 hours')
     choice=MailDecision(tier='information',confidence=.96,source_kind='notification',
@@ -143,12 +146,91 @@ async def test_opportunity_has_individual_controls_and_preserves_decision_facts(
     await process(workflow,day,'ab12',mail,{},item)
     call=workflow.telegram.send_message.call_args
     assert all(fact in call.args[1] for fact in choice.facts)
-    assert '可參加' in call.args[1]
+    assert '參與機會' in call.args[1]
     assert workflow.binding(123,100)['mail_id']=='ab12'
     buttons=[button for row in call.kwargs['reply_markup']['inline_keyboard'] for button in row]
     assert any(b['callback_data']=='mail:task:ab12' and b['text']=='加入安排' for b in buttons)
     await digest(workflow,day,{'ids':['ab12'],'more':False})
     assert workflow.telegram.send_message.await_count==1
+
+
+def school_party(tz):
+    day = datetime.now(tz).date() + timedelta(days=10)
+    start = datetime.combine(day, datetime.min.time(), tz)
+    evidence = f'{day:%m/%d} 14:30–17:00，台北時代基金會'
+    mail = message(subject='Epoch School Party', date=(day - timedelta(days=1)).isoformat(),
+                   body=f'活動時間 {evidence}。活動前兩天截止報名。')
+    timing = InvitationTiming(start=(start + timedelta(hours=14, minutes=30)).isoformat(),
+                              end=(start + timedelta(hours=17)).isoformat(),
+                              start_evidence=evidence, end_evidence=evidence)
+    return mail, timing, start
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('mode', ['conflicts', 'open', 'hidden_busy', 'unknown_end', 'calendar_error'])
+async def test_invitation_push_checks_both_days_and_preserves_actions(workflow, mode):
+    tz = workflow.settings.tz
+    mail, timing, day = school_party(tz)
+    workflow.settings.calendar_account = 'owner@example.com'
+    workflow.settings.calendar_id = 'primary'
+    calendar = Mock()
+    calendar.configured.return_value = True
+    calendar.verify_owner = AsyncMock()
+    calendar.agenda = AsyncMock()
+    calendar.busy = AsyncMock(return_value=[])
+    workflow.calendar = calendar
+    fixed = {'summary': '必修課 <實驗>', 'recurringEventId': 'class'}
+    flexible = {'summary': '複習作業系統'}
+    tomorrow = {'summary': '隔日面試'}
+    for event, start, end in ((fixed, 16, 18), (flexible, 15, 16), (tomorrow, 33, 34)):
+        event.update(start={'dateTime': (day + timedelta(hours=start)).isoformat()},
+                     end={'dateTime': (day + timedelta(hours=end)).isoformat()},
+                     _calendar_id='primary', creator={'email': 'owner@example.com'},
+                     organizer={'self': True}, etag='etag')
+    calendar.agenda.return_value = [tomorrow, flexible, fixed] if mode == 'conflicts' else [tomorrow]
+    if mode == 'calendar_error':
+        calendar.agenda.side_effect = CalendarError('private error detail')
+    if mode == 'hidden_busy':
+        calendar.busy.return_value = [(day + timedelta(hours=15), day + timedelta(hours=16))]
+    if mode == 'unknown_end':
+        timing = timing.model_copy(update={'end': None, 'end_evidence': ''})
+    choice = information().model_copy(update={
+        'optional_action': True, 'summary': '與創業者交流並了解 Epoch School。', 'invitation': timing,
+    })
+    workflow.ai._generate_output.return_value = choice
+    workflow.patch('message:ab12', mail=mail)
+    await process(workflow, 'daily:test', 'ab12', mail, {}, {})
+
+    text = workflow.telegram.send_message.call_args.args[1]
+    assert '活動邀請' in text and '開啟原信' in text
+    calendar.verify_owner.assert_awaited_once()
+    calendar.agenda.assert_awaited_once_with(day, day + timedelta(days=2))
+    assert workflow.ai._generate_output.await_count == 1
+    assert workflow.binding(123, 100)['mail_id'] == 'ab12'
+    assert workflow.get('daily:test:ab12')['mail_fingerprint'] == fingerprint(mail)
+    if mode == 'calendar_error':
+        assert '兩天的安排待確認' in text and 'private error detail' not in text
+        return
+    assert text.index('行程核對') < text.index('活動當天') < text.index('隔天') < text.index('重點')
+    assert '09:00–10:00　隔日面試' in text
+    if mode == 'conflicts':
+        assert '固定或未確認可取消</b>\n• 必修課 &lt;實驗&gt; · 重疊 60 分鐘' in text
+        assert '可調整的個人安排</b>\n• 複習作業系統 · 重疊 60 分鐘' in text
+        assert '與創業者交流' in text and '須另排「複習作業系統」' in text
+    elif mode == 'open':
+        assert '沒有查到衝突' in text
+    elif mode == 'hidden_busy':
+        assert '另有忙碌時段未顯示行程名稱' in text and '沒有查到衝突' not in text
+    else:
+        assert '無法判斷完整時段是否衝突' in text
+
+
+def test_invitation_window_requires_source_grounding(workflow):
+    mail, timing, day = school_party(workflow.settings.tz)
+    assert invitation_window(mail, timing, day.tzinfo) == (
+        day + timedelta(hours=14, minutes=30), day + timedelta(hours=17),
+    )
+    assert invitation_window(mail, timing.model_copy(update={'start_evidence': 'unsupported quote'}), day.tzinfo) == (None, None)
 
 
 @pytest.mark.asyncio
