@@ -44,8 +44,12 @@ def test_event_task_callback_books_once_and_cleans_only_after_success(system, mo
 def test_event_question_has_bound_reply_context_and_finishes_from_owner_facts(system, monkeypatch):
     client, tasks, bot, config = system
     calendar = setup_event(system, monkeypatch, missing_end=True)
+    main.ai._generate_output.return_value.question = '這場昔別的活動是在吃碎具體的哪一天？'
     assert post(client, 9801, callback='mail:task:ab12').status_code == 200
     calendar.insert.assert_not_awaited()
+    assert bot.send_message.await_args.args[1] == (
+        '郵件活動\n請回覆活動日期、開始和結束時間，以及時區。也可以回覆「取消」。'
+    )
     assert bot.send_message.await_args.kwargs['reply_markup']['force_reply']
     assert bot.send_message.await_args.kwargs['delete_after_seconds'] == 60
     binding = main.mail_workflow().binding(123, 777)
