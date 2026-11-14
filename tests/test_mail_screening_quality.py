@@ -233,6 +233,35 @@ def test_invitation_window_requires_source_grounding(workflow):
     assert invitation_window(mail, timing.model_copy(update={'start_evidence': 'unsupported quote'}), day.tzinfo) == (None, None)
 
 
+def test_invitation_card_consolidates_logistics_but_keeps_other_facts(workflow):
+    tz = workflow.settings.tz
+    mail, timing, day = school_party(tz)
+    date = day.strftime('%m/%d')
+    deadline = (day - timedelta(days=2)).strftime('%m/%d')
+    venue = '台北時代基金會'
+    mail['subject'] = f'【Epoch School】 {date} School Party'
+    decision = information().model_copy(update={
+        'optional_action': True, 'invitation': timing.model_copy(update={'venue': venue}),
+        'deadline': deadline, 'facts': [
+            f'活動時間為 {date} 14:30–17:00。',
+            f'地點是{venue}，現場備有餐點。',
+            f'活動報名截止日為 {deadline}。',
+            'Epoch School 2027 計畫開放申請。',
+        ],
+    })
+    participation = [
+        f'<b>行程核對 · {date}（星期{"一二三四五六日"[day.weekday()]}）14:30–17:00</b>',
+        f'出發地 → {venue}', '<b>活動當天</b>',
+    ]
+    card = format_decision(mail, decision, workflow.settings.gmail_account, participation=participation, tz=tz)
+    assert card.count(date) == card.count(venue) == card.count(deadline) == 1
+    assert '現場備有餐點' in card and 'Epoch School 2027 計畫開放申請' in card
+    assert '開啟原信' in card
+    no_route = format_decision(mail, decision, workflow.settings.gmail_account,
+                               participation=participation[:1], tz=tz)
+    assert venue in no_route
+
+
 @pytest.mark.asyncio
 async def test_expired_events_are_labeled_without_exposing_batch_identifiers(workflow):
     day='replay:2026-11-05:private-batch-token'

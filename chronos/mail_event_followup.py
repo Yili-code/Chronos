@@ -37,7 +37,7 @@ async def prepare_invitation_followup(workflow, saved, instruction, now):
 
         context = await participation_context(workflow, mail, timing, screening["summary"], now=now)
         return {"messages": [{"text": format_decision(mail, MailDecision.model_validate(screening),
-            workflow.settings.gmail_account, participation=context), "parse_mode": "HTML"}]}
+            workflow.settings.gmail_account, participation=context, tz=workflow.settings.tz), "parse_mode": "HTML"}]}
     return await reschedule_options(workflow, mail, timing, instruction, now)
 
 
