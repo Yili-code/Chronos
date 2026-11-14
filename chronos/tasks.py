@@ -62,6 +62,9 @@ class TaskService:
     def complete(self, task_id: int) -> bool:
         return self.db.complete_task(task_id, datetime.now(self.tz))
 
+    def complete_many(self, task_ids: list[int]) -> bool:
+        return self.db.complete_tasks(task_ids, datetime.now(self.tz))
+
     def postpone(self, task_id: int, due_at: datetime) -> bool:
         return self.db.postpone_task(task_id, due_at)
 

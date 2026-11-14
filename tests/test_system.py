@@ -677,7 +677,7 @@ def test_concurrent_duplicate_updates(system, monkeypatch):
 def test_duplicate_other_mutations(system, monkeypatch, command):
     client, service, bot, config = system
     service.create('Original task')
-    method = {'done': 'complete_position', 'edit': 'edit_with_undo'}[command]
+    method = {'done': 'complete_many', 'edit': 'edit_with_undo'}[command]
     action = Mock(wraps=getattr(service, method))
     monkeypatch.setattr(service, method, action)
     if command == 'done':
