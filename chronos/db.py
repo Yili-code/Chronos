@@ -545,6 +545,17 @@ class Database(TaskActions):
                     connection.execute("UPDATE assignments SET record_json=? WHERE task_id=?", (json.dumps(data), task_id))
         return cursor.rowcount == 1
 
+    def complete_tasks(self, task_ids: list[int], completed_at: datetime) -> bool:
+        scope = self.connect() if self._transaction.get() is not None else self.transaction()
+        with scope:
+            for task_id in task_ids:
+                task = self.get_task(task_id)
+                if task is None or task["status"] != "open":
+                    return False
+            for task_id in task_ids:
+                self.complete_task(task_id, completed_at)
+        return True
+
     def confirm_assignment_deadline(self, task_id: int, deadline: datetime) -> bool:
         scope = self.connect() if self._transaction.get() is not None else self.transaction()
         with scope as connection:

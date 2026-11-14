@@ -1776,20 +1776,26 @@ async def prepare_message(text: str, *, update_id: int | None = None, chat_id: i
         return lambda:preview(db,chat_id,update_id,datetime.now(settings.tz),CLEAR_CONFIRM_TEXT)
     if command == "done":
         return lambda: "要完成哪一項？直接說任務名稱，或回覆任務卡說「完成了」。\n\n" + task_list_text()
-    completed = re.fullmatch(r"done\s+(\d+)", command or "", re.IGNORECASE)
+    completed = re.fullmatch(r"done\s+(\d+(?:\s+\d+)*)", command or "", re.IGNORECASE)
     if completed:
+        positions = list(dict.fromkeys(map(int, completed.group(1).split())))
+
         def complete() -> str:
-            position = int(completed.group(1))
             before = tasks.list_open()
             aliases = tasks.project_aliases()
-            task = tasks.complete_position(position)
-            if task is None:
-                return f"Task {position} not found.\n\n{task_list_text()}"
-            remaining = [item for item in before if item["id"] != task["id"]]
-            return (
-                f"Completed {escape(task['title'])}\n\n"
-                f"{format_tasks(remaining, settings.tz, project_aliases=aliases)}"
-            )
+            current_list = lambda: format_tasks(before, settings.tz, project_aliases=aliases)
+            invalid = next((position for position in positions if not 1 <= position <= len(before)), None)
+            if invalid is not None:
+                return f"Task {invalid} not found.\n\n{current_list()}"
+
+            selected = [before[position - 1] for position in positions]
+            task_ids = {task["id"] for task in selected}
+            if not tasks.complete_many([task["id"] for task in selected]):
+                return "The task list changed. Run /tasks and try again."
+            remaining = [task for task in before if task["id"] not in task_ids]
+            summary = "\n".join(f"Completed {escape(task['title'])}" for task in selected)
+            return f"{summary}\n\n{format_tasks(remaining, settings.tz, project_aliases=aliases)}"
+
         return complete
     edited = re.fullmatch(r"edit\s+(#?\d+)\s+(.+)", command or "", re.IGNORECASE | re.DOTALL)
     if edited:

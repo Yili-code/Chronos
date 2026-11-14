@@ -400,3 +400,25 @@ def test_firestore_collection_prefix_is_validated(monkeypatch):
         assert "COLLECTION_PREFIX" in str(error)
     else:
         raise AssertionError("invalid prefix was accepted")
+
+
+def test_batch_done_is_replay_safe_with_firestore(monkeypatch):
+    import asyncio
+    from chronos import main
+    from chronos.tasks import TaskService
+
+    db = database(monkeypatch)
+    monkeypatch.setattr(main, "db", db)
+    monkeypatch.setattr(main, "tasks", TaskService(db, TZ))
+    for position in range(1, 12):
+        db.create_task(f"Task {position}", None, None, datetime(2026, 11, 14, tzinfo=TZ))
+
+    action = asyncio.run(main.prepare_message("/done 7 8 9 10"))
+    receipt = db.process_update(1, action)
+    assert receipt["reply"].split("\n\n")[0].splitlines() == [
+        f"Completed Task {position}" for position in (7, 8, 9, 10)
+    ]
+    assert db.process_update(1, action) == receipt
+    assert [task["title"] for task in db.list_open_tasks()] == [
+        f"Task {position}" for position in (1, 2, 3, 4, 5, 6, 11)
+    ]

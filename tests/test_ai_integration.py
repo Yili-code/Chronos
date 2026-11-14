@@ -83,3 +83,20 @@ def test_edit_missing_position_skips_ai(task_service, monkeypatch):
     monkeypatch.setattr(main.ai, "edit", edit)
     assert asyncio.run(main.handle_message("/edit 1 rename it")) == "Task 1 not found.\n\nNo open tasks, Sir. A welcome state of affairs."
     edit.assert_not_awaited()
+
+
+def test_batch_done_uses_original_positions(task_service):
+    for position in range(1, 12):
+        task_service.create(f"Task <{position}>")
+
+    invalid = asyncio.run(main.handle_message("/done 7 12 8"))
+    assert invalid.startswith("Task 12 not found.")
+    assert len(task_service.list_open()) == 11
+
+    reply = asyncio.run(main.handle_message("/done 7 8 9 10 8"))
+    assert reply.split("\n\n")[0].splitlines() == [
+        f"Completed Task &lt;{position}&gt;" for position in (7, 8, 9, 10)
+    ]
+    assert [task["title"] for task in task_service.list_open()] == [
+        f"Task <{position}>" for position in (1, 2, 3, 4, 5, 6, 11)
+    ]

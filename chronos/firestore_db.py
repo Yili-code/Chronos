@@ -383,31 +383,37 @@ class FirestoreDatabase(TaskActions):
         return value
 
     def _update_open_task(self, task_id: int, values: dict) -> bool:
+        return self._update_open_tasks([task_id], values)
+
+    def _update_open_tasks(self, task_ids: list[int], values: dict) -> bool:
         def update(transaction):
-            reference = self.tasks.document(str(task_id))
-            snapshot = reference.get(transaction=transaction)
-            if not snapshot.exists or snapshot.get("status") != "open":
-                return False
-            linked = []
-            if "completed_at" in values or "due_at" in values:
-                linked = list(self.assignments.where(filter=FieldFilter("task_id", "==", task_id)).stream(transaction=transaction))
             updates = []
-            for assignment in linked:
-                data = assignment.to_dict()
-                if "completed_at" in values:
-                    data["record"]["completed_at"] = values["completed_at"]
-                if "due_at" in values:
-                    deadline = datetime.fromisoformat(values["due_at"]) if values["due_at"] else None
-                    data["record"] = to_record(owner_deadline_edit(from_record(data["record"]), deadline))
-                updates.append((assignment.reference, data))
-            task_values = dict(values)
-            if "due_at" in task_values and "timing" not in task_values:
-                timing = dict(snapshot.to_dict().get("timing") or {})
-                timing.pop("due_date", None)
-                task_values["timing"] = timing
-            transaction.update(reference, task_values)
-            for assignment_ref, data in updates:
-                transaction.update(assignment_ref, data)
+            for task_id in task_ids:
+                reference = self.tasks.document(str(task_id))
+                snapshot = reference.get(transaction=transaction)
+                if not snapshot.exists or snapshot.get("status") != "open":
+                    return False
+                task_values = dict(values)
+                if "due_at" in task_values and "timing" not in task_values:
+                    timing = dict(snapshot.to_dict().get("timing") or {})
+                    timing.pop("due_date", None)
+                    task_values["timing"] = timing
+                updates.append((reference, task_values))
+
+                if "completed_at" not in values and "due_at" not in values:
+                    continue
+                linked = self.assignments.where(filter=FieldFilter("task_id", "==", task_id))
+                for assignment in linked.stream(transaction=transaction):
+                    data = assignment.to_dict()
+                    if "completed_at" in values:
+                        data["record"]["completed_at"] = values["completed_at"]
+                    if "due_at" in values:
+                        deadline = datetime.fromisoformat(values["due_at"]) if values["due_at"] else None
+                        data["record"] = to_record(owner_deadline_edit(from_record(data["record"]), deadline))
+                    updates.append((assignment.reference, data))
+
+            for reference, data in updates:
+                transaction.update(reference, data)
             return True
 
         active = self._transaction.get()
@@ -415,6 +421,9 @@ class FirestoreDatabase(TaskActions):
 
     def complete_task(self, task_id: int, completed_at: datetime) -> bool:
         return self._update_open_task(task_id, {"status": "done", "completed_at": completed_at.isoformat()})
+
+    def complete_tasks(self, task_ids: list[int], completed_at: datetime) -> bool:
+        return self._update_open_tasks(task_ids, {"status": "done", "completed_at": completed_at.isoformat()})
 
     def confirm_assignment_deadline(self, task_id: int, deadline: datetime) -> bool:
         def confirm(transaction):
