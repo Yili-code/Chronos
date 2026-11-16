@@ -1525,6 +1525,63 @@ def test_booked_edit_bypasses_other_proposal_and_preserves_progress(setup):
     calendar.move_event.assert_not_awaited()
 
 
+@pytest.mark.parametrize("outcome", ["confirmed", "changed", "write_conflict", "expired"])
+def test_shortening_drifted_booking_requires_the_live_version(setup, outcome):
+    from types import SimpleNamespace
+    from chronos.task_actions import task_fields
+
+    planner, task, calendar, _ = setup
+    saved_start = NOW.replace(hour=13, minute=15)
+    live_start = saved_start + timedelta(days=2)
+    state = {"status": "scheduled", "token": "booked", "event_id": "existing",
+             "start": saved_start.isoformat(), "end": (saved_start + timedelta(hours=2)).isoformat(),
+             "minutes": 120, "snapshot": task_fields(task)}
+    planner.update(task["id"], lambda old: state)
+    planner.db.mutate_task_action_state("learning:day:2026-10-19", lambda old: {"booked": 120})
+    event = {"id": "existing", "etag": "v1", "creator": {"email": planner.settings.calendar_account},
+             "organizer": {"self": True}, "start": {"dateTime": live_start.isoformat()},
+             "end": {"dateTime": (live_start + timedelta(minutes=105)).isoformat()},
+             "extendedProperties": {"private": {"chronosTask": str(task["id"]), "chronosToken": "booked"}}}
+    calendar.event.return_value = event
+    planner.ai = SimpleNamespace(parse_schedule_edit=AsyncMock(return_value=SimpleNamespace(
+        actionable=True, timing="keep", minutes=30, progress_note="")))
+
+    async def move(event_id, body, etag):
+        assert event_id == "existing" and etag == "v1"
+        if outcome == "write_conflict":
+            raise CalendarError("version changed", 412)
+        event.update(body, etag="v2")
+        return event
+
+    calendar.move_event.side_effect = move
+    preview = asyncio.run(planner.revise(task["id"], "booked", "改成半小時，開始時間維持", NOW))
+    message = preview["messages"][0]
+    assert "10/19 13:15" in message["text"] and "10/21 13:15" in message["text"]
+    assert "13:45" in message["text"]
+    assert planner.ai.parse_schedule_edit.await_args.args[2]["start"] == live_start.isoformat()
+    calendar.move_event.assert_not_awaited()
+    review_id = message["reply_markup"]["inline_keyboard"][0][0]["callback_data"].rsplit(":", 1)[1]
+    if outcome == "changed":
+        event["etag"] = "v2"
+    now = NOW + timedelta(minutes=16) if outcome == "expired" else NOW
+    reply = asyncio.run(planner.revise(task["id"], "booked", "drift:" + review_id, now, review_id=review_id))
+    current = planner.get(task["id"])
+    if outcome == "confirmed":
+        assert "updated" in reply
+        assert current["start"] == live_start.isoformat()
+        assert current["end"] == (live_start + timedelta(minutes=30)).isoformat()
+        assert planner.db.get_task_action_state("learning:day:2026-10-19") == {}
+        assert planner.db.get_task_action_state("learning:day:2026-10-21") == {"booked": 30}
+        calendar.move_event.assert_awaited_once()
+        assert "drift_review" not in current
+    else:
+        assert "重新提出" in reply
+        assert current["start"] == saved_start.isoformat()
+        assert calendar.move_event.await_count == int(outcome == "write_conflict")
+        assert "pending_reschedule" not in current
+    calendar.agenda.assert_not_awaited()
+
+
 def test_booked_edit_recovers_uncertain_calendar_write(setup):
     from chronos.task_actions import task_fields
     planner, task, calendar, _ = setup
