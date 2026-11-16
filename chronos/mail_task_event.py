@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .ai import AIError
 from .google_calendar import CalendarError
 from .mail_links import mail_url
+from .message_lifecycle import SECONDS
 
 
 class MailTaskIntent(BaseModel):
@@ -86,7 +87,7 @@ def grounded(value, evidence, source, tz, *, start=None, owner=False, reference=
 
 
 def answer(text, *, resolved=False, cancelled=False):
-    return lambda: {"messages": [{"text": text, **({"mail_event_resolved": True, "delete_after_seconds": 7} if resolved else {"mail_event_cancelled": True, "delete_after_seconds": 7} if cancelled else {})}]}
+    return lambda: {"messages": [{"text": text, **({"mail_event_resolved": True, "delete_after_seconds": SECONDS} if resolved else {"mail_event_cancelled": True, "delete_after_seconds": SECONDS} if cancelled else {})}]}
 
 
 def question(mail, identifier, text, *, delete_after_seconds=None, **extra):

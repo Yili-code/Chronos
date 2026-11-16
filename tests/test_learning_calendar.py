@@ -1762,7 +1762,7 @@ def test_date_callback_rechecks_busy_calendar_without_booking(setup):
     calendar.insert.assert_not_awaited()
 
 
-def test_updated_notice_is_deleted_after_seven_seconds(system, monkeypatch):
+def test_updated_notice_is_deleted_after_fifteen_seconds(system, monkeypatch):
     _, service, telegram, _ = system
     monkeypatch.setattr(main, 'telegram', telegram)
     pause = AsyncMock()
@@ -1777,7 +1777,7 @@ def test_updated_notice_is_deleted_after_seven_seconds(system, monkeypatch):
         await telegram.flush_expirations()
     asyncio.run(deliver_and_drain())
     pause.assert_awaited_once()
-    assert 0 <= pause.await_args.args[0] <= 7
+    assert 0 <= pause.await_args.args[0] <= 15
     telegram.request.assert_awaited_with('deleteMessage', {'chat_id': 123, 'message_id': 987})
 
 

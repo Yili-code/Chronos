@@ -93,7 +93,7 @@ def test_read_button_only_schedules_the_saved_notice(system, monkeypatch):
     assert track.await_args_list[0] == track.await_args_list[1]
     state = main.db.get_study_delivery(key)
     track.assert_awaited_with({"ok": True, "result": {"message_id": 41}}, 123,
-        requires_reply=False, deadline=state["acknowledged_at"] + 7)
+        requires_reply=False, deadline=state["acknowledged_at"] + 15)
 
 
 def test_expired_baseline_survives_restart_and_extended_deadline(tmp_path):

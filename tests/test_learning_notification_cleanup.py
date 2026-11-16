@@ -32,7 +32,7 @@ def test_callback_deletes_original_only_after_reply_is_delivered(system, monkeyp
     assert bot.send_message.await_count == 2
 
 
-def test_completion_ack_is_deleted_after_seven_seconds_and_not_replayed(system,monkeypatch):
+def test_completion_ack_is_deleted_after_fifteen_seconds_and_not_replayed(system,monkeypatch):
     client,_,bot,config=system
     config.enable_learning_calendar=True
     planner=Mock()
@@ -48,7 +48,7 @@ def test_completion_ack_is_deleted_after_seven_seconds_and_not_replayed(system,m
     headers={'X-Telegram-Bot-Api-Secret-Token':'test-hook'}
     assert client.post('/telegram/webhook',json=payload,headers=headers).status_code==200
     delay.assert_awaited_once()
-    assert 0 <= delay.await_args.args[0] <= 7
+    assert 0 <= delay.await_args.args[0] <= 15
     assert any(call.args==('deleteMessage',{'chat_id':123,'message_id':901}) for call in bot.request.await_args_list)
     assert client.post('/telegram/webhook',json=payload,headers=headers).status_code==200
     assert bot.send_message.await_count==1 and delay.await_count==1
@@ -70,7 +70,7 @@ def test_failed_completion_ack_send_does_not_wait_or_delete(system,monkeypatch):
     bot.request.assert_not_awaited()
 
 
-def test_plain_command_completion_ack_uses_the_same_seven_second_cleanup(system,monkeypatch):
+def test_plain_command_completion_ack_uses_the_same_fifteen_second_cleanup(system,monkeypatch):
     client,_,bot,_=system
     monkeypatch.setattr(main,'prepare_message',AsyncMock(return_value=lambda:main.PROGRESS_COMPLETED_ACK))
     delay=AsyncMock()
@@ -81,7 +81,7 @@ def test_plain_command_completion_ack_uses_the_same_seven_second_cleanup(system,
     headers={'X-Telegram-Bot-Api-Secret-Token':'test-hook'}
     assert client.post('/telegram/webhook',json=payload,headers=headers).status_code==200
     delay.assert_awaited_once()
-    assert 0 <= delay.await_args.args[0] <= 7
+    assert 0 <= delay.await_args.args[0] <= 15
     bot.request.assert_awaited_with('deleteMessage',{'chat_id':123,'message_id':902})
     assert client.post('/telegram/webhook',json=payload,headers=headers).status_code==200
     assert bot.send_message.await_count==1
