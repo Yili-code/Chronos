@@ -11,11 +11,13 @@ ACTIONS = {"recover", "rbusy", "rforgot", "rload", "rlarge", "rirrelevant", "rpr
            "rwrite", "ragain", "rshort", "rdefer", "rstop", "rconfirm", "rback"}
 
 
-def card(planner, task, state, now=None):
+def card(planner, task, state, now=None, *, notice=None):
     recovery = state["recovery"]
     stage = recovery["stage"]
     lines = [f"<b>下一步安排</b>\n{escape(task['title'])}",
              "這次尚未開始，任務仍保留。"]
+    if notice:
+        lines.append(escape(notice))
     count = recovery.get("missed_count", 1)
     if count >= 2:
         lines.append(f"已回報 {count} 次尚未開始。可縮小第一步或換個時段，避免只是不斷延後。")
@@ -30,6 +32,18 @@ def card(planner, task, state, now=None):
     elif stage == "stop_confirm":
         lines.append("停止安排這個任務？任務會保留為未完成，原期限與過去的 Calendar 行程也會保留。")
         values = [("rconfirm", "確認停止安排"), ("rback", "返回選擇")]
+    elif stage == "schedule_review":
+        proposal = recovery["proposal"]
+        begin, end = (datetime.fromisoformat(proposal[key]) for key in ("start", "end"))
+        lines.append(f"指定時段：{begin:%m/%d %H:%M}–{end:%H:%M}")
+        if proposal["location"]:
+            lines.append("地點：" + escape(proposal["location"]))
+        if proposal["conflicts"]:
+            lines.append("這次會與以下時段重疊，原行程照常保留：")
+            for conflict in proposal["conflicts"]:
+                start, stop = (datetime.fromisoformat(conflict[key]) for key in ("start", "end"))
+                lines.append(f"• {escape(conflict['title'][:120])} {start:%m/%d %H:%M}–{stop:%m/%d %H:%M}")
+        values = [("rbook", "仍安排這次" if proposal["conflicts"] else "確認安排"), ("rback", "返回選擇")]
     else:
         reason = recovery.get("reason", "未指定")
         labels = {"An interruption": "臨時有事", "Forgot": "忘記了", "Too much planned": "安排太多",
@@ -45,6 +59,9 @@ def card(planner, task, state, now=None):
             ("我會安排時段並回報結果；遇到衝突再請你決定。" if planner.settings.learning_auto_accept
              else "新的 Calendar 時段會先請你確認。"))
         values = [("ragain", "重新安排")]
+        from .recovery_schedule import hint
+        if hint(reason):
+            values.insert(0, ("rwindow", "查看指定時段"))
         if state.get('minutes', 30) > 15:
             values.append(("rshort", "縮短時段"))
         values.extend([("rdefer", "暫緩安排"), ("rstop", "停止安排")])
@@ -91,6 +108,9 @@ def respond(planner, task, token, action, now, reason=None):
                 recovery.update(stage='settled', decision='stop_planning', decided_at=now.isoformat())
             else:
                 return card(planner, live, state, now)
+        elif stage == 'schedule_review' and action == 'rback':
+            recovery.pop("proposal", None)
+            recovery['stage'] = 'decision'
         elif stage == 'decision':
             if action == 'rstop':
                 recovery['stage'] = 'stop_confirm'

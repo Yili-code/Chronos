@@ -88,7 +88,7 @@ def class_windows(day, tz, policy=None):
             for slot in COURSE_SCHEDULE if slot.weekday == day.weekday()]
 
 
-def find_slot(task, now, busy, reservations, config, minutes, booked_minutes=None, course_policy=None, randomize=False, window=None, align_minutes=True, lead_minutes=10):
+def find_slot(task, now, busy, reservations, config, minutes, booked_minutes=None, course_policy=None, randomize=False, window=None, align_minutes=True, lead_minutes=10, overlap_class=None):
     """Search 15-minute boundaries by default; class plus study load never exceeds the cap."""
     now = now.astimezone(config.tz)
     if window:
@@ -102,6 +102,7 @@ def find_slot(task, now, busy, reservations, config, minutes, booked_minutes=Non
     for offset in range(8):
         day = (max(now, window[0]) if window else now).date() + timedelta(days=offset)
         classes = class_windows(day, config.tz, course_policy)
+        blocked_classes = [interval for interval in classes if interval != overlap_class]
         load = sum((end - start).total_seconds() / 60 for start, end in classes)
         load += (booked_minutes or {}).get(day.isoformat(), 0)
         load += sum((end - start).total_seconds() / 60 for start, end in reservations if start.date() == day)
@@ -119,7 +120,7 @@ def find_slot(task, now, busy, reservations, config, minutes, booked_minutes=Non
                    + (timedelta(days=1) if config.learning_end_hour == 24 else timedelta()))
         while start + timedelta(minutes=minutes) <= stop:
             end = start + timedelta(minutes=minutes)
-            if not overlaps(start, end, [*busy, *classes, *reservations, *short_task_windows(day, config.tz, minutes)]):
+            if not overlaps(start, end, [*busy, *blocked_classes, *reservations, *short_task_windows(day, config.tz, minutes)]):
                 if not randomize:
                     return start, end
                 candidates.append((start, end))
@@ -310,7 +311,7 @@ class LearningCalendar:
             return
         try:
             result = await self.telegram.send_message(self.settings.telegram_chat_id, text,
-                parse_mode="HTML", requires_response=kind != "scheduled", reply_markup={"inline_keyboard": [buttons[i:i+2] for i in range(0, len(buttons), 2)] if kind == "proposal" else [buttons]})
+                parse_mode="HTML", requires_response=kind != "scheduled", reply_markup={"inline_keyboard": [buttons[i:i+2] for i in range(0, len(buttons), 2)] if kind in {"proposal", "recovery"} else [buttons]})
         except Exception:
             self.update(task_id, lambda old: {**old, "delivery": kind + "_uncertain"})
             raise CalendarError("Planning message delivery is uncertain. Inspect /plan before retrying.") from None
@@ -559,6 +560,14 @@ class LearningCalendar:
         await self.calendar.verify_owner()
         event = await self.calendar.event(event_id)
         if event is None:
+            reviewed = state.get("recovery_booking")
+            if reviewed:
+                from .recovery_schedule import still_valid
+                start, end = (datetime.fromisoformat(state[key]) for key in ("start", "end"))
+                if not await still_valid(self, task, state, now, start, end):
+                    from .recovery_schedule import reopen
+                    reopen(self, task, state)
+                    return "時間或衝突有變動，請重新查看指定時段。"
             if task_fields(task) != state["snapshot"] or datetime.fromisoformat(state["start"]) <= now:
                 self.update(task["id"], lambda old: {**old, "status": failure_status})
                 return "The task or proposed time changed. A fresh execution plan will require approval."
@@ -591,7 +600,7 @@ class LearningCalendar:
                     return ("Calendar rearrangement paused. No new work block was created. "
                         "Some reviewed moves may already have succeeded; they are retained for reconciliation. "
                         f"Use /plan {task['id']} to prepare a fresh execution plan. " + str(error))
-            busy = current_busy if state.get('duration_source') == 'nightly_ai' else await self.calendar.busy(start, end)
+            busy = [] if reviewed else current_busy if state.get('duration_source') == 'nightly_ai' else await self.calendar.busy(start, end)
             from .backward_planning import reserved_windows
             busy = [*busy, *reserved_windows(self.db)]
             if overlaps(start, end, busy):
@@ -602,8 +611,9 @@ class LearningCalendar:
                 "start": {"dateTime": state["start"], "timeZone": self.settings.timezone},
                 "end": {"dateTime": state["end"], "timeZone": self.settings.timezone},
                 "visibility": "private", "transparency": "opaque",
+                **({"location": reviewed["location"]} if reviewed and reviewed["location"] else {}),
                 "extendedProperties": {"private": {"chronosTask": str(task["id"]), "chronosToken": state["token"]}}})
-        if state.get("exact_slot") and any(
+        if (state.get("exact_slot") or state.get("recovery_booking")) and any(
                 datetime.fromisoformat(event.get(k, {}).get("dateTime", "").replace("Z", "+00:00"))
                 != datetime.fromisoformat(state[k]) for k in ("start", "end")):
             raise CalendarError("The exact work block changed. Recovery needs review.")
@@ -619,9 +629,11 @@ class LearningCalendar:
             budget = self.db.get_task_action_state(day_key) or {}
             queue = self.db.get_task_action_state("learning:proposal-queue") or {}
             self.db._save_task_action_state(day_key, {**budget, state["token"]: state["minutes"]})
-            self.db._save_task_action_state(f"learning:task:{task['id']}", {**current,
+            self.db._save_task_action_state(f"learning:task:{task['id']}", {
+                **{key: value for key, value in current.items() if key not in {"recovery_booking", "recovery_claim"}},
                 "status": "scheduled", "event_id": event_id, "event_url": event.get("htmlLink", ""),
-                **({"delivery": "scheduled_sent" if state.get('exact_slot') else "scheduled_pending"} if state.get("auto_accepted") else {})})
+                **({"delivery": "scheduled_sent" if state.get('exact_slot') else "scheduled_pending"}
+                   if state.get("auto_accepted") or state.get("recovery_booking") else {})})
             self.db._save_task_action_state("learning:proposal-queue", {**queue,
                 "active_task_id": None if queue.get("active_task_id") == task["id"] else queue.get("active_task_id"),
                 "retire_message_ids": list(dict.fromkeys([*queue.get("retire_message_ids", []),
@@ -672,6 +684,13 @@ class LearningCalendar:
             return "This execution plan has already been handled. Check /plan for its current status."
         now = datetime.now(self.settings.tz)
         from . import session_recovery
+        if action in {"rwindow", "rbook"}:
+            from . import recovery_schedule
+            if state["status"] != "awaiting_resolution" or task_fields(task) != state["snapshot"]:
+                return "任務或安排已變更，請查看 /plan。"
+            if action == "rwindow":
+                return await recovery_schedule.preview(self, task, state, now)
+            return recovery_schedule.confirm(self, task, state, now)
         if action in session_recovery.ACTIONS:
             return session_recovery.respond(self, task, token, action, now)
         if action == "postpone":
@@ -1350,7 +1369,14 @@ class LearningCalendar:
                     continue  # The exact-slot review owns its booking and recovery lease.
                 await self.book(task, state, now)
                 from .automatic_planning import receipt
-                await receipt(self, task, self.get(task["id"]))
+                current = self.get(task["id"])
+                await receipt(self, task, current)
+                if current and current.get("delivery") == "recovery_pending":
+                    from .recovery_schedule import deliver_changed
+                    await deliver_changed(self, task, current, now)
+            elif state["status"] == "awaiting_resolution" and state.get("delivery") == "recovery_pending":
+                from .recovery_schedule import deliver_changed
+                await deliver_changed(self, task, state, now)
             elif (state["status"] == "scheduled" and state.get("delivery") == "scheduled_pending"
                     and datetime.fromisoformat(state["end"]) > now):
                 from .automatic_planning import receipt
