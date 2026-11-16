@@ -52,7 +52,7 @@ def test_after_class_individual_approval_and_replay(db):
     assert len(db.list_open_tasks()) == 1
     assert not first.get('messages')
     final = click(db, 1, 'skip', update=3)
-    assert final['messages'][0]['course_card_expiry'] == {'message_id': 81, 'deadline': NOW.timestamp() + 7}
+    assert final['messages'][0]['course_card_expiry'] == {'message_id': 81, 'deadline': NOW.timestamp() + 15}
     assert click(db, 1, 'skip', update=3) == final
     assert len(db.list_open_tasks()) == 1
     click(db, 1, update=4)
@@ -143,7 +143,7 @@ def test_webhook_accepts_only_after_click_and_replays_receipt(system, monkeypatc
     payload['update_id'] = 72
     payload['callback_query'].update(id='skip', data=f'chabit:{token}:1:skip')
     assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 200
-    bot.expiry.sleep.assert_awaited_once_with(7)
+    bot.expiry.sleep.assert_awaited_once_with(15)
     bot.request.assert_awaited_once_with('deleteMessage', {'chat_id': 123, 'message_id': 81})
     assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 200
     assert bot.request.await_count == 1
@@ -227,9 +227,9 @@ def test_webhook_expires_only_answered_course_progress_prompts(system, db, monke
         assert client.post('/telegram/webhook', json=payload, headers=headers).status_code == 200
 
     if expires:
-        bot.expiry.sleep.assert_awaited_once_with(7)
+        bot.expiry.sleep.assert_awaited_once_with(15)
         bot.request.assert_awaited_once_with('deleteMessage', {'chat_id': 123, 'message_id': 81})
-        assert db.get_update(99802)['messages'][0]['course_card_expiry'] == {'message_id': 81, 'deadline': 107}
+        assert db.get_update(99802)['messages'][0]['course_card_expiry'] == {'message_id': 81, 'deadline': 115}
     else:
         bot.request.assert_not_awaited()
     assert db.get_course_session(session.session_id).reported_progress == (None if text == '收到' else text)

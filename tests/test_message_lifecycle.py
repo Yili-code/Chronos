@@ -40,12 +40,14 @@ def test_required_actions_and_optional_controls_have_different_lifetimes():
 
 
 @pytest.mark.asyncio
-async def test_send_returns_before_expiry_and_flush_deletes_after_delivery(monkeypatch):
+@pytest.mark.parametrize("expiry_hint", [None, 7, 15])
+async def test_send_returns_before_expiry_and_flush_deletes_after_delivery(monkeypatch, expiry_hint):
     bot = TelegramClient('test-token')
+    monkeypatch.setattr('chronos.message_lifecycle.time', SimpleNamespace(time=lambda: 100))
     order = []
     gate = asyncio.Event()
     async def delay(seconds):
-        assert 0 <= seconds <= 7
+        assert seconds == 15
         order.append('timer')
         await gate.wait()
     monkeypatch.setattr('chronos.message_lifecycle.asyncio.sleep', delay)
@@ -53,10 +55,10 @@ async def test_send_returns_before_expiry_and_flush_deletes_after_delivery(monke
         order.append(method)
         return {'ok': True, 'result': {'message_id': 42}} if method == 'sendMessage' else {'ok': True}
     bot.request = AsyncMock(side_effect=request)
-    result = await bot.send_message(123, '已記錄，今天無課。')
+    result = await bot.send_message(123, '已記錄，今天無課。', delete_after_seconds=expiry_hint)
     assert result['result']['message_id'] == 42
     assert order == ['sendMessage']
-    # Caller can commit its receipt/binding while the seven-second timer is pending.
+    # Caller can commit its receipt/binding while the fifteen-second timer is pending.
     order.append('receipt saved')
     gate.set()
     await bot.flush_expirations()
@@ -125,7 +127,7 @@ def test_screenshot_course_ack_uses_global_expiry_after_receipt_commit(system, m
     headers = {'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}
     assert client.post('/telegram/webhook', json=payload, headers=headers).status_code == 200
     bot.request.assert_awaited_once_with('deleteMessage', {'chat_id': 123, 'message_id': 42})
-    assert 0 <= bot.expiry.sleep.await_args.args[0] <= 7
+    assert 0 <= bot.expiry.sleep.await_args.args[0] <= 15
     assert client.post('/telegram/webhook', json=payload, headers=headers).status_code == 200
     bot.send_message.assert_awaited_once()
     assert not tasks.list_open()
@@ -144,7 +146,7 @@ def test_explicit_pending_question_is_retained_even_without_question_words(syste
     assert not bot.expiry.read()
 
 
-@pytest.mark.parametrize('command, seconds', [('/task', 30), ('/tasks', 7), ('/start', 7)])
+@pytest.mark.parametrize('command, seconds', [('/task', 30), ('/tasks', 15), ('/start', 15)])
 @pytest.mark.parametrize('populated', [False, True])
 def test_task_list_reply_expires_after_its_command_lifetime(system, monkeypatch, command, seconds, populated):
     client, tasks, bot, config = system
@@ -243,8 +245,8 @@ def test_owner_message_expires_after_success_and_retry_keeps_original_deadline(s
     payload = {'update_id': 99003, 'message': message}
     headers = {'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}
     assert client.post('/telegram/webhook', json=payload, headers=headers).status_code == 200
-    bot.expiry.sleep.assert_awaited_once_with(7)
-    now += 8
+    bot.expiry.sleep.assert_awaited_once_with(15)
+    now += 16
     assert client.post('/telegram/webhook', json=payload, headers=headers).status_code == 200
     assert bot.expiry.sleep.await_args.args == (0,)
     bot.send_message.assert_awaited_once()

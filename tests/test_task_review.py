@@ -229,7 +229,7 @@ def test_review_rechecks_snapshots_after_generation(store, monkeypatch):
 
 
 @pytest.mark.parametrize('operation', ['apply', 'cancel'])
-def test_review_result_expires_after_seven_seconds(system, monkeypatch, operation):
+def test_review_result_expires_after_fifteen_seconds(system, monkeypatch, operation):
     client, tasks, bot, cfg = system
     task = tasks.create('Learn network firewall')
     monkeypatch.setattr(main.ai, 'review_tasks', AsyncMock(return_value=output(task)))
@@ -263,13 +263,13 @@ def test_review_result_expires_after_seven_seconds(system, monkeypatch, operatio
     pause.assert_not_awaited()
     bot.request.assert_not_awaited()
     async def wait_then_check(seconds):
-        assert 0 <= seconds <= 7
+        assert 0 <= seconds <= 15
         assert not any(call.args == ('deleteMessage', {'chat_id':123, 'message_id':51})
                        for call in bot.request.await_args_list)
     pause.side_effect = wait_then_check
     assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 200
     pause.assert_awaited_once()
-    assert 0 <= pause.await_args.args[0] <= 7
+    assert 0 <= pause.await_args.args[0] <= 15
     bot.request.assert_any_await('deleteMessage', {'chat_id': 123, 'message_id': 51})
     assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 200
     pause.assert_awaited_once()

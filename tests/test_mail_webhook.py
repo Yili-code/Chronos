@@ -247,7 +247,7 @@ def test_terminal_mail_notices_expire_and_replay_does_not_resend(system, monkeyp
     bot.send_message.return_value = {"ok": True, "result": {"message_id": 777}}
     assert post(client, 9500, callback=callback).status_code == 200
     main.asyncio.sleep.assert_awaited_once()
-    assert 0 <= main.asyncio.sleep.await_args.args[0] <= 7
+    assert 0 <= main.asyncio.sleep.await_args.args[0] <= 15
     assert bot.request.await_args.args == ("deleteMessage", {"chat_id": 123, "message_id": 777})
     assert post(client, 9500, callback=callback).status_code == 200
     bot.send_message.assert_awaited_once()

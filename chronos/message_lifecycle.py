@@ -7,7 +7,7 @@ import re
 import time
 
 KEY = 'telegram:message-expiry'
-SECONDS = 7
+SECONDS = 15
 MAIL_READ_PREFIX = 'mail-digest-read:'
 
 
@@ -71,7 +71,8 @@ class MessageExpiry:
         if requires_response(text, markup, requires_reply, delete_after_seconds):
             self.mutate(lambda old: {k:v for k,v in old.items() if k != key})
             return
-        delay = SECONDS if delete_after_seconds is None else delete_after_seconds
+        # Older delivery receipts may still carry the former default explicitly.
+        delay = SECONDS if delete_after_seconds in (None, 7) else delete_after_seconds
         entry = {'chat_id': chat_id, 'message_id': message_id,
                  'delete_at': deadline if deadline is not None else time.time() + delay}
         self.mutate(lambda old: {**old, key: entry})

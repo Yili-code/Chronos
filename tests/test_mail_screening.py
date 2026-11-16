@@ -181,6 +181,6 @@ async def test_read_button_only_on_notification_and_promotion_pages(workflow):
         await workflow.acknowledge_digest(key, notice["message_id"], now)
         workflow.telegram.track_delivery.assert_awaited_once_with(
             {"ok": True, "result": {"message_id": notice["message_id"]}},
-            123, requires_reply=False, deadline=now.timestamp() + 7)
+            123, requires_reply=False, deadline=now.timestamp() + 15)
         workflow.telegram.track_delivery.reset_mock()
     workflow.gmail.mark_read.assert_not_awaited()
