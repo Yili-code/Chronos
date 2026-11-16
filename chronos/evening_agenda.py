@@ -93,12 +93,28 @@ def render_agenda(events, day, tz, label="Tomorrow", db=None, now=None, show_tas
     return parts
 
 
+def is_full_day(start, end):
+    return start.time() == time.min and end == start + timedelta(days=1)
+
+
 def render_window_agenda(events, start, end, tz, db=None):
-    heading = f"<b>{start:%m/%d %H:%M}–{end:%m/%d %H:%M}</b>"
+    if is_full_day(start, end):
+        weekday = "一二三四五六日"[start.weekday()]
+        heading = f"<b>{start:%m/%d} ({weekday})</b>"
+    else:
+        heading = f"<b>{start:%m/%d %H:%M}–{end:%m/%d %H:%M}</b>"
     if db is not None:
         from .planning_holds import events as hold_events
         events=[*events,*hold_events(db,start,end)]
     return render_agenda(events, start.date(), tz, db=db, heading=heading, show_project_tags=True)
+
+
+def window_agenda_messages(events, start, end, tz, db=None):
+    options = {"delete_after_seconds": 15} if is_full_day(start, end) else {}
+    return [
+        {"text": part, "parse_mode": "HTML", **options}
+        for part in render_window_agenda(events, start, end, tz, db=db)
+    ]
 
 
 async def tomorrow_agenda(calendar, settings, now=None, *, day_offset=1, db=None):
