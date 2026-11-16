@@ -464,6 +464,8 @@ class LearningCalendar:
             if state.get('nightly_invalid_reasons'):
                 text += '\n' + self.allocation_explanation(state)
             buttons = self.buttons(task["id"], state, [("retry", "Replan"), ("postpone", "Defer")])
+            if search and state["minutes"] >= 30:
+                buttons = self.buttons(task["id"], state, [("split", "分次完成")]) + buttons
         else:
             end = datetime.fromisoformat(state["end"]).astimezone(self.settings.tz)
             text = (f"<b>Your proposed work session, Sir.</b>\n{escape(task['title'])}\n"
@@ -683,6 +685,11 @@ class LearningCalendar:
                     "learning_proposal": {"task_id": task_id, "token": state["token"]}}]}
             return "This execution plan has already been handled. Check /plan for its current status."
         now = datetime.now(self.settings.tz)
+        if action in {"split", "splitconfirm"}:
+            from . import split_work
+            if action == "split":
+                return await split_work.preview(self, task, state, now)
+            return await split_work.confirm(self, task, state, now)
         from . import session_recovery
         if action in {"rwindow", "rbook"}:
             from . import recovery_schedule
@@ -1367,8 +1374,8 @@ class LearningCalendar:
                         break
                     state = revised
             if state["status"] == "creating":
-                if state.get('exact_slot'):
-                    continue  # The exact-slot review owns its booking and recovery lease.
+                if state.get('exact_slot') or state.get('split_operation'):
+                    continue  # The reviewed operation owns its booking and recovery lease.
                 await self.book(task, state, now)
                 from .automatic_planning import receipt
                 current = self.get(task["id"])

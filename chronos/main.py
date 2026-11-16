@@ -389,7 +389,7 @@ async def deliver_learning_reply(chat_id, update_id, receipt):
         proposal = message["learning_proposal"]
         previous = learning_calendar().get(proposal["task_id"]) or {}
         saved = learning_calendar().update(proposal["task_id"], lambda old: {**old, "message_id": message_id}
-            if old and old.get("token") == proposal["token"] and old["status"] == "proposed" else old)
+            if old and old.get("token") == proposal["token"] and old["status"] == proposal.get("status", "proposed") else old)
         if saved and saved.get("message_id") == message_id:
             learning_calendar().retire(previous.get("message_id"), previous.get("edit_message_id"))
     db.mark_update_delivered(update_id)
@@ -1002,7 +1002,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             await telegram.answer_callback_query(update.callback_query.id)
         return {"ok": True}
     if update.callback_query and (update.callback_query.data or "").startswith("learn:"):
-        matched = re.fullmatch(r"learn:(refreshfeedback|completecancel|adjustbooked|recover|rbusy|rforgot|rload|rlarge|rirrelevant|rprivate|rwrite|ragain|rshort|rdefer|rstop|rconfirm|rback|rwindow|rbook|day[0-9]{8}|approve|edit|earlier|later|longer|shorter|postpone|more|lots|shuffle|manual|reject|retry|done|partial|skipped):(\d+):([a-f0-9]{32})", update.callback_query.data)
+        matched = re.fullmatch(r"learn:(refreshfeedback|completecancel|adjustbooked|recover|rbusy|rforgot|rload|rlarge|rirrelevant|rprivate|rwrite|ragain|rshort|rdefer|rstop|rconfirm|rback|rwindow|rbook|split|splitconfirm|day[0-9]{8}|approve|edit|earlier|later|longer|shorter|postpone|more|lots|shuffle|manual|reject|retry|done|partial|skipped):(\d+):([a-f0-9]{32})", update.callback_query.data)
         if not matched or source_message.message_id is None:
             raise HTTPException(status_code=400, detail="Invalid planning callback")
         receipt = db.get_update(update_id)
@@ -1019,11 +1019,12 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
         await telegram.answer_callback_query(update.callback_query.id)
         if settings.enable_learning_calendar:
             # Deliver the next view before removing the card that was acted on.
-            deleted = await telegram.request("deleteMessage", {
-                "chat_id": chat_id, "message_id": source_message.message_id,
-            })
-            if not deleted.get("ok"):
-                logger.warning("Could not remove the handled study notification")
+            if matched[1] != "splitconfirm":
+                deleted = await telegram.request("deleteMessage", {
+                    "chat_id": chat_id, "message_id": source_message.message_id,
+                })
+                if not deleted.get("ok"):
+                    logger.warning("Could not remove the handled study notification")
             try:
                 await learning_calendar().tick()
             except CalendarError:

@@ -16,6 +16,65 @@ from chronos import main
 NOW = datetime.fromisoformat("2026-10-19T09:00:00+08:00")
 
 
+@pytest.mark.parametrize("outcome", ["confirmed", "busy", "insufficient", "uncertain"])
+def test_no_slot_can_split_within_original_window(setup, outcome):
+    from chronos.task_actions import task_fields
+
+    planner, task, calendar, _ = setup
+    planner.settings.learning_auto_accept = True
+    begin, end = NOW.replace(hour=13), NOW.replace(hour=17)
+    if outcome == "insufficient":
+        end -= timedelta(minutes=30)
+    state = {"status": "no_slot", "token": "a" * 32, "message_id": 50, "minutes": 180,
+             "snapshot": task_fields(task), "availability_search": {"scope": "requested_window",
+                 "start": begin.isoformat(), "end": end.isoformat()}}
+    planner.update(task["id"], lambda old: state)
+    planner.db.mutate_task_action_state("learning:proposal-queue", lambda old: {"active_task_id": task["id"]})
+    calendar.busy.return_value = [(begin + timedelta(hours=1), begin + timedelta(hours=2))]
+    calendar.agenda.return_value = []
+    _, buttons = planner.proposal_content(task, state)
+    assert buttons[0]["text"] == "分次完成"
+    preview = asyncio.run(planner.callback("split", task["id"], state["token"], 50))
+    calendar.insert.assert_not_awaited()
+    message = preview["messages"][0]
+    if outcome == "insufficient":
+        assert "150／180" in message["text"]
+        assert "確認分次安排" not in str(message)
+        return
+    assert "13:00–14:00" in message["text"] and "15:00–17:00" in message["text"]
+    assert "合計 180 分鐘" in message["text"]
+    planner.update(task["id"], lambda old: {**old, "message_id": 51})
+    if outcome == "busy":
+        calendar.busy.return_value.append((begin, begin + timedelta(hours=1)))
+        reply = asyncio.run(planner.callback("splitconfirm", task["id"], state["token"], 51))
+        assert "已變更" in reply
+        calendar.insert.assert_not_awaited()
+        assert planner.get(task["id"])["status"] == "no_slot"
+        return
+
+    events = {}
+    calendar.event.side_effect = lambda event_id: events.get(event_id)
+
+    async def insert(body):
+        events[body["id"]] = body
+        if outcome == "uncertain" and len(events) == 1:
+            raise CalendarError("Uncertain insert")
+        return body
+
+    calendar.insert.side_effect = insert
+    reply = asyncio.run(planner.callback("splitconfirm", task["id"], state["token"], 51))
+    if outcome == "uncertain":
+        assert "尚未完成" in reply
+        reply = asyncio.run(planner.callback("splitconfirm", task["id"], state["token"], 51))
+    assert "已安排分次完成" in reply
+    assert calendar.insert.await_count == 2
+    calendar.delete_event.assert_not_awaited()
+    final = planner.get(task["id"])
+    assert final["status"] == "scheduled"
+    assert final["minutes"] == 60 and final["reset_remaining_sessions"][0]["minutes"] == 120
+    assert len(planner.db.list_open_tasks()) == 1
+
+
 def test_batch_owner_duration_survives_sequential_approval_and_restart(setup):
     planner, task, calendar, bot = setup
     others = [planner.db.create_task(f'Lecture {i}', NOW + timedelta(days=3), None, NOW) for i in range(2)]
