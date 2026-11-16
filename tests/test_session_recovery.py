@@ -24,6 +24,50 @@ def action(planner, task, token, name, message=51):
     return asyncio.run(planner.callback(name, task['id'], token, message))
 
 
+@pytest.mark.parametrize("scenario", ["confirmed", "new_conflict", "unknown_busy", "missing_class"])
+def test_recovery_reviews_one_calendar_exception(setup, scenario):
+    reason = "我平常在週三下午演算法課期間會去咖啡店處理這個任務"
+    if scenario == "unknown_busy":
+        reason = "我平常在週三下午去咖啡店處理這個任務"
+    planner, task, calendar, bot, token, result = missed(setup, reason)
+    planner.settings.learning_auto_accept = True
+    start = NOW.replace(hour=13, minute=10) + timedelta(days=2)
+    end = start.replace(hour=16, minute=0)
+    course = {"id": "course", "_calendar_id": "primary", "summary": "圖論演算法",
+              "start": {"dateTime": start.isoformat()}, "end": {"dateTime": end.isoformat()}, "etag": "v1"}
+    calendar.agenda.return_value = [] if scenario in {"unknown_busy", "missing_class"} else [course]
+    calendar.busy.return_value = [(start.replace(hour=12), end.replace(hour=18))] if scenario == "unknown_busy" else [(start, end)]
+    assert "查看指定時段" in str(result)
+    view = action(planner, task, token, "rwindow")
+    calendar.insert.assert_not_awaited()
+    if scenario in {"unknown_busy", "missing_class"}:
+        assert "仍安排這次" not in str(view)
+        assert "查看指定時段" in str(view)
+        if scenario == "unknown_busy":
+            assert "無法辨識" in str(view)
+        return
+    assert "仍安排這次" in str(view)
+    assert "地點：咖啡店" in view["messages"][0]["text"]
+    assert "圖論演算法" in view["messages"][0]["text"]
+    session_recovery.bind(planner, 52, view["messages"][0])
+    review_token = planner.get(task["id"])["token"]
+    action(planner, task, token, "rbook", 52)
+    assert planner.get(task["id"])["status"] == "awaiting_resolution"
+    assert "已確認" in action(planner, task, review_token, "rbook", 52)
+    if scenario == "new_conflict":
+        calendar.agenda.return_value = [course, {**course, "id": "other", "summary": "會議"}]
+    asyncio.run(planner.tick(NOW))
+    if scenario == "new_conflict":
+        calendar.insert.assert_not_awaited()
+        assert planner.get(task["id"])["status"] == "awaiting_resolution"
+        assert "請重新查看指定時段" in str(bot.send_message.call_args)
+    else:
+        calendar.insert.assert_awaited_once()
+        assert calendar.insert.call_args.args[0]["location"] == "咖啡店"
+        assert planner.get(task["id"])["status"] == "scheduled"
+    calendar.move_event.assert_not_awaited()
+
+
 def test_nonstart_asks_reason_then_replans_only_after_owner_choice(setup):
     planner, task, calendar, bot, token, result = missed(setup)
     assert '未開始的原因' in result['messages'][0]['text']

@@ -103,7 +103,7 @@ class GoogleCalendar:
     async def event(self, event_id):
         return await self.request("GET", self.events_path() + "/" + event_id, missing=True)
 
-    async def agenda(self, start, end):
+    async def agenda(self, start, end, *, deduplicate=True):
         """Read every expanded occurrence overlapping the bounded local day."""
         validate_range(start, end)
         ids = sorted({"primary" if value.strip().casefold() == self.settings.calendar_account.casefold()
@@ -126,7 +126,7 @@ class GoogleCalendar:
                            event.get("originalStartTime", event.get("start", {})).get("date"))
                     declined = any(a.get("self") and a.get("responseStatus") == "declined"
                                    for a in event.get("attendees", []))
-                    if event.get("status") != "cancelled" and not declined and key not in seen:
+                    if event.get("status") != "cancelled" and not declined and (not deduplicate or key not in seen):
                         events.append({**event, "_calendar_id": calendar_id})
                         seen.add(key)
                 page = data.get("nextPageToken")
