@@ -11,10 +11,24 @@ from .assignment_scheduler import tick_assignments
 from .assignments import aware
 from .assignment_bridge import TRACKED_COURSES
 from .calendar_overrides import CalendarOverrides
+from .message_lifecycle import expire_after_read, read_button
 from .study_delivery import StudyDeliveryLedger
 from .study_scheduler import delivery_outcome
 from .telegram import TelegramError
 from .tronclass_collector import CollectorFailure, collect_assignments
+
+
+NO_NEW_NOTICE_PREFIX = "assignment-scan:"
+
+
+async def acknowledge_no_new_notice(db, telegram, chat_id, key, message_id, now):
+    notice = db.get_study_delivery(key)
+    if not notice or notice["status"] != "sent" or notice["message_id"] != message_id:
+        return
+    clicked_at = now.timestamp()
+    state = db.mutate_study_delivery(key, lambda old: {
+        **old, "acknowledged_at": old.get("acknowledged_at", clicked_at)})
+    await expire_after_read(telegram, chat_id, message_id, state["acknowledged_at"])
 
 
 def _eligible_first_scan(item, now: datetime) -> bool:
@@ -98,12 +112,13 @@ async def _scan(db, telegram, chat_id, now, username, password, *, excluded_cour
     delivery = await tick_assignments(db, telegram, chat_id, now)
     status_sent = False
     if created == 0 and not interactive:
-        key = f"assignment-scan:{now.date().isoformat()}:no-new"
+        key = f"{NO_NEW_NOTICE_PREFIX}{now.date().isoformat()}:no-new"
         ledger = StudyDeliveryLedger(db)
         claim = ledger.claim(key, now)
         if claim:
             try:
-                result = await telegram.send_message(chat_id, "TronClass 掃描完成：沒有新作業。")
+                result = await telegram.send_message(chat_id, "TronClass 掃描完成：沒有新作業。",
+                    reply_markup=read_button(key))
             except TelegramError:
                 ledger.finish(key, claim, now)
             else:
