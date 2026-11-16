@@ -254,12 +254,17 @@ def test_reminder_cancel_rejects_invented_token(store, monkeypatch):
 
 
 def test_valid_agenda_is_read_only(store, monkeypatch):
-    start = datetime.now(main.settings.tz).replace(hour=0, minute=0, second=0, microsecond=0)
+    start = datetime(2026, 11, 19, tzinfo=main.settings.tz)
     classify(monkeypatch, action="agenda", start=start, end=start + timedelta(days=1))
     calendar = AsyncMock()
     calendar.agenda.return_value = []
     monkeypatch.setattr(main, "google_calendar", calendar)
-    assert "No events scheduled" in run("今天有什麼安排")["reply"]
+    result = run("11/19 我有甚麼事情")
+    assert result["messages"] == [{
+        "text": "<b>11/19 (四)</b>\n\nNo events scheduled.",
+        "parse_mode": "HTML",
+        "delete_after_seconds": 15,
+    }]
     calendar.agenda.assert_awaited_once_with(start, start + timedelta(days=1))
     main.ai.parse.assert_not_awaited()
 

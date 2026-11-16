@@ -522,11 +522,13 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
                 end += timedelta(seconds=1)
             await app.google_calendar.verify_owner()
             events = await app.google_calendar.agenda(start, end)
-            from .evening_agenda import render_window_agenda
+            from .evening_agenda import window_agenda_messages
             events = matching_events(events, intent.agenda_keywords)
-            parts = ([empty_named_query(intent.agenda_keywords, start, end)] if intent.agenda_keywords and not events
-                     else render_window_agenda(events, start, end, app.settings.tz, db=app.db))
-            result = app.message_bundle(*({"text": part, "parse_mode": "HTML"} for part in parts))
+            if intent.agenda_keywords and not events:
+                messages = [{"text": empty_named_query(intent.agenda_keywords, start, end), "parse_mode": "HTML"}]
+            else:
+                messages = window_agenda_messages(events, start, end, app.settings.tz, db=app.db)
+            result = app.message_bundle(*messages)
             action = lambda: result
         elif intent.action == "event_reset":
             if not persistent or not app.settings.enable_learning_calendar:

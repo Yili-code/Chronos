@@ -1683,7 +1683,7 @@ async def prepare_message(text: str, *, update_id: int | None = None, chat_id: i
         normalized,
     )
     if schedule_question:
-        from .evening_agenda import render_window_agenda
+        from .evening_agenda import window_agenda_messages
         now = datetime.now(settings.tz)
         weekday = "一二三四五六日".index(schedule_question[1].replace("天", "日"))
         offset = (weekday - now.weekday()) % 7
@@ -1699,8 +1699,8 @@ async def prepare_message(text: str, *, update_id: int | None = None, chat_id: i
             events = await google_calendar.agenda(start, stop)
         except CalendarError:
             return lambda: "目前無法讀取行事曆，尚不能確認這段時間是否有安排。沒有建立任務。"
-        parts = render_window_agenda(events, start, stop, settings.tz, db=db)
-        return lambda: message_bundle(*({"text": part, "parse_mode": "HTML"} for part in parts))
+        messages = window_agenda_messages(events, start, stop, settings.tz, db=db)
+        return lambda: message_bundle(*messages)
     if not normalized.startswith("/"):
         import sys
         from .intents import prepare
