@@ -30,7 +30,7 @@ from .tasks import (
     project_display_name,
 )
 from .telegram import TelegramClient
-from .message_lifecycle import SECONDS, drain_messages
+from .message_lifecycle import MAIL_READ_PREFIX, SECONDS, drain_messages
 from .reply_voice import creation_messages
 from .reset_replies import ResetInProgress
 from .runtime_health import (
@@ -728,6 +728,20 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             and source_message.message_id is not None and source_message.date is not None):
         request.state.owner_message_expiry = (chat_id, source_message.message_id, source_message.date + SECONDS)
     update_id = update.update_id
+    if update.callback_query:
+        from .assignment_scan import NO_NEW_NOTICE_PREFIX, acknowledge_no_new_notice
+        data = update.callback_query.data or ""
+        if data.startswith((NO_NEW_NOTICE_PREFIX, MAIL_READ_PREFIX)):
+            message_id = source_message.message_id
+            if chat_id == settings.telegram_chat_id and source_message.chat.type == "private" and message_id is not None:
+                now = datetime.now(settings.tz)
+                if re.fullmatch(r"assignment-scan:[0-9]{4}-[0-9]{2}-[0-9]{2}:no-new", data):
+                    await acknowledge_no_new_notice(db, telegram, chat_id, data, message_id, now)
+                elif settings.enable_gmail and re.fullmatch(
+                        r"mail-digest-read:(?:daily:[0-9]{4}-[0-9]{2}-[0-9]{2}|batch:[0-9]+):screening-digest:[0-9]+", data):
+                    await mail_workflow().acknowledge_digest(data[len(MAIL_READ_PREFIX):], message_id, now)
+            await telegram.answer_callback_query(update.callback_query.id)
+            return {"ok": True}
     saved_reply = db.get_update(update_id)
     if saved_reply and any(part.get('resolved_learning_prompt_ids') for part in saved_reply.get('messages', [])):
         await deliver_learning_reply(chat_id, update_id, saved_reply)

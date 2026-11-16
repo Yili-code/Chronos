@@ -16,6 +16,7 @@ from .ai import AIError
 from .gmail import GmailError, clean
 from .telegram import TelegramError
 from .mail_links import mail_url
+from .message_lifecycle import MAIL_READ_PREFIX, expire_after_read, read_button
 
 
 PROTECTED = re.compile(
@@ -161,7 +162,7 @@ class MailWorkflow:
         except (AIError, ValueError, TimeoutError):
             return "原文摘錄：" + clean(mail.get("snippet") or mail.get("body") or mail["subject"], 500)
 
-    async def deliver(self, delivery_key, text, mail_id=None, *, html=False, retain=False):
+    async def deliver(self, delivery_key, text, mail_id=None, *, html=False, retain=False, acknowledge=False):
         """Persist send intent first; an ambiguous send is never automatically replayed."""
         state = self.get(delivery_key) or {}
         if state.get("delivery") == "sent":
@@ -172,8 +173,10 @@ class MailWorkflow:
         markup = None
         if mail_id:
             markup = mail_buttons(mail_id, (self.get("message:" + mail_id) or {}).get("backlog", False))
+        elif acknowledge:
+            markup = read_button(MAIL_READ_PREFIX + delivery_key)
         try:
-            result = await self.telegram.send_message(self.settings.telegram_chat_id, text, reply_markup=markup, parse_mode="HTML" if mail_id or html else None, requires_response=bool(mail_id) or retain)
+            result = await self.telegram.send_message(self.settings.telegram_chat_id, text, reply_markup=markup, parse_mode="HTML" if mail_id or html else None, requires_response=bool(mail_id) or retain or acknowledge)
         except TelegramError:
             self.patch(delivery_key, delivery="uncertain")
             raise GmailError("Telegram mail delivery outcome is unknown; owner review required") from None
@@ -192,7 +195,18 @@ class MailWorkflow:
             raise GmailError("Telegram did not return a valid delivery message ID")
         if mail_id:
             self.patch(f"telegram:{self.settings.telegram_chat_id}:{sent_id}", mail_id=mail_id)
-        self.patch(delivery_key, delivery="sent", message_id=sent_id)
+        self.patch(delivery_key, delivery="sent", message_id=sent_id,
+                   **({"acknowledgement_button": True} if acknowledge and not mail_id else {}))
+
+    async def acknowledge_digest(self, delivery_key, message_id, now):
+        notice = self.get(delivery_key) or {}
+        if (notice.get("delivery") != "sent" or notice.get("message_id") != message_id
+                or not notice.get("acknowledgement_button")):
+            return
+        clicked_at = now.timestamp()
+        state = self.db.mutate_mail_state(self.key(delivery_key), lambda old: {
+            **old, "acknowledged_at": old.get("acknowledged_at", clicked_at)})
+        await expire_after_read(self.telegram, self.settings.telegram_chat_id, message_id, state["acknowledged_at"])
 
     async def daily(self, now=None, *, backlog=False, request_key=None):
         self.require_config()

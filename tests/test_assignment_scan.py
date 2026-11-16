@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 from chronos.assignment_scan import run_assignment_scan
 from chronos.assignments import Assignment
 from chronos.db import Database
+from test_system import system
 
 
 TZ = ZoneInfo("Asia/Taipei")
@@ -60,6 +61,39 @@ def test_successful_empty_scan_sends_one_status(tmp_path):
     assert first["no_new_status_sent"]
     assert not second["no_new_status_sent"]
     assert bot.send_message.await_count == 1
+    bot.send_message.assert_awaited_once_with(123, "TronClass 掃描完成：沒有新作業。",
+        reply_markup={"inline_keyboard": [[{"text": "已讀", "callback_data": "assignment-scan:2026-10-25:no-new"}]]})
+
+
+def test_read_button_only_schedules_the_saved_notice(system, monkeypatch):
+    from chronos import main
+    from chronos.study_delivery import StudyDeliveryLedger
+
+    client, _, bot, _ = system
+    now = datetime.now(TZ)
+    key = f"assignment-scan:{now.date().isoformat()}:no-new"
+    ledger = StudyDeliveryLedger(main.db)
+    claim = ledger.claim(key, now)
+    ledger.finish(key, claim, now, message_id=41)
+    track = AsyncMock()
+    monkeypatch.setattr(bot, "track_delivery", track)
+
+    def click(update_id, message_id):
+        response = client.post("/telegram/webhook", json={"update_id": update_id, "callback_query": {
+            "id": str(update_id), "data": key,
+            "message": {"message_id": message_id, "chat": {"id": 123, "type": "private"}}}},
+            headers={"X-Telegram-Bot-Api-Secret-Token": "test-hook"})
+        assert response.status_code == 200
+
+    click(1, 42)
+    track.assert_not_awaited()
+    click(2, 41)
+    click(3, 41)
+    assert track.await_count == 2
+    assert track.await_args_list[0] == track.await_args_list[1]
+    state = main.db.get_study_delivery(key)
+    track.assert_awaited_with({"ok": True, "result": {"message_id": 41}}, 123,
+        requires_reply=False, deadline=state["acknowledged_at"] + 7)
 
 
 def test_expired_baseline_survives_restart_and_extended_deadline(tmp_path):

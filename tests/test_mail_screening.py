@@ -156,3 +156,31 @@ async def test_digest_splits_large_batch_and_keeps_stable_receipts(workflow):
     assert all(len(call.args[1]) <= 3000 for call in calls)
     await digest(workflow, "daily:2026-11-05", state)
     assert workflow.telegram.send_message.await_count == len(calls)
+
+
+@pytest.mark.asyncio
+async def test_read_button_only_on_notification_and_promotion_pages(workflow):
+    day = "daily:2026-11-05"
+    groups = {"ab12": "notification", "ab13": "promotion", "ab14": "newsletter"}
+    for identifier, group in groups.items():
+        workflow.patch("message:" + identifier, mail=message(identifier, subject=group))
+        workflow.patch(day + ":" + identifier, screening={
+            **decision("information", summary="Update").model_dump(), "source_kind": group},
+            screening_done=True)
+    await digest(workflow, day, {"ids": list(groups)})
+    notification, newsletter, promotion = workflow.telegram.send_message.call_args_list
+    assert newsletter.kwargs["reply_markup"] is None
+    for call in (notification, promotion):
+        button, = call.kwargs["reply_markup"]["inline_keyboard"][0]
+        assert button["text"] == "已讀"
+        key = button["callback_data"].removeprefix("mail-digest-read:")
+        notice = workflow.get(key)
+        now = datetime.now(workflow.settings.tz)
+        await workflow.acknowledge_digest(key, notice["message_id"] + 1000, now)
+        workflow.telegram.track_delivery.assert_not_awaited()
+        await workflow.acknowledge_digest(key, notice["message_id"], now)
+        workflow.telegram.track_delivery.assert_awaited_once_with(
+            {"ok": True, "result": {"message_id": notice["message_id"]}},
+            123, requires_reply=False, deadline=now.timestamp() + 7)
+        workflow.telegram.track_delivery.reset_mock()
+    workflow.gmail.mark_read.assert_not_awaited()

@@ -381,6 +381,10 @@ async def digest(workflow, day, state):
             pages.append(page)
             categories.append(group)
         workflow.patch(day + ":screening-digest", pages=pages, html=True, categories=categories)
-        snapshot = {"html": True}
+        snapshot = {"html": True, "categories": categories}
+    categories = snapshot.get("categories") or []
     for index, page in enumerate(pages):
-        await workflow.deliver(f"{day}:screening-digest:{index}", page, html=bool(snapshot.get("html")), retain=True)
+        category = categories[index] if index < len(categories) else None
+        acknowledge = category in {"notification", "promotion"}
+        await workflow.deliver(f"{day}:screening-digest:{index}", page,
+                               html=bool(snapshot.get("html")), retain=True, acknowledge=acknowledge)
