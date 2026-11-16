@@ -780,11 +780,13 @@ class LearningCalendar:
             return await self.book(task, approved, now)
         return "Unknown planning action."
 
-    async def revise(self, task_id, token, instruction, now=None, *, update_id=None):
+    async def revise(self, task_id, token, instruction, now=None, *, update_id=None, review_id=None):
         if not self.settings.enable_learning_calendar:
             return "Task planning is unavailable."
         state = self.get(task_id)
         booked_edit = state and state.get("status") == "scheduled" and state.get("token") == token
+        if review_id and not booked_edit:
+            return "這項確認已失效。請重新提出時間調整。"
         active = self.sync_queue()
         if active != task_id and not booked_edit:
             return self.waiting_turn(active)
@@ -798,7 +800,7 @@ class LearningCalendar:
         try:
             if booked_edit:
                 from .study_reschedule import reschedule
-                return await reschedule(self, task_id, token, instruction, now, update_id=update_id)
+                return await reschedule(self, task_id, token, instruction, now, update_id=update_id, review_id=review_id)
             return await self._revise(task_id, token, instruction, now)
         finally:
             self.db.mutate_task_action_state("learning:tick", lambda old: {**old, "until": now.isoformat()}

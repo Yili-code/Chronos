@@ -728,6 +728,30 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             and source_message.message_id is not None and source_message.date is not None):
         request.state.owner_message_expiry = (chat_id, source_message.message_id, source_message.date + SECONDS)
     update_id = update.update_id
+    if update.callback_query and (update.callback_query.data or "").startswith("bd:"):
+        from .study_reschedule import receipt_key
+        matched = re.fullmatch(r"bd:([0-9]{1,19}):([a-f0-9]{32})", update.callback_query.data)
+        if not matched or chat_id != settings.telegram_chat_id or source_message.chat.type != "private":
+            raise HTTPException(status_code=403, detail="Invalid booking confirmation")
+        task_id, review_id = int(matched[1]), matched[2]
+        receipt = db.get_update(update_id)
+        if receipt is None:
+            planner = learning_calendar()
+            state = planner.get(task_id) or {}
+            applied = db.get_task_action_state(receipt_key(update_id)) or {}
+            reply = applied.get("reply")
+            if reply is None:
+                try:
+                    reply = await planner.revise(task_id, state.get("token"), "drift:" + review_id,
+                                                 update_id=update_id, review_id=review_id)
+                except CalendarError as error:
+                    reply = str(error)
+            receipt = db.process_update(update_id, lambda: reply)
+        await deliver_learning_reply(chat_id, update_id, receipt)
+        await telegram.answer_callback_query(update.callback_query.id)
+        if source_message.message_id and (db.get_task_action_state(receipt_key(update_id)) or {}).get("reply"):
+            await telegram.request("deleteMessage", {"chat_id": chat_id, "message_id": source_message.message_id})
+        return {"ok": True}
     if update.callback_query:
         from .assignment_scan import NO_NEW_NOTICE_PREFIX, acknowledge_no_new_notice
         data = update.callback_query.data or ""
