@@ -254,8 +254,8 @@ def schedule(planner, tasks, choices, edges, order, fixed, removed, start, stop,
     raise ValueError('即使縮短讀書時間，仍無法在期限前排完。可以調整哪個期限或每天的讀書上限？')
 
 
-def save(planner, state):
-    return planner.db.mutate_task_action_state(KEY, lambda old: state if old and old.get('token') == state['token'] else old)
+def save(planner, state, state_key=KEY):
+    return planner.db.mutate_task_action_state(state_key, lambda old: state if old and old.get('token') == state['token'] else old)
 
 
 def result(state):
@@ -452,7 +452,7 @@ async def run(planner, chat_id, instruction, update_id, now=None):
             if old and old.get('claim') == lease else old)
 
 
-async def execute(planner, state, now, lease, deadline):
+async def execute(planner, state, now, lease, deadline, *, state_key=KEY):
     """Persist progress after readback; retry always checks deterministic identities."""
     db, cfg = planner.db, planner.settings
     await planner.calendar.verify_owner()
@@ -541,7 +541,7 @@ async def execute(planner, state, now, lease, deadline):
             if actual and actual.get('status') != 'cancelled':
                 raise CalendarError('Deletion was not confirmed; rebuilding paused.')
         state['deleted'].append(event['id'])
-        save(planner, state)
+        save(planner, state, state_key)
     for session in state['sessions']:
         if session['event_id'] in state['inserted']:
             continue
@@ -580,7 +580,7 @@ async def execute(planner, state, now, lease, deadline):
         if not matches_session(actual, session, state, cfg):
             raise CalendarError('A replacement event could not be verified; rebuilding paused.')
         state['inserted'].append(session['event_id'])
-        save(planner, state)
+        save(planner, state, state_key)
     def finish():
         current()
         buckets = {}
@@ -628,7 +628,7 @@ async def execute(planner, state, now, lease, deadline):
         for day, values in buckets.items():
             db._save_task_action_state('learning:day:' + day, values)
         db._save_task_action_state('learning:proposal-queue', queue)
-        db._save_task_action_state(KEY, {**state, 'status': 'completed'})
+        db._save_task_action_state(state_key, {**state, 'status': 'completed'})
     db._run_task_action(finish)
     return result({**state, 'status': 'completed'})
 
