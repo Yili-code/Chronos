@@ -286,3 +286,43 @@ async def test_one_minute_notice_expires_even_with_force_reply(monkeypatch):
     bot.expiry.sleep.assert_awaited_once_with(60)
     assert bot.request.await_args.args == ('deleteMessage', {'chat_id': 123, 'message_id': 44})
     assert not bot.expiry.read()
+
+
+@pytest.mark.asyncio
+async def test_telegram_update_is_acknowledged_before_waiting_for_expiry(system, monkeypatch):
+    import httpx
+    from chronos import main
+
+    _, _, bot, _ = system
+    body_sent = asyncio.Event()
+    cleanup_started = asyncio.Event()
+    finish_cleanup = asyncio.Event()
+
+    async def flush():
+        assert body_sent.is_set()
+        assert main.db.get_update(99006)["delivered"]
+        cleanup_started.set()
+        await finish_cleanup.wait()
+
+    monkeypatch.setattr(bot, "flush_expirations", flush)
+    monkeypatch.setattr(main, "prepare_message", AsyncMock(return_value=lambda: "已完成。"))
+
+    async def observe(scope, receive, send):
+        async def tracked_send(message):
+            await send(message)
+            if message["type"] == "http.response.body" and not message.get("more_body"):
+                body_sent.set()
+
+        await main.app(scope, receive, tracked_send)
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=observe), base_url="http://test") as client:
+        response = asyncio.create_task(client.post("/telegram/webhook", json={
+            "update_id": 99006, "message": {"message_id": 40, "chat": {"id": 123}, "text": "Done"},
+        }, headers={"X-Telegram-Bot-Api-Secret-Token": "test-hook"}))
+        try:
+            await asyncio.wait_for(cleanup_started.wait(), timeout=2)
+            assert body_sent.is_set()
+        finally:
+            finish_cleanup.set()
+            result = await response
+    assert result.status_code == 200

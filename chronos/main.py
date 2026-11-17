@@ -11,6 +11,7 @@ from collections.abc import Callable
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, Header, HTTPException, Request
+from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -260,32 +261,37 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="Chronos", lifespan=lifespan)
 
 
+async def flush_message_expirations():
+    try:
+        await telegram.flush_expirations()
+    except Exception:
+        logger.warning("Telegram message cleanup pending")
+
+
 @app.middleware("http")
 async def expire_passive_messages(request, call_next):
-    response = None
-    try:
-        response = await call_next(request)
-        owner_message = getattr(request.state, "owner_message_expiry", None)
-        if response.status_code < 400 and owner_message is not None:
-            chat_id, message_id, deadline = owner_message
-            try:
-                await telegram.track_delivery(
-                    {"ok": True, "result": {"message_id": message_id}},
-                    chat_id, requires_reply=False, deadline=deadline,
-                )
-            except Exception:
-                logger.warning("Owner Telegram message cleanup could not be scheduled")
-        return response
-    finally:
-        notifying = request.method == "POST" and request.url.path.startswith(("/telegram/", "/internal/"))
-        # Health/status reads must never mutate Telegram or wait on its network.
-        local = getattr(getattr(telegram, 'expiry', None), 'tasks', ())
-        if notifying and (local or response is not None and response.status_code < 400):
-            try:
-                await telegram.flush_expirations()
-            except Exception:
-                logger.warning("Telegram message cleanup pending")
+    response = await call_next(request)
+    owner_message = getattr(request.state, "owner_message_expiry", None)
+    if response.status_code < 400 and owner_message is not None:
+        chat_id, message_id, deadline = owner_message
+        try:
+            await telegram.track_delivery(
+                {"ok": True, "result": {"message_id": message_id}},
+                chat_id, requires_reply=False, deadline=deadline,
+            )
+        except Exception:
+            logger.warning("Owner Telegram message cleanup could not be scheduled")
 
+    notifying = request.method == "POST" and request.url.path.startswith(("/telegram/", "/internal/"))
+    local = getattr(getattr(telegram, 'expiry', None), 'tasks', ())
+    if notifying and (local or response.status_code < 400):
+        if request.url.path.startswith("/telegram/"):
+            # Persist delivery before acknowledging the update. Expiry is later,
+            # so it must not delay Telegram from delivering the next update.
+            response.background = BackgroundTask(flush_message_expirations)
+        else:
+            await flush_message_expirations()
+    return response
 
 
 @app.exception_handler(ResetInProgress)
