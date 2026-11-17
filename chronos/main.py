@@ -1343,9 +1343,14 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                 )
             elif source_message.photo:
                 from .image_deadlines import prepare_photo
+                from .image_events import prepare_event_photo, requests_calendar_event
                 photo = max(source_message.photo, key=lambda item: item.width * item.height)
-                proposal = await prepare_photo(ai, telegram, tasks, photo, source_message.caption or "",
-                                               update_id, chat_id, datetime.now(settings.tz))
+                caption = source_message.caption or ""
+                now = datetime.now(settings.tz)
+                if requests_calendar_event(caption):
+                    proposal = await prepare_event_photo(db, ai, telegram, settings, photo, caption, update_id, chat_id, now)
+                else:
+                    proposal = await prepare_photo(ai, telegram, tasks, photo, caption, update_id, chat_id, now)
                 action = lambda: proposal
             elif learning_rerouted:
                 action = await prepare_message(text,update_id=update_id,chat_id=chat_id,**request_context)
