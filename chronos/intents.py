@@ -91,6 +91,15 @@ def explicit_event_minutes(text):
     return total if total == int(total) else -1
 
 
+MEETING_TOPIC_REQUEST = re.compile(
+    r"^\s*(?:(?:請|请|幫我|帮我)\s*)*(?:重排|重新(?:規劃|规划|安排|擬定|拟定))"
+    r"[^\n。！？]{0,80}?(?:meeting|會議|会议)\s*(?:的\s*)?(?:主題|主题|議程|议程)"
+    r"\s*[。.!！?？]?\s*$",
+    re.I,
+)
+MEETING_TOPIC_QUESTION = "你想擬定會議議程，還是修改行事曆上的會議標題？請告訴我要處理哪幾場會議，以及想討論的方向。"
+
+
 async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None, agenda_context=None, request_date=None):
     """Run external interpretation before the caller's task/receipt transaction."""
     now = datetime.now(app.settings.tz)
@@ -201,7 +210,9 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
     try:
         literal_completed=task_references.explicit_completion(text,interpret_items)
         matched_completed = task_completion.chapter_matches(text, items) if task_completion.explicit_done(text) else []
-        if focus_request:
+        if MEETING_TOPIC_REQUEST.fullmatch(text):
+            intent = Intent(action="clarify", question=MEETING_TOPIC_QUESTION, instruction=text)
+        elif focus_request:
             intent = Intent(action="replan", task_ids=[focus_target["id"]], instruction=text)
         elif literal_completed is not None:
             intent=Intent(action='task_complete' if literal_completed else 'clarify',task_ids=literal_completed,
@@ -217,8 +228,13 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
                            for token, record in bulletins])
         # Also validate tool substitutes and malformed provider return values.
         intent = Intent.model_validate(intent)
-    except (AIError, ValueError) as error:
+    except AIError as error:
         return lambda reply=str(error): "目前無法理解這個要求，沒有變更任何內容。\n" + escape(reply)
+    except ValueError:
+        return lambda: app.message_bundle({
+            "text": "我沒有判斷出你想做的操作。你想查詢、修改，還是新增？請告訴我對象和想要的結果。",
+            "requires_response": True,
+        })
 
     if intent.action == 'task_review':
         from . import task_review
@@ -269,7 +285,7 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
         if not agendas.current(app.db, agenda_context):
             return lambda: agendas.STALE
 
-    if intent.action == "acknowledge":
+    if intent.action == "acknowledge" and not intent.question:
         return lambda: "Understood, Sir."
 
     instruction = intent.instruction or text
@@ -335,7 +351,7 @@ async def prepare(app, text, *, update_id=None, chat_id=None, bound_task_id=None
         def save():
             if persistent:
                 app.db.mutate_task_action_state(key, lambda old: state)
-            return app.message_bundle({"text": "\n".join(lines), "parse_mode": "HTML"})
+            return app.message_bundle({"text": "\n".join(lines), "parse_mode": "HTML", "requires_response": True})
         return save
 
     if intent.action == 'task_schedule' and intent.start is not None and intent.end is not None:

@@ -382,6 +382,7 @@ class ExternalAI:
             "Examples: 重排所有會議 -> event_reset reset_type meeting; 把所有健身活動重新排 -> event_reset reset_type workout. "
             "Category is data, may be custom, and must never default to all categories. Ask when the type is missing. "
             "Clarification questions must use everyday activity names, never internal action identifiers such as study_reset or event_reset. "
+            "If a meeting-topic request leaves both the desired agenda and event edit ambiguous, ask whether the owner wants discussion topics drafted or Calendar titles changed. Do not treat it as a bulk reset. "
             "study_reset deletes old study Calendar sessions and rebuilds ALL unfinished learning tasks, including unscheduled tasks, "
             "in prerequisite order. Use it for clear bulk reset/rebuild requests, including Chinese and English paraphrases. "
             "Examples: 移除所有 study 行程並依照各個單位先後順序進行重排; 全部讀書行程打掉重排; "

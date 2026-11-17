@@ -585,3 +585,39 @@ def test_date_prefixed_new_request_does_not_inherit_recent_id(store, monkeypatch
     run('報名 Taione 和 YC')
     run('明天新增另一個報告任務', update=2)
     assert len(main.tasks.list_open()) == 2
+
+
+def test_ambiguous_meeting_topic_is_clarified_before_independent_next_message(system):
+    client, tasks, bot, _ = system
+    headers = {"X-Telegram-Bot-Api-Secret-Token": "test-hook"}
+
+    def send(update_id, text):
+        return client.post("/telegram/webhook", json={
+            "update_id": update_id,
+            "message": {"message_id": update_id, "chat": {"id": 123}, "text": text},
+        }, headers=headers)
+
+    first = "重新規劃 11/18、11/19 的 meeting 主題"
+    assert send(98901, first).status_code == 200
+    main.ai.classify_intent.assert_not_awaited()
+    call = bot.send_message.await_args
+    assert "擬定會議議程" in call.args[1] and "修改行事曆上的會議標題" in call.args[1]
+    assert call.kwargs["requires_response"] is True
+    assert main.db.get_task_action_state("intent:clarify:123")["instruction"] == first
+    assert not tasks.list_open()
+
+    second = "檢查台南大學的參賽條件"
+    assert send(98902, second).status_code == 200
+    assert main.ai.classify_intent.await_args.args[0] == second
+    assert main.ai.parse.await_args.args[0] == second
+    assert len(tasks.list_open()) == 1
+    assert send(98901, first).status_code == 200
+    assert sum("擬定會議議程" in call.args[1] for call in bot.send_message.await_args_list) == 1
+
+
+def test_classifier_question_is_preserved_even_with_acknowledge_action(store, monkeypatch):
+    classify(monkeypatch, action="acknowledge", question="想調整哪一場會議？")
+    receipt = run("幫我調整一下")
+    assert receipt["messages"][0]["text"] == "想調整哪一場會議？"
+    assert receipt["messages"][0]["requires_response"] is True
+    assert store.get_task_action_state("intent:clarify:123")["question"] == "想調整哪一場會議？"
