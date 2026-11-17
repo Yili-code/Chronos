@@ -11,13 +11,13 @@ from .task_timing import display_date
 EVENT_COLORS = {'exam': '3', 'contest': '3', 'meeting': '5', 'social': '6', 'other': '8'}
 
 
-def preview_explicit_event(db, settings, chat_id, update_id, title, start, end, category, content, now, *, preview_content=None):
+def preview_explicit_event(db, settings, chat_id, update_id, title, start, end, category, content, now, *, preview_content=None, location=None):
     """Use the same durable approval card as /free, without creating a task."""
     token = sha256(f'event:{chat_id}:{update_id}'.encode()).hexdigest()[:32]
     source_key = 'event:source:' + token
     state = {'title': title, 'start': start.astimezone(settings.tz).isoformat(),
         'end': end.astimezone(settings.tz).isoformat(), 'category': category,
-        'content': content, 'preview_content': preview_content, 'explicit_event': True, 'chat_id': chat_id,
+        'content': content, 'preview_content': preview_content, 'location': location, 'explicit_event': True, 'chat_id': chat_id,
         'expires_at': (now + timedelta(minutes=10)).isoformat(),
         'source_key': source_key, 'status': 'pending', 'token': token}
     def save():
@@ -151,6 +151,7 @@ async def free_booking_callback(db, calendar, settings, chat_id, message_id, tok
         event=await calendar.insert({'id':event_id,'summary':state['title'],
             'colorId':EVENT_COLORS.get(state.get('category'), '6'),
             **({'description': state['content']} if state.get('content') else {}),
+            **({'location': state['location']} if state.get('location') else {}),
             'start':{'dateTime':state['start'],'timeZone':settings.timezone},
             'end':{'dateTime':state['end'],'timeZone':settings.timezone},
             'visibility':'private','transparency':'opaque',

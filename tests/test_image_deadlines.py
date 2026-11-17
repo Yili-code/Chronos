@@ -150,3 +150,81 @@ def test_multimodal_request_uses_existing_ai_transport(monkeypatch):
         ImageDeadlines.model_json_schema(), ImageDeadlines, "task",
         image_part={"inlineData": {"mimeType": "image/jpeg", "data": "YWJj"}}))
     assert result.items == []
+
+
+@pytest.mark.parametrize("case", ["past", "weekday_mismatch", "missing_time", "invalid_date"])
+def test_image_event_requests_clarification_without_creating_a_preview(store, case):
+    from hashlib import sha256
+    from chronos.image_events import ImageEvent, prepare_event_photo
+    from chronos.settings import Settings
+
+    config = Settings(_env_file=None, telegram_chat_id=123)
+    now = datetime(2026, 11, 17, tzinfo=config.tz)
+    fields = {"title": "Web 基礎概念與資安實戰入門", "year": None, "month": 11, "day": 4,
+              "weekday": 2, "start": "18:00", "end": "20:00", "location": "資工系館 301 電腦教室",
+              "category": "other", "description": None}
+    changes, hint = {
+        "past": ({}, "2026-11-04 18:00–20:00，時間已過"),
+        "weekday_mismatch": ({"day": 28}, "日期與星期不一致"),
+        "missing_time": ({"end": None}, "請補充"),
+        "invalid_date": ({"day": 31}, "日期或時間有誤"),
+    }[case]
+    ai = SimpleNamespace(_generate_output=AsyncMock(return_value=ImageEvent(**{**fields, **changes})))
+    bot = SimpleNamespace(download_photo=AsyncMock(return_value=b"image"))
+    reply = asyncio.run(prepare_event_photo(store, ai, bot, config, SimpleNamespace(file_id="file"),
+                                           "將此活動加進行程", 100, 123, now))
+    assert hint in reply
+    token = sha256(b"event:123:100").hexdigest()[:32]
+    assert store.get_task_action_state("free:booking:" + token) is None
+    assert store.list_open_tasks() == []
+
+
+def test_event_photo_webhook_previews_then_books_calendar_once(system, monkeypatch):
+    from chronos.image_events import ImageEvent
+
+    client, tasks, bot, config = system
+    day = (datetime.now(config.tz) + timedelta(days=3)).date()
+    event = ImageEvent(title="IND 社課｜Web 基礎概念與資安實戰入門", year=day.year, month=day.month, day=day.day,
+                       weekday=day.weekday(), start="18:00", end="20:00", location="資工系館 301 電腦教室",
+                       category="other", description="HTTP、Burp Suite 與 Web CTF 練習")
+    model = AsyncMock(return_value=event)
+    download = AsyncMock(return_value=b"image")
+    monkeypatch.setattr(main.ai, "_generate_output", model)
+    monkeypatch.setattr(bot, "download_photo", download)
+    monkeypatch.setattr("chronos.free_booking.class_windows", lambda *args: [])
+    calendar = AsyncMock()
+    calendar.event.return_value = None
+    calendar.busy.return_value = []
+
+    async def insert(body):
+        calendar.event.return_value = body
+        return body
+
+    calendar.insert.side_effect = insert
+    monkeypatch.setattr(main, "google_calendar", calendar)
+    bot.send_message.return_value = {"ok": True, "result": {"message_id": 11}}
+    payload = {"update_id": 100, "message": {"message_id": 10, "chat": {"id": 123},
+               "caption": "將此活動加進行程", "photo": [{"file_id": "file", "width": 100, "height": 150}]}}
+    headers = {"X-Telegram-Bot-Api-Secret-Token": "test-hook"}
+    for _ in range(2):
+        assert client.post("/telegram/webhook", headers=headers, json=payload).status_code == 200
+    download.assert_awaited_once_with("file")
+    model.assert_awaited_once()
+    assert model.await_args.kwargs["image_part"]["inlineData"]["mimeType"] == "image/jpeg"
+    calendar.insert.assert_not_awaited()
+    assert bot.send_message.await_count == 1
+    assert "資工系館 301 電腦教室" in bot.send_message.await_args.args[1]
+    markup = bot.send_message.await_args.kwargs["reply_markup"]
+    allow, cancel = markup["inline_keyboard"][0]
+    assert allow["text"] == "Allow" and cancel["text"] == "Cancel"
+    callback = {"update_id": 101, "callback_query": {"id": "confirm", "data": allow["callback_data"],
+                "message": {"message_id": 11, "chat": {"id": 123}}}}
+    for _ in range(2):
+        assert client.post("/telegram/webhook", headers=headers, json=callback).status_code == 200
+    calendar.insert.assert_awaited_once()
+    booking = calendar.insert.await_args.args[0]
+    assert booking["summary"] == event.title and booking["location"] == event.location
+    assert booking["start"]["dateTime"] == f"{day.isoformat()}T18:00:00+08:00"
+    assert booking["end"]["dateTime"] == f"{day.isoformat()}T20:00:00+08:00"
+    assert tasks.list_open() == []
+    main.ai.parse.assert_not_awaited()
