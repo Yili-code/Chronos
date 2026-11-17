@@ -78,10 +78,10 @@ async def preview(planner, task, state, now):
     cfg = constraints(planner)
     blocks, missing = allocate(task, now, (begin, end), busy, planner.settings, state["minutes"],
                                budget, cfg["course_policy"])
-    if missing or len(blocks) < 2:
-        text = (f"原時段內可分配 {state['minutes'] - missing}／{state['minutes']} 分鐘。"
-                "\n請調整時長或指定更大的時段。" if missing else "目前已有連續空檔，可以重新安排。")
-        return card(planner, task, state, text, alternatives)
+    if not blocks:
+        return card(planner, task, state, "原時段內沒有可安排的空檔。請調整時長或指定更大的時段。", alternatives)
+    if not missing and len(blocks) == 1:
+        return card(planner, task, state, "目前已有連續空檔，可以重新安排。", alternatives)
     token = uuid4().hex
     sessions = [{"task_id": task["id"], "title": task["title"], "start": start.isoformat(),
                  "end": stop.isoformat(), "minutes": length, "original_minutes": length,
@@ -89,13 +89,18 @@ async def preview(planner, task, state, now):
                  "event_id": sha256(f"chronos-split:{token}:{index}".encode()).hexdigest()}
                 for index, (start, stop, length) in enumerate(blocks)]
     draft = {"token": token, "sessions": sessions, "constraints": cfg, "snapshot": task_fields(task),
+             "unplanned_minutes": missing,
              "expires_at": (now + timedelta(minutes=15)).isoformat()}
-    saved = planner.update(task["id"], lambda old: {**old, "split_draft": draft} if old == state else old)
+    saved = planner.update(task["id"], lambda old: {**old, "token": token, "split_draft": draft} if old == state else old)
     if ((saved or {}).get("split_draft") or {}).get("token") != token:
         return "原安排已更新。請使用最新卡片。"
-    text = "\n".join([f"<b>分次完成</b>｜{escape(task['title'])}", *block_lines(sessions),
-                      f"合計 {state['minutes']} 分鐘。確認後才加入 Calendar。"])
-    return card(planner, task, state, text, [("splitconfirm", "確認分次安排"), *alternatives])
+    scheduled = state["minutes"] - missing
+    label = f"先排 {scheduled} 分鐘" if missing else "確認分次安排"
+    detail = (f"可先安排 {scheduled}／{state['minutes']} 分鐘，剩下 {missing} 分鐘待排。"
+              if missing else f"合計 {scheduled} 分鐘。")
+    text = "\n".join([f"<b>分次安排</b>｜{escape(task['title'])}", *block_lines(sessions),
+                      detail, "確認後才加入 Calendar。"])
+    return card(planner, task, saved, text, [("splitconfirm", label), *alternatives])
 
 
 async def confirm(planner, task, state, now):
@@ -154,8 +159,10 @@ async def confirm(planner, task, state, now):
         try:
             await execute(planner, operation, now, claim, time.monotonic() + 90, state_key=operation_key)
         except CalendarError:
-            return "分次排程尚未完成。請確認時段仍可使用，再按一次「確認分次安排」；已建立的時段會先核對。"
-        return "\n".join(["已安排分次完成", task["title"], *block_lines(operation["sessions"])])
+            return "分次排程尚未完成。請再按一次原本的確認按鈕，已建立的時段會先核對。"
+        missing = operation.get("unplanned_minutes", 0)
+        summary = f"已安排 {sum(s['minutes'] for s in operation['sessions'])} 分鐘，剩下 {missing} 分鐘待排。" if missing else "已安排分次完成"
+        return "\n".join([summary, task["title"], *block_lines(operation["sessions"])])
     finally:
         db.mutate_task_action_state("learning:tick", lambda old: {**old, "until": now.isoformat()}
                                     if old and old.get("claim") == claim else old)

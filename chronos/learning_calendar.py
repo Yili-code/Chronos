@@ -1211,6 +1211,9 @@ class LearningCalendar:
             live = next((item for item in self.db.list_open_tasks() if item["id"] == task["id"]), None)
             if not live or task_fields(live) != state["snapshot"]:
                 return "The task changed after booking. Use /plan to review before marking it complete."
+            unplanned = state.get('unplanned_minutes', 0)
+            if outcome == "partial" and unplanned and state.get('reset_remaining_sessions'):
+                return "這項任務還有已安排的時段。請在最後一段結束後回報進度，剩餘時間會保留待排。"
             profile = self.db.get_task_action_state("learning:profile") or {}
             if outcome == "done" and actual_minutes is not None and actual_minutes > 0:
                 subject = task.get("project") or "general"
@@ -1225,6 +1228,7 @@ class LearningCalendar:
                 "status": "finished" if outcome == "done" else "queued" if outcome == "partial" else "awaiting_resolution",
                 "feedback": {"outcome": outcome, "actual_minutes": actual_minutes,
                     "reason": reason[:1000], "recorded_at": datetime.now(self.settings.tz).isoformat()}}
+            continuation = None
             if outcome == "partial":
                 recorded["progress_note"] = reason[:1000]
                 recorded["duration_estimate"] = None
@@ -1242,13 +1246,19 @@ class LearningCalendar:
                 title += (f" · Continue: {progress['total_' + suffix] - progress['completed_' + suffix]} {suffix} remaining"
                           if progress and suffix in {'questions', 'items'} and progress.get('total_' + suffix) else f" · Continue pages {progress['next_page']}–{progress['total_pages']}"
                           if progress and progress.get('total_pages') else f" · Continue: {reason[:200]}" if reason else " · Continue remaining work")
-                successor = self.db.continue_task(task, title, datetime.now(self.settings.tz))
-                recorded['status'] = 'finished'
-                recorded['successor_task_id'] = successor['id']
                 continuation = {key: recorded[key] for key in
                                 ('progress', 'progress_note', 'requested_minutes', 'duration_source') if key in recorded}
-                continuation.update(status='queued', predecessor_task_id=task['id'])
-                self.db._save_task_action_state(f"learning:task:{successor['id']}", continuation)
+                continuation['status'] = 'queued'
+                if unplanned:
+                    continuation.update(requested_minutes=max(unplanned, continuation.get('requested_minutes') or 0),
+                                        duration_source='owner')
+                else:
+                    successor = self.db.continue_task(task, title, datetime.now(self.settings.tz))
+                    recorded['status'] = 'finished'
+                    recorded['successor_task_id'] = successor['id']
+                    continuation['predecessor_task_id'] = task['id']
+                    self.db._save_task_action_state(f"learning:task:{successor['id']}", continuation)
+                    continuation = None
             if outcome == "skipped":
                 previous = state.get('recovery') or {}
                 recorded['recovery'] = {'stage': 'decision' if reason.strip() else 'reason',
@@ -1256,7 +1266,7 @@ class LearningCalendar:
                     'reported_at': datetime.now(self.settings.tz).isoformat()}
             self.db._save_task_action_state("learning:profile", profile)
             self.db._save_task_action_state("learning:history:" + token, recorded)
-            self.db._save_task_action_state(f"learning:task:{task['id']}", recorded)
+            self.db._save_task_action_state(f"learning:task:{task['id']}", continuation or recorded)
             if outcome == 'skipped':
                 from .session_recovery import card
                 return card(self, live, recorded, datetime.now(self.settings.tz))
@@ -1488,6 +1498,8 @@ class LearningCalendar:
                 item = f"• <b>#{task['id']}</b> {escape(title)}"
                 if scope:
                     item += "\n  " + "\n  ".join(escape(line) for line in scope)
+                if unplanned := state.get('unplanned_minutes'):
+                    item += f" · 剩下 {unplanned} 分鐘待排"
                 groups.setdefault(status, []).append(item)
         for status, tasks in groups.items():
             lines.extend(["", f"<b>{escape(status)}</b>", *tasks])
