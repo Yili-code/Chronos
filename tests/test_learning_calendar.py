@@ -16,37 +16,59 @@ from chronos import main
 NOW = datetime.fromisoformat("2026-10-19T09:00:00+08:00")
 
 
-@pytest.mark.parametrize("outcome", ["confirmed", "busy", "insufficient", "uncertain"])
+@pytest.mark.parametrize("outcome", ["confirmed", "busy", "partial", "unavailable", "uncertain", "partial_uncertain", "single_partial"])
 def test_no_slot_can_split_within_original_window(setup, outcome):
     from chronos.task_actions import task_fields
 
     planner, task, calendar, _ = setup
     planner.settings.learning_auto_accept = True
     begin, end = NOW.replace(hour=13), NOW.replace(hour=17)
-    if outcome == "insufficient":
-        end -= timedelta(minutes=30)
+    partial = outcome in {"partial", "partial_uncertain", "single_partial"}
+    if partial:
+        end -= timedelta(minutes=15)
     state = {"status": "no_slot", "token": "a" * 32, "message_id": 50, "minutes": 180,
              "snapshot": task_fields(task), "availability_search": {"scope": "requested_window",
                  "start": begin.isoformat(), "end": end.isoformat()}}
     planner.update(task["id"], lambda old: state)
     planner.db.mutate_task_action_state("learning:proposal-queue", lambda old: {"active_task_id": task["id"]})
     calendar.busy.return_value = [(begin + timedelta(hours=1), begin + timedelta(hours=2))]
+    if outcome == "unavailable":
+        calendar.busy.return_value = [(begin, end)]
+    if outcome == "single_partial":
+        calendar.busy.return_value = [(begin, begin + timedelta(hours=1))]
     calendar.agenda.return_value = []
     _, buttons = planner.proposal_content(task, state)
     assert buttons[0]["text"] == "分次完成"
     preview = asyncio.run(planner.callback("split", task["id"], state["token"], 50))
     calendar.insert.assert_not_awaited()
     message = preview["messages"][0]
-    if outcome == "insufficient":
-        assert "150／180" in message["text"]
-        assert "確認分次安排" not in str(message)
+    button = message["reply_markup"]["inline_keyboard"][0][0]
+    if outcome == "unavailable":
+        assert "沒有可安排的空檔" in message["text"]
+        assert button["text"] == "Replan"
+        assert "split_draft" not in planner.get(task["id"])
         return
-    assert "13:00–14:00" in message["text"] and "15:00–17:00" in message["text"]
-    assert "合計 180 分鐘" in message["text"]
+    booked = 165 if partial else 180
+    if outcome == "single_partial":
+        assert "14:00–16:45" in message["text"]
+    else:
+        assert "13:00–14:00" in message["text"]
+        assert ("15:00–16:45" if partial else "15:00–17:00") in message["text"]
+    if partial:
+        assert "165／180" in message["text"] and "剩下 15 分鐘待排" in message["text"]
+        assert button["text"] == "先排 165 分鐘"
+    else:
+        assert "合計 180 分鐘" in message["text"]
+        assert button["text"] == "確認分次安排"
+    confirm_token = button["callback_data"].rsplit(":", 1)[-1]
+    assert confirm_token != state["token"]
+    stale = asyncio.run(planner.callback("splitconfirm", task["id"], state["token"], 50))
+    assert "already been handled" in stale
+    calendar.insert.assert_not_awaited()
     planner.update(task["id"], lambda old: {**old, "message_id": 51})
     if outcome == "busy":
         calendar.busy.return_value.append((begin, begin + timedelta(hours=1)))
-        reply = asyncio.run(planner.callback("splitconfirm", task["id"], state["token"], 51))
+        reply = asyncio.run(planner.callback("splitconfirm", task["id"], confirm_token, 51))
         assert "已變更" in reply
         calendar.insert.assert_not_awaited()
         assert planner.get(task["id"])["status"] == "no_slot"
@@ -57,22 +79,36 @@ def test_no_slot_can_split_within_original_window(setup, outcome):
 
     async def insert(body):
         events[body["id"]] = body
-        if outcome == "uncertain" and len(events) == 1:
+        if outcome in {"uncertain", "partial_uncertain"} and len(events) == 1:
             raise CalendarError("Uncertain insert")
         return body
 
     calendar.insert.side_effect = insert
-    reply = asyncio.run(planner.callback("splitconfirm", task["id"], state["token"], 51))
-    if outcome == "uncertain":
+    reply = asyncio.run(planner.callback("splitconfirm", task["id"], confirm_token, 51))
+    if outcome in {"uncertain", "partial_uncertain"}:
         assert "尚未完成" in reply
-        reply = asyncio.run(planner.callback("splitconfirm", task["id"], state["token"], 51))
-    assert "已安排分次完成" in reply
-    assert calendar.insert.await_count == 2
+        reply = asyncio.run(planner.callback("splitconfirm", task["id"], confirm_token, 51))
+    assert ("已安排 165 分鐘，剩下 15 分鐘待排" if partial else "已安排分次完成") in reply
+    assert calendar.insert.await_count == (1 if outcome == "single_partial" else 2)
     calendar.delete_event.assert_not_awaited()
     final = planner.get(task["id"])
     assert final["status"] == "scheduled"
-    assert final["minutes"] == 60 and final["reset_remaining_sessions"][0]["minutes"] == 120
+    assert final["minutes"] + sum(s["minutes"] for s in final["reset_remaining_sessions"]) == booked
     assert len(planner.db.list_open_tasks()) == 1
+    if partial:
+        from chronos.study_reset import advance_sessions
+
+        assert final["unplanned_minutes"] == 15
+        assert "剩下 15 分鐘待排" in planner.status(booked_only=True)
+        if final["reset_remaining_sessions"]:
+            before = planner.feedback(task, final["token"], "partial", 60, verified_booking=final)
+            assert "已安排的時段" in before
+            assert planner.get(task["id"]) == final
+            final = asyncio.run(advance_sessions(planner, task, final, end))
+        planner.feedback(task, final["token"], "partial", final["minutes"], verified_booking=final)
+        queued = planner.get(task["id"])
+        assert queued["status"] == "queued" and queued["requested_minutes"] == 15
+        assert [item["id"] for item in planner.db.list_open_tasks()] == [task["id"]]
 
 
 def test_batch_owner_duration_survives_sequential_approval_and_restart(setup):

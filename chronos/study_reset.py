@@ -607,6 +607,8 @@ async def execute(planner, state, now, lease, deadline, *, state_key=KEY):
             replacement = {**first, 'status': 'scheduled', 'snapshot': original['task'],
                 'reset_token': state['token'], 'reset_remaining_sessions': later,
                 'history': old.get('history', []), 'auto_accepted': True}
+            if state.get('unplanned_minutes'):
+                replacement['unplanned_minutes'] = state['unplanned_minutes']
             replacements[i] = replacement
             for session in sessions:
                 bucket(session['start'][:10])[session['token']] = session['minutes']
