@@ -162,7 +162,7 @@ class MailWorkflow:
         except (AIError, ValueError, TimeoutError):
             return "原文摘錄：" + clean(mail.get("snippet") or mail.get("body") or mail["subject"], 500)
 
-    async def deliver(self, delivery_key, text, mail_id=None, *, html=False, retain=False, acknowledge=False):
+    async def deliver(self, delivery_key, text, mail_id=None, *, html=False, acknowledge=False):
         """Persist send intent first; an ambiguous send is never automatically replayed."""
         state = self.get(delivery_key) or {}
         if state.get("delivery") == "sent":
@@ -176,7 +176,7 @@ class MailWorkflow:
         elif acknowledge:
             markup = read_button(MAIL_READ_PREFIX + delivery_key)
         try:
-            result = await self.telegram.send_message(self.settings.telegram_chat_id, text, reply_markup=markup, parse_mode="HTML" if mail_id or html else None, requires_response=bool(mail_id) or retain or acknowledge)
+            result = await self.telegram.send_message(self.settings.telegram_chat_id, text, reply_markup=markup, parse_mode="HTML" if mail_id or html else None, requires_response=bool(mail_id) or acknowledge)
         except TelegramError:
             self.patch(delivery_key, delivery="uncertain")
             raise GmailError("Telegram mail delivery outcome is unknown; owner review required") from None

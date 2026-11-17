@@ -364,7 +364,7 @@ async def digest(workflow, day, state):
                                  + detail + deadline)
         date = re.search(r"\d{4}-\d{2}-\d{2}", day)
         date_label = date[0][5:].replace("-", "/") if date else "本批"
-        pages, categories = [], []
+        pages = []
         labels = {"notification":"系統通知", "newsletter":"電子報", "promotion":"產品與服務消息",
                   "other":"其他資訊", "expired":"過期資訊，無需處理", "low_value":"已封存，可在 Gmail 找回"}
         for group, entries in groups.items():
@@ -375,16 +375,11 @@ async def digest(workflow, day, state):
             for entry in entries:
                 if len((page + "\n\n" + entry).encode("utf-16-le")) // 2 > 2800 and page != header:
                     pages.append(page)
-                    categories.append(group)
                     page = header
                 page += "\n\n" + entry
             pages.append(page)
-            categories.append(group)
-        workflow.patch(day + ":screening-digest", pages=pages, html=True, categories=categories)
-        snapshot = {"html": True, "categories": categories}
-    categories = snapshot.get("categories") or []
+        workflow.patch(day + ":screening-digest", pages=pages, html=True)
+        snapshot = {"html": True}
     for index, page in enumerate(pages):
-        category = categories[index] if index < len(categories) else None
-        acknowledge = category in {"notification", "promotion"}
         await workflow.deliver(f"{day}:screening-digest:{index}", page,
-                               html=bool(snapshot.get("html")), retain=True, acknowledge=acknowledge)
+                               html=bool(snapshot.get("html")), acknowledge=True)
