@@ -449,6 +449,34 @@ if ($environmentValues['CHRONOS_ENABLE_LEARNING_CALENDAR'] -eq 'true') {
             --schedule "0 21 * * *" --time-zone "Asia/Taipei" --uri $agendaUri --http-method POST `
             --headers "X-Chronos-Scheduler-Secret=$schedulerSecret" --max-retry-attempts 3 --max-retry-duration 3600s --attempt-deadline 240s --quiet | Out-Null
     }
+    $morningAgendaJobName = "$Service-morning-agenda"
+    $morningAgendaUri = "$serviceUrl/internal/agenda/today"
+    & $gcloudCommand scheduler jobs describe $morningAgendaJobName --location $Region --project $ProjectId --quiet 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        Invoke-Gcloud scheduler jobs update http $morningAgendaJobName --location $Region --project $ProjectId `
+            --schedule "*/5 * * * *" --time-zone "Asia/Taipei" --uri $morningAgendaUri --http-method POST `
+            --update-headers "X-Chronos-Scheduler-Secret=$schedulerSecret" --max-retry-attempts 0 --attempt-deadline 240s --quiet | Out-Null
+    }
+    else {
+        Invoke-Gcloud scheduler jobs create http $morningAgendaJobName --location $Region --project $ProjectId `
+            --schedule "*/5 * * * *" --time-zone "Asia/Taipei" --uri $morningAgendaUri --http-method POST `
+            --headers "X-Chronos-Scheduler-Secret=$schedulerSecret" --max-retry-attempts 0 --attempt-deadline 240s --quiet | Out-Null
+    }
+    $morningAgendaJobJson = (& $gcloudCommand scheduler jobs describe $morningAgendaJobName --location $Region `
+        --format "json(schedule,timeZone,state,httpTarget.uri)" --quiet) -join "`n"
+    if ($LASTEXITCODE -ne 0) { throw "Could not verify morning agenda scheduler" }
+    $morningAgendaJob = $morningAgendaJobJson | ConvertFrom-Json
+    if ($morningAgendaJob.state -eq "PAUSED") {
+        Invoke-Gcloud scheduler jobs resume $morningAgendaJobName --location $Region --project $ProjectId --quiet | Out-Null
+        $morningAgendaJobJson = (& $gcloudCommand scheduler jobs describe $morningAgendaJobName --location $Region `
+            --format "json(schedule,timeZone,state,httpTarget.uri)" --quiet) -join "`n"
+        if ($LASTEXITCODE -ne 0) { throw "Could not verify resumed morning agenda scheduler" }
+        $morningAgendaJob = $morningAgendaJobJson | ConvertFrom-Json
+    }
+    if ($morningAgendaJob.state -ne "ENABLED" -or $morningAgendaJob.schedule -ne "*/5 * * * *" -or `
+        $morningAgendaJob.timeZone -ne "Asia/Taipei" -or $morningAgendaJob.httpTarget.uri -ne $morningAgendaUri) {
+        throw "Morning agenda scheduler does not match the expected configuration"
+    }
     $planningJobName = "$Service-nightly-planning"
     $planningUri = "$serviceUrl/internal/learning/nightly"
     & $gcloudCommand scheduler jobs describe $planningJobName --location $Region --project $ProjectId --quiet 2>$null | Out-Null

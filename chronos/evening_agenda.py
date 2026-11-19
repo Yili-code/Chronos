@@ -1,6 +1,7 @@
 """Cloud-driven tomorrow agenda with per-part durable delivery receipts."""
 from datetime import datetime, timedelta, time
 from html import escape
+from hashlib import sha256
 import re
 from uuid import uuid4
 
@@ -109,3 +110,94 @@ async def send_evening_agenda(db, calendar, telegram, settings, now=None):
         state = db.mutate_task_action_state(key, lambda old: {**old, "next": old["next"] + 1,
             "status": "sent" if old["next"] + 1 == len(old["parts"]) else "pending"})
     return {"sent": len(state["parts"]), "for_date": day.isoformat()}
+
+
+async def send_today_agenda(db, calendar, telegram, settings, now=None):
+    """Deliver today's agenda after 08:00 and replace its messages only on change."""
+    if not settings.enable_learning_calendar:
+        return {"enabled": False}
+    now = (now or datetime.now(settings.tz)).astimezone(settings.tz)
+    if now.hour < 8:
+        return {"waiting_for": "08:00 Asia/Taipei"}
+
+    day = now.date()
+    key = "morning:agenda:" + day.isoformat()
+    await calendar.verify_owner()
+    start = datetime.combine(day, time.min, settings.tz)
+    events = await calendar.agenda(start, start + timedelta(days=1))
+    parts = render_agenda(events, day, settings.tz, "Today", now=now)
+    fingerprint = sha256("\0".join(parts).encode("utf-8")).hexdigest()
+    state = db.get_task_action_state(key)
+
+    if state and state.get("status") in {"sending", "deleting", "uncertain"}:
+        raise RuntimeError("Today's agenda delivery needs inspection; no duplicate was sent.")
+    if state and state.get("status") == "sent" and state.get("fingerprint") == fingerprint:
+        return {"changed": False, "for_date": day.isoformat()}
+
+    claim = uuid4().hex
+    if state and state.get("status") == "sent":
+        old_message_ids = state.get("message_ids", [])
+        claimed = db.mutate_task_action_state(key, lambda old: {
+            "status": "deleting", "claim": claim, "fingerprint": fingerprint,
+            "parts": parts, "old_message_ids": old_message_ids, "next_delete": 0,
+            "message_ids": [], "next_send": 0,
+        } if old == state else old)
+        if claimed.get("claim") != claim:
+            return {"busy": True, "for_date": day.isoformat()}
+    else:
+        claimed = db.mutate_task_action_state(key, lambda old: old or {
+            "status": "sending", "claim": claim, "fingerprint": fingerprint,
+            "parts": parts, "message_ids": [], "next_send": 0,
+        })
+        if claimed.get("claim") != claim:
+            if claimed.get("fingerprint") == fingerprint and claimed.get("status") == "sent":
+                return {"changed": False, "for_date": day.isoformat()}
+            return {"busy": True, "for_date": day.isoformat()}
+
+    try:
+        while claimed["status"] == "deleting" and claimed["next_delete"] < len(claimed["old_message_ids"]):
+            message_id = claimed["old_message_ids"][claimed["next_delete"]]
+            result = await telegram.request("deleteMessage", {
+                "chat_id": settings.telegram_chat_id, "message_id": message_id,
+            })
+            description = result.get("description", "").casefold()
+            if not result.get("ok") and "message to delete not found" not in description:
+                raise RuntimeError("Telegram could not delete the previous agenda message.")
+            claimed = db.mutate_task_action_state(key, lambda old: {
+                **old, "next_delete": old["next_delete"] + 1,
+            } if old and old.get("claim") == claim else old)
+            if not claimed or claimed.get("claim") != claim:
+                raise RuntimeError("Today's agenda delivery claim changed; inspect before retrying.")
+        if claimed["status"] == "deleting":
+            claimed = db.mutate_task_action_state(key, lambda old: {
+                **old, "status": "sending",
+            } if old and old.get("claim") == claim else old)
+
+        while claimed["next_send"] < len(claimed["parts"]):
+            result = await telegram.send_message(settings.telegram_chat_id,
+                claimed["parts"][claimed["next_send"]], parse_mode="HTML")
+            if not result.get("ok"):
+                raise RuntimeError("Today's agenda send was rejected and needs inspection.")
+            message = result.get("result") or {}
+            message_id = message.get("message_id")
+            if not isinstance(message_id, int):
+                raise RuntimeError("Today's agenda send needs inspection; Telegram returned no message ID.")
+            claimed = db.mutate_task_action_state(key, lambda old: {
+                **old, "message_ids": [*old["message_ids"], message_id],
+                "next_send": old["next_send"] + 1,
+            } if old and old.get("claim") == claim else old)
+            if not claimed or claimed.get("claim") != claim:
+                raise RuntimeError("Today's agenda delivery claim changed; inspect before retrying.")
+    except Exception:
+        # A timeout may mean Telegram accepted a send or delete. Keep the claim
+        # durable so the next poll cannot create duplicates or lose the receipt.
+        db.mutate_task_action_state(key, lambda old: {
+            **old, "status": "uncertain",
+        } if old and old.get("claim") == claim and old.get("status") != "uncertain" else old)
+        raise
+
+    db.mutate_task_action_state(key, lambda old: {
+        **old, "status": "sent", "claim": None,
+        "old_message_ids": [], "next_delete": 0, "next_send": 0,
+    } if old and old.get("claim") == claim else old)
+    return {"sent": len(parts), "changed": bool(state), "for_date": day.isoformat()}
