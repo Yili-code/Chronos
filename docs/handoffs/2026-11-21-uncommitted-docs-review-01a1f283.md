@@ -8,5 +8,7 @@
 - Validation: selected handoffs differ from `origin/main` only by final readback additions; two standalone reports already match `origin/main`, and six recent handoffs are older than their `origin/main` copies. `git diff --check` passes. The repository docs checker found three broken links in the unchanged local study-scenarios copy because this historical checkout lacks its targets; all three targets exist on `origin/main`. The selected handoffs contain no local links.
 - Implemented: removed unrelated local coordination detail from the event-content readback. Four separate English commits created: `305332a`, `3429aef`, `8c86d52`, and `5f8c76f`, one per handoff.
 - Validation: `git diff --check` passed. The selected records contain no local links. The repository-wide docs checker reports three missing links in the unchanged study-scenarios copy on this historical checkout; all targets exist on `origin/main`.
+- Updated: 2026-11-21T14:59:01+08:00 (Asia/Taipei).
+- Push: blocked by automatic approval review. It classified the four handoff updates as deployment/task evidence and required explicit approval to disclose the exact payload to the remote. No remote branch update occurred; no PR was opened. Do not retry through another path without the user's approval.
 - Not done: push, PR creation, merge, and deployment. All other local modifications and untracked records remain untouched.
-- Next: record this review in its own commit, push only the new commits on this branch, open a documentation-only PR against `main`, and verify its CI.
+- Next: obtain the user's explicit approval to publish these five local commits, then push and open the documentation-only PR; verify CI.
