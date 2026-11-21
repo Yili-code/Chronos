@@ -11,3 +11,5 @@
 - Candidate process: initial ee606d9 candidate chronos-00256-pac stayed at 0% and was never promoted. After user approved latest main, clean corrected candidate was verified at 0%, then promoted. Another chat had already promoted chronos-nightly-9f40980 during validation; preserved its configuration and used it as rollback reference.
 - Rollback: chronos-nightly-9f40980. Historical traffic tags preserved; no revision cleanup, credential rotation or historical-data repair.
 - Status: production deployment complete and verified. Publishing this evidence in a documentation-only PR. Existing unrelated local handoff edits remain excluded. No remaining runtime work for this request.
+
+- Publication readback 2026-10-23T15:15:49+08:00: evidence-only PR #9 passed CI 39916186215 and merged with expected-head guard. Production remains the verified application commit 14a9baa; this publication note is local.
