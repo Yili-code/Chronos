@@ -15,9 +15,9 @@ def read_button(callback_data):
     return {"inline_keyboard": [[{"text": "已讀", "callback_data": callback_data}]]}
 
 
-async def expire_after_read(telegram, chat_id, message_id, acknowledged_at):
+async def expire_after_read(telegram, chat_id, message_id, acknowledged_at, *, seconds=SECONDS):
     await telegram.track_delivery({"ok": True, "result": {"message_id": message_id}},
-        chat_id, requires_reply=False, deadline=acknowledged_at + SECONDS)
+        chat_id, requires_reply=False, deadline=acknowledged_at + seconds)
 
 # These controls offer optional navigation or reversal after an outcome, rather
 # than requesting a decision needed to complete the current operation.
