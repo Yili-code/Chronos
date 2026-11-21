@@ -28,7 +28,7 @@ async def acknowledge_no_new_notice(db, telegram, chat_id, key, message_id, now)
     clicked_at = now.timestamp()
     state = db.mutate_study_delivery(key, lambda old: {
         **old, "acknowledged_at": old.get("acknowledged_at", clicked_at)})
-    await expire_after_read(telegram, chat_id, message_id, state["acknowledged_at"])
+    await expire_after_read(telegram, chat_id, message_id, state["acknowledged_at"], seconds=3)
 
 
 def _eligible_first_scan(item, now: datetime) -> bool:
