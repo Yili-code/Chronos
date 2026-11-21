@@ -122,3 +122,75 @@ def test_preview_delete_failure_retries_cleanup_without_rebooking(system,monkeyp
     assert client.post('/telegram/webhook',headers=headers,json=payload).status_code==200
     assert handler.await_count==1
     assert bot.send_message.await_count==1
+
+
+@pytest.mark.parametrize('outcome', ['booked', 'cancelled', 'creating'])
+def test_event_request_cleanup_uses_real_webhook_id_only_after_success(system, monkeypatch, outcome):
+    from chronos.intents import Intent
+    client, tasks, bot, cfg = system
+    start = datetime.now(cfg.tz) + timedelta(days=3)
+    monkeypatch.setattr(main.ai, 'classify_intent', AsyncMock(return_value=Intent(
+        action='event_create', title='Operating Systems Midterm', event_category='exam',
+        start=start, minutes=175)))
+    bot.send_message.return_value = {'ok': True, 'result': {'message_id': 11}}
+    headers = {'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}
+    request = {'update_id': 90900, 'message': {'message_id': 60, 'chat': {'id': 123},
+               'text': '新增作業系統期中考'}}
+    assert client.post('/telegram/webhook', headers=headers, json=request).status_code == 200
+    assert not any(c.args[0] == 'deleteMessage' for c in bot.request.await_args_list)
+    markup = bot.send_message.await_args.kwargs['reply_markup']
+    token = markup['inline_keyboard'][0][0]['callback_data'].split(':')[-1]
+    state = main.db.get_task_action_state('free:booking:' + token)
+    assert state['request_message_id'] == 60 and state['message_id'] == 11
+    async def finish(*args):
+        main.db.mutate_task_action_state('free:booking:' + token, lambda old: {**old, 'status': outcome})
+        return 'Added to Calendar' if outcome == 'booked' else 'Nothing booked'
+    handler = AsyncMock(side_effect=finish)
+    monkeypatch.setattr(main, 'free_booking_callback', handler)
+    callback = {'update_id': 90901, 'callback_query': {'id': 'confirm',
+        'data': 'free:allow:' + token, 'message': {'message_id': 11, 'chat': {'id': 123}}}}
+    assert client.post('/telegram/webhook', headers=headers, json=callback).status_code == 200
+    deletions = [c.args[1]['message_id'] for c in bot.request.await_args_list if c.args[0] == 'deleteMessage']
+    assert deletions == ([11, 60] if outcome == 'booked' else [])
+    assert client.post('/telegram/webhook', headers=headers, json=callback).status_code == 200
+    assert handler.await_count == 1
+    assert bot.send_message.await_count == 2
+
+
+def test_request_cleanup_waits_for_confirmation_and_retries_without_rebooking(system, monkeypatch):
+    client, tasks, bot, cfg = system
+    token = 'e' * 32
+    key = 'free:booking:' + token
+    main.db.mutate_task_action_state(key, lambda old: {
+        'status': 'booked', 'chat_id': 123, 'message_id': 11, 'request_message_id': 60})
+    handler = AsyncMock(return_value='Added to Calendar')
+    monkeypatch.setattr(main, 'free_booking_callback', handler)
+    bot.send_message.side_effect = [{'ok': False}, {'ok': True}]
+    headers = {'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}
+    callback = {'update_id': 90902, 'callback_query': {'id': 'confirm',
+        'data': 'free:allow:' + token, 'message': {'message_id': 11, 'chat': {'id': 123}}}}
+    assert client.post('/telegram/webhook', headers=headers, json=callback).status_code == 502
+    assert not any(c.args[0] == 'deleteMessage' for c in bot.request.await_args_list)
+    bot.request.side_effect = [{'ok': True}, {'ok': False, 'error_code': 500}]
+    assert client.post('/telegram/webhook', headers=headers, json=callback).status_code == 502
+    bot.request.side_effect = None
+    bot.request.return_value = {'ok': False, 'error_code': 400,
+                                'description': 'Bad Request: message to delete not found'}
+    assert client.post('/telegram/webhook', headers=headers, json=callback).status_code == 200
+    assert handler.await_count == 1
+    assert bot.send_message.await_count == 2
+
+
+def test_request_binding_preserves_identity_and_chat_scope(store):
+    from chronos.free_booking import bind_booking_request
+    token = 'f' * 32
+    key = 'free:booking:' + token
+    store.mutate_task_action_state(key, lambda old: {'chat_id': 123, 'status': 'pending'})
+    receipt = {'messages': [{'free_booking': token}]}
+    bind_booking_request(store, 456, 90, receipt)
+    assert 'request_message_id' not in store.get_task_action_state(key)
+    bind_booking_request(store, 123, None, receipt)
+    assert 'request_message_id' not in store.get_task_action_state(key)
+    bind_booking_request(store, 123, 60, receipt)
+    bind_booking_request(store, 123, 61, receipt)
+    assert store.get_task_action_state(key)['request_message_id'] == 60

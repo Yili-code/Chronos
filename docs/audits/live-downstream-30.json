@@ -1,0 +1,344 @@
+{
+  "now": "2026-10-23T16:01:08+08:00",
+  "scope": "live downstream parsing only; no production writes",
+  "results": [
+    {
+      "id": 1,
+      "passed": true,
+      "output": [
+        {
+          "title": "Buy milk",
+          "due_at": null,
+          "timing": {}
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "passed": true,
+      "output": [
+        {
+          "title": "Complete software engineering report",
+          "due_at": null,
+          "timing": {
+            "source_text": "明天下午提醒我交軟體工程報告",
+            "uncertain": "明天下午"
+          }
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "passed": true,
+      "output": [
+        {
+          "title": "Review Chapter 3",
+          "due_at": null,
+          "timing": {}
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "passed": false,
+      "error": "next_friday"
+    },
+    {
+      "id": 5,
+      "passed": true,
+      "output": [
+        {
+          "title": "Study graph algorithms Chapter 4",
+          "due_at": null,
+          "timing": {}
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "passed": true,
+      "output": [
+        {
+          "title": "Review database Chapter 1",
+          "due_at": null,
+          "timing": {}
+        },
+        {
+          "title": "Review database Chapter 2",
+          "due_at": null,
+          "timing": {}
+        },
+        {
+          "title": "Review database Chapter 3",
+          "due_at": null,
+          "timing": {}
+        },
+        {
+          "title": "Review database Chapter 4",
+          "due_at": null,
+          "timing": {}
+        },
+        {
+          "title": "Review database Chapter 5",
+          "due_at": null,
+          "timing": {}
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "passed": true,
+      "output": [
+        {
+          "title": "Submit report",
+          "due_at": "2026-10-25T23:59:00+08:00",
+          "timing": {
+            "source_text": "週日晚上十一點五十九分前交報告"
+          }
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "passed": true,
+      "output": [
+        {
+          "title": "Send resume to the company",
+          "due_at": null,
+          "timing": {}
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "passed": true,
+      "output": [
+        {
+          "title": "Pay electricity bill",
+          "due_at": null,
+          "timing": {
+            "source_text": "新增繳電費的待辦，月底以前",
+            "content": "月底以前"
+          }
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "passed": true,
+      "output": [
+        {
+          "title": "Prepare for midterms",
+          "due_at": null,
+          "timing": {}
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "passed": true,
+      "output": {
+        "title": "Complete database final report",
+        "project": "database",
+        "due_at": "2026-11-06T17:00:00+08:00",
+        "timing": {
+          "content": "Write three pages"
+        }
+      }
+    },
+    {
+      "id": 12,
+      "passed": true,
+      "output": {
+        "title": "Complete database report",
+        "project": "database",
+        "due_at": "2026-11-13T17:00:00+08:00",
+        "timing": {
+          "source_text": "資料庫報告延到下週五截止",
+          "content": "Write three pages"
+        }
+      }
+    },
+    {
+      "id": 13,
+      "passed": true,
+      "output": {
+        "title": "Complete database report",
+        "project": "database",
+        "due_at": null,
+        "timing": {
+          "source_text": "資料庫報告取消截止時間",
+          "content": "Write three pages"
+        }
+      }
+    },
+    {
+      "id": 14,
+      "passed": true,
+      "output": {
+        "title": "Complete database report",
+        "project": "database",
+        "due_at": "2026-11-06T17:00:00+08:00",
+        "timing": {
+          "content": "Write three pages"
+        }
+      }
+    },
+    {
+      "id": 15,
+      "passed": false,
+      "error": "content_not_changed"
+    },
+    {
+      "id": 16,
+      "passed": false,
+      "error": "content_not_changed"
+    },
+    {
+      "id": 17,
+      "passed": true,
+      "output": {
+        "title": "Complete report",
+        "project": "database",
+        "due_at": "2026-11-06T17:00:00+08:00",
+        "timing": {
+          "content": "Write three pages"
+        }
+      }
+    },
+    {
+      "id": 18,
+      "passed": true,
+      "output": {
+        "title": "Complete database report",
+        "project": null,
+        "due_at": "2026-11-06T17:00:00+08:00",
+        "timing": {
+          "content": "Write three pages"
+        }
+      }
+    },
+    {
+      "id": 19,
+      "passed": true,
+      "output": {
+        "title": "Complete database report",
+        "project": "database",
+        "due_at": "2026-10-24T12:00:00+08:00",
+        "timing": {
+          "source_text": "資料庫報告的期限改成明天中午十二點",
+          "content": "Write three pages"
+        }
+      }
+    },
+    {
+      "id": 20,
+      "passed": false,
+      "error": "content_not_changed"
+    },
+    {
+      "id": 51,
+      "passed": true,
+      "output": {
+        "actionable": true,
+        "title": "打電話",
+        "start": "2026-10-24T15:00:00+08:00",
+        "kind": "call",
+        "minutes": null
+      }
+    },
+    {
+      "id": 52,
+      "passed": true,
+      "output": {
+        "actionable": true,
+        "title": "喝水",
+        "start": "2026-10-23T16:11:08+08:00",
+        "kind": "other",
+        "minutes": null
+      }
+    },
+    {
+      "id": 53,
+      "passed": true,
+      "output": {
+        "actionable": true,
+        "title": "帶雨傘",
+        "start": "2026-10-24T08:00:00+08:00",
+        "kind": "other",
+        "minutes": null
+      }
+    },
+    {
+      "id": 54,
+      "passed": true,
+      "output": {
+        "actionable": true,
+        "title": "提醒休息",
+        "start": "2026-10-23T21:00:00+08:00",
+        "kind": "other",
+        "minutes": null
+      }
+    },
+    {
+      "id": 55,
+      "passed": true,
+      "output": {
+        "actionable": true,
+        "title": "吃藥",
+        "start": "2026-10-24T12:00:00+08:00",
+        "kind": "other",
+        "minutes": null
+      }
+    },
+    {
+      "id": 56,
+      "passed": false,
+      "error": "reminder_not_actionable"
+    },
+    {
+      "id": 57,
+      "passed": true,
+      "output": {
+        "actionable": true,
+        "title": "站起來",
+        "start": "2026-10-23T17:01:08+08:00",
+        "kind": "other",
+        "minutes": null
+      }
+    },
+    {
+      "id": 58,
+      "passed": true,
+      "output": {
+        "actionable": true,
+        "title": "睡覺",
+        "start": "2026-10-24T22:00:00+08:00",
+        "kind": "other",
+        "minutes": null
+      }
+    },
+    {
+      "id": 59,
+      "passed": true,
+      "output": {
+        "actionable": true,
+        "title": "澆花",
+        "start": "2026-10-24T16:00:00+08:00",
+        "kind": "other",
+        "minutes": null
+      }
+    },
+    {
+      "id": 60,
+      "passed": true,
+      "output": {
+        "actionable": true,
+        "title": "帶證件",
+        "start": "2026-10-26T07:00:00+08:00",
+        "kind": "other",
+        "minutes": null
+      }
+    }
+  ]
+}

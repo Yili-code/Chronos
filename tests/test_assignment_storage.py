@@ -111,3 +111,16 @@ def test_invalid_deadline_does_not_mutate(db, command):
     db.create_assignment(item)
     assert "用法" in deadline_action(db, command)()
     assert db.get_assignment(item.key)["assignment"] == item
+
+
+@pytest.mark.parametrize("course_id,tag", [
+    ("189684", "DB"), ("189687", "CA"), ("189717", "ISPM"),
+    ("192072", "OS"), ("189756", "GA"), ("188571", "SE"), ("193842", "CP"),
+    ("unknown-course", None),
+])
+def test_assignment_uses_readable_tag_without_changing_identity(db, course_id, tag):
+    item = replace(sample(), course_id=course_id)
+    result = db.create_assignment(item)
+    task = db.get_task(result["task_id"])
+    assert task["project"] == tag
+    assert db.get_assignment(item.key)["assignment"].course_id == course_id

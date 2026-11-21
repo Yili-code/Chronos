@@ -17,16 +17,22 @@ class Settings(BaseSettings):
     telegram_chat_id: int | None = None
     public_base_url: str = ""
     scheduler_secret: str = ""
+    assignment_scan_job: str = Field(default="", pattern=r"^(?:[a-z][a-z0-9-]{0,62})?$")
+    assignment_scan_project: str = Field(default="", pattern=r"^(?:[a-z][a-z0-9-]{4,62})?$")
+    assignment_scan_region: str = Field(default="asia-east1", pattern=r"^[a-z]+-[a-z]+[0-9]$")
     enable_internal_scheduler: bool = True
     enable_study_tracking: bool = False
     enable_gmail: bool = False
     enable_learning_calendar: bool = False
+    learning_auto_accept: bool = True
     calendar_client_id: str = Field(default="", repr=False)
     calendar_client_secret: str = Field(default="", repr=False)
     calendar_refresh_token: str = Field(default="", repr=False)
     calendar_account: str = ""
     calendar_id: str = "primary"
     calendar_busy_ids: str = "primary"
+    google_maps_routes_api_key: str = ""
+    mail_event_default_origin: str = "奇浩聚會所"
     learning_enabled_since: str = ""
     learning_start_hour: int = Field(default=9, ge=0, le=20)
     learning_end_hour: int = Field(default=21, ge=1, le=24)
@@ -40,6 +46,7 @@ class Settings(BaseSettings):
     gmail_discard_account_security_after: int = Field(default=0, ge=0)
     gmail_keep_senders: str = ""  # Comma-separated exact addresses or @domains.
     gmail_max_messages: int = Field(default=100, ge=1, le=500)
+    gmail_first_layer_screening: bool = True
     database_path: Path = Path("chronos.db")
     database_backend: Literal["sqlite", "firestore"] = "sqlite"
     firestore_project_id: str = ""

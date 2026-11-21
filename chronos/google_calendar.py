@@ -1,5 +1,6 @@
 """Owner-only Calendar transport with deterministic event IDs and safe errors."""
 import asyncio
+from datetime import datetime, timezone
 import time
 from urllib.parse import quote
 
@@ -7,7 +8,15 @@ import httpx
 
 
 class CalendarError(RuntimeError):
-    pass
+    def __init__(self, message, status=None):
+        super().__init__(message)
+        self.status = status
+
+
+def validate_range(start, end):
+    if (start.utcoffset() is None or end.utcoffset() is None
+            or start.astimezone(timezone.utc) >= end.astimezone(timezone.utc)):
+        raise CalendarError('Calendar query needs a positive timezone-aware range.')
 
 
 class GoogleCalendar:
@@ -49,10 +58,12 @@ class GoogleCalendar:
             async with httpx.AsyncClient(timeout=25, transport=self.transport) as client:
                 r = await client.request(method, "https://www.googleapis.com/calendar/v3/" + path,
                     headers={"Authorization": "Bearer " + token, **({"If-Match": etag} if etag else {})}, json=body, params=params)
-            if missing and r.status_code == 404:
+            if missing and r.status_code in {404, 410}:
                 return None
             if not r.is_success:
-                raise CalendarError(f"Google Calendar request failed (HTTP {r.status_code}).")
+                raise CalendarError(f"Google Calendar request failed (HTTP {r.status_code}).", r.status_code)
+            if method == 'DELETE' and r.status_code == 204:
+                return {}
             return r.json()
         except (httpx.HTTPError, ValueError, TypeError):
             raise CalendarError("Google Calendar request failed; its outcome may need reconciliation.") from None
@@ -61,6 +72,7 @@ class GoogleCalendar:
         return "calendars/" + quote(self.settings.calendar_id, safe="") + "/events"
 
     async def busy(self, start, end):
+        validate_range(start, end)
         # Google may coalesce a primary email and the `primary` alias into one
         # response entry. Normalize before checking every requested calendar.
         ids = sorted({"primary" if value.strip().casefold() == self.settings.calendar_account.casefold()
@@ -70,29 +82,38 @@ class GoogleCalendar:
         data = await self.request("POST", "freeBusy", body={"timeMin": start.isoformat(),
             "timeMax": end.isoformat(), "timeZone": self.settings.timezone,
             "items": [{"id": value} for value in ids]})
-        calendars = data.get("calendars", {})
-        if any(value not in calendars or calendars[value].get("errors") for value in ids):
-            raise CalendarError("Some calendars could not be checked. No work block was scheduled.")
-        result = []
-        from datetime import datetime
-        for value in calendars.values():
-            for slot in value.get("busy", []):
-                result.append((datetime.fromisoformat(slot["start"].replace("Z", "+00:00")),
-                               datetime.fromisoformat(slot["end"].replace("Z", "+00:00"))))
-        return result
+        try:
+            calendars = data['calendars']
+            if not isinstance(calendars, dict) or not ids:
+                raise ValueError()
+            result = []
+            for calendar_id in ids:
+                value = calendars[calendar_id]
+                if value.get('errors') or not isinstance(value.get('busy'), list):
+                    raise ValueError()
+                for slot in value['busy']:
+                    begin, stop = (datetime.fromisoformat(slot[key].replace('Z', '+00:00'))
+                                   for key in ('start', 'end'))
+                    validate_range(begin, stop)
+                    result.append((begin, stop))
+            return result
+        except (KeyError, TypeError, AttributeError, ValueError, CalendarError):
+            raise CalendarError('Some calendars could not be checked. No work block was scheduled.') from None
 
     async def event(self, event_id):
         return await self.request("GET", self.events_path() + "/" + event_id, missing=True)
 
-    async def agenda(self, start, end):
+    async def agenda(self, start, end, *, deduplicate=True):
         """Read every expanded occurrence overlapping the bounded local day."""
+        validate_range(start, end)
         ids = sorted({"primary" if value.strip().casefold() == self.settings.calendar_account.casefold()
                       else value.strip() for value in
                       [self.settings.calendar_id, *self.settings.calendar_busy_ids.split(",")] if value.strip()})
         events, seen = [], set()
         for calendar_id in ids:
             page = None
-            while True:
+            pages = set()
+            for _ in range(40):
                 params = {"timeMin": start.isoformat(), "timeMax": end.isoformat(),
                           "timeZone": self.settings.timezone, "singleEvents": "true",
                           "orderBy": "startTime", "maxResults": 250}
@@ -105,13 +126,33 @@ class GoogleCalendar:
                            event.get("originalStartTime", event.get("start", {})).get("date"))
                     declined = any(a.get("self") and a.get("responseStatus") == "declined"
                                    for a in event.get("attendees", []))
-                    if event.get("status") != "cancelled" and not declined and key not in seen:
+                    if event.get("status") != "cancelled" and not declined and (not deduplicate or key not in seen):
                         events.append({**event, "_calendar_id": calendar_id})
                         seen.add(key)
                 page = data.get("nextPageToken")
                 if not page:
                     break
+                if not isinstance(page, str) or page in pages:
+                    raise CalendarError('Calendar pagination is inconsistent. No partial agenda was returned.')
+                pages.add(page)
+            else:
+                raise CalendarError('Too many Calendar events. Narrow the requested date range.')
         return events
+
+    async def search_events(self, query):
+        """Target the writable calendar, with explicit bounded pagination."""
+        events, page = [], None
+        for _ in range(4):
+            params = {"q": query, "singleEvents": "true", "orderBy": "startTime", "maxResults": 250}
+            if page:
+                params['pageToken'] = page
+            data = await self.request('GET', self.events_path(), params=params)
+            events.extend({**event, '_calendar_id': self.settings.calendar_id}
+                          for event in data.get('items', []) if event.get('status') != 'cancelled')
+            page = data.get('nextPageToken')
+            if not page:
+                return events
+        raise CalendarError('Too many matching Calendar events. Please narrow the group name; nothing changed.')
 
     async def move_event(self, event_id, body, etag):
         if not etag:
@@ -121,6 +162,53 @@ class GoogleCalendar:
 
     async def insert(self, body):
         return await self.request("POST", self.events_path(), body=body, params={"sendUpdates": "none"})
+
+    async def invite(self, body):
+        return await self.request("POST", self.events_path(), body=body, params={"sendUpdates": "all"})
+
+    async def invite_existing(self, event_id, body, etag):
+        if not etag:
+            raise CalendarError("Event version is missing; invitation paused.")
+        return await self.request("PATCH", self.events_path() + "/" + quote(event_id, safe=""),
+            body=body, params={"sendUpdates": "all"}, etag=etag)
+
+    async def cancel_invitation(self, event_id, etag):
+        if not etag:
+            raise CalendarError("Event version is missing; cancellation paused.")
+        return await self.request("DELETE", self.events_path() + "/" + quote(event_id, safe=""),
+            params={"sendUpdates": "all"}, etag=etag)
+
+    async def delete_event(self, event_id, etag):
+        if not etag:
+            raise CalendarError('Event version is missing; deletion paused.')
+        return await self.request('DELETE', self.events_path() + '/' + quote(event_id, safe=''),
+                                  params={'sendUpdates': 'none'}, etag=etag)
+
+    async def task_events(self, task_id):
+        """Find every managed session, including historical and distant bookings."""
+        return await self.property_events('chronosTask', str(task_id))
+
+    async def category_events(self, category, *, start=None, end=None):
+        return await self.property_events('chronosEventCategory', category, start=start, end=end)
+
+    async def property_events(self, name, value, *, start=None, end=None):
+        events, page = [], None
+        for _ in range(4):
+            params = {'privateExtendedProperty': name + '=' + value,
+                      'singleEvents': 'true', 'maxResults': 250}
+            if start:
+                params['timeMin'] = start.isoformat()
+            if end:
+                params['timeMax'] = end.isoformat()
+            if page:
+                params['pageToken'] = page
+            data = await self.request('GET', self.events_path(), params=params)
+            events.extend({**e, '_calendar_id': self.settings.calendar_id}
+                          for e in data.get('items', []) if e.get('status') != 'cancelled')
+            page = data.get('nextPageToken')
+            if not page:
+                return events
+        raise CalendarError('Too many managed sessions; narrow the rebuild scope before making changes.')
 
     async def verify_owner(self):
         data = await self.request("GET", "calendars/primary")

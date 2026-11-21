@@ -28,7 +28,7 @@ async def tick_announcements(db, telegram, chat_id, now, limit=10):
                 break
             attempted += 1
             try:
-                response = await telegram.send_message(chat_id, f'{part}\n\n公告 {index+1}/{len(parts)}')
+                response = await telegram.send_message(chat_id, f'{part}\n\n公告 {index+1}/{len(parts)}', requires_response=False)
             except TelegramError:
                 ledger.finish(key, claim, now)
                 break

@@ -16,6 +16,154 @@ from chronos import main
 NOW = datetime.fromisoformat("2026-10-19T09:00:00+08:00")
 
 
+@pytest.mark.parametrize("outcome", ["confirmed", "busy", "partial", "unavailable", "uncertain", "partial_uncertain", "single_partial"])
+def test_no_slot_can_split_within_original_window(setup, outcome):
+    from chronos.task_actions import task_fields
+
+    planner, task, calendar, _ = setup
+    planner.settings.learning_auto_accept = True
+    begin, end = NOW.replace(hour=13), NOW.replace(hour=17)
+    partial = outcome in {"partial", "partial_uncertain", "single_partial"}
+    if partial:
+        end -= timedelta(minutes=15)
+    state = {"status": "no_slot", "token": "a" * 32, "message_id": 50, "minutes": 180,
+             "snapshot": task_fields(task), "availability_search": {"scope": "requested_window",
+                 "start": begin.isoformat(), "end": end.isoformat()}}
+    planner.update(task["id"], lambda old: state)
+    planner.db.mutate_task_action_state("learning:proposal-queue", lambda old: {"active_task_id": task["id"]})
+    calendar.busy.return_value = [(begin + timedelta(hours=1), begin + timedelta(hours=2))]
+    if outcome == "unavailable":
+        calendar.busy.return_value = [(begin, end)]
+    if outcome == "single_partial":
+        calendar.busy.return_value = [(begin, begin + timedelta(hours=1))]
+    calendar.agenda.return_value = []
+    _, buttons = planner.proposal_content(task, state)
+    assert buttons[0]["text"] == "分次完成"
+    preview = asyncio.run(planner.callback("split", task["id"], state["token"], 50))
+    calendar.insert.assert_not_awaited()
+    message = preview["messages"][0]
+    button = message["reply_markup"]["inline_keyboard"][0][0]
+    if outcome == "unavailable":
+        assert "沒有可安排的空檔" in message["text"]
+        assert button["text"] == "Replan"
+        assert "split_draft" not in planner.get(task["id"])
+        return
+    booked = 165 if partial else 180
+    if outcome == "single_partial":
+        assert "14:00–16:45" in message["text"]
+    else:
+        assert "13:00–14:00" in message["text"]
+        assert ("15:00–16:45" if partial else "15:00–17:00") in message["text"]
+    if partial:
+        assert "165／180" in message["text"] and "剩下 15 分鐘待排" in message["text"]
+        assert button["text"] == "先排 165 分鐘"
+    else:
+        assert "合計 180 分鐘" in message["text"]
+        assert button["text"] == "確認分次安排"
+    confirm_token = button["callback_data"].rsplit(":", 1)[-1]
+    assert confirm_token != state["token"]
+    stale = asyncio.run(planner.callback("splitconfirm", task["id"], state["token"], 50))
+    assert "already been handled" in stale
+    calendar.insert.assert_not_awaited()
+    planner.update(task["id"], lambda old: {**old, "message_id": 51})
+    if outcome == "busy":
+        calendar.busy.return_value.append((begin, begin + timedelta(hours=1)))
+        reply = asyncio.run(planner.callback("splitconfirm", task["id"], confirm_token, 51))
+        assert "已變更" in reply
+        calendar.insert.assert_not_awaited()
+        assert planner.get(task["id"])["status"] == "no_slot"
+        return
+
+    events = {}
+    calendar.event.side_effect = lambda event_id: events.get(event_id)
+
+    async def insert(body):
+        events[body["id"]] = body
+        if outcome in {"uncertain", "partial_uncertain"} and len(events) == 1:
+            raise CalendarError("Uncertain insert")
+        return body
+
+    calendar.insert.side_effect = insert
+    reply = asyncio.run(planner.callback("splitconfirm", task["id"], confirm_token, 51))
+    if outcome in {"uncertain", "partial_uncertain"}:
+        assert "尚未完成" in reply
+        reply = asyncio.run(planner.callback("splitconfirm", task["id"], confirm_token, 51))
+    assert ("已安排 165 分鐘，剩下 15 分鐘待排" if partial else "已安排分次完成") in reply
+    assert calendar.insert.await_count == (1 if outcome == "single_partial" else 2)
+    calendar.delete_event.assert_not_awaited()
+    final = planner.get(task["id"])
+    assert final["status"] == "scheduled"
+    assert final["minutes"] + sum(s["minutes"] for s in final["reset_remaining_sessions"]) == booked
+    assert len(planner.db.list_open_tasks()) == 1
+    if partial:
+        from chronos.study_reset import advance_sessions
+
+        assert final["unplanned_minutes"] == 15
+        assert "剩下 15 分鐘待排" in planner.status(booked_only=True)
+        if final["reset_remaining_sessions"]:
+            before = planner.feedback(task, final["token"], "partial", 60, verified_booking=final)
+            assert "已安排的時段" in before
+            assert planner.get(task["id"]) == final
+            final = asyncio.run(advance_sessions(planner, task, final, end))
+        planner.feedback(task, final["token"], "partial", final["minutes"], verified_booking=final)
+        queued = planner.get(task["id"])
+        assert queued["status"] == "queued" and queued["requested_minutes"] == 15
+        assert [item["id"] for item in planner.db.list_open_tasks()] == [task["id"]]
+
+
+def test_batch_owner_duration_survives_sequential_approval_and_restart(setup):
+    planner, task, calendar, bot = setup
+    others = [planner.db.create_task(f'Lecture {i}', NOW + timedelta(days=3), None, NOW) for i in range(2)]
+    ids = [others[1]['id'], task['id'], others[0]['id']]
+    reply, queued = planner.request_proposals(ids, minutes=90)
+    assert queued and '90 minutes each' in reply
+    occupied = []
+    async def busy(*args):
+        return list(occupied)
+    calendar.busy.side_effect = busy
+    planner = LearningCalendar(planner.db, calendar, bot, planner.settings)
+    for index, task_id in enumerate(ids):
+        asyncio.run(planner.tick(NOW))
+        state = planner.get(task_id)
+        assert state['status'] == 'proposed'
+        assert state['minutes'] == 90 and state['duration_source'] == 'owner'
+        assert calendar.insert.await_count == index
+        start, end = (datetime.fromisoformat(state[k]) for k in ('start', 'end'))
+        assert end - start == timedelta(minutes=90)
+        assert all(end <= a or start >= b for a, b in occupied)
+        asyncio.run(planner.callback('approve', task_id, state['token'], 50))
+        assert planner.get(task_id)['status'] == 'scheduled'
+        assert calendar.insert.await_count == index + 1
+        occupied.append((start, end))
+    assert [int(call.args[0]['extendedProperties']['private']['chronosTask'])
+        for call in calendar.insert.await_args_list] == ids
+
+
+@pytest.mark.parametrize('status', ['scheduled', 'awaiting_feedback', 'creating', 'backward_managed'])
+def test_batch_rejects_ineligible_member_without_changing_other_plans(setup, status):
+    planner, task, calendar, _ = setup
+    other = planner.db.create_task('Other', None, None, NOW)
+    planner.update(task['id'], lambda _: {'status': 'proposed', 'token': 'original', 'minutes': 30})
+    planner.update(other['id'], lambda _: {'status': status, 'token': 'blocked'})
+    before = [planner.get(i) for i in (task['id'], other['id'])]
+    _, queued = planner.request_proposals([task['id'], other['id']], minutes=90)
+    assert not queued
+    assert [planner.get(i) for i in (task['id'], other['id'])] == before
+    assert planner.db.get_task_action_state('learning:proposal-queue') is None
+    calendar.insert.assert_not_awaited()
+
+
+def test_batch_retires_old_proposal_and_cannot_approve_stale_token(setup):
+    planner, task, calendar, _ = setup
+    asyncio.run(planner.tick(NOW))
+    old = planner.get(task['id'])
+    other = planner.db.create_task('Other', None, None, NOW)
+    planner.request_proposals([other['id'], task['id']], minutes=90)
+    asyncio.run(planner.callback('approve', task['id'], old['token'], 50))
+    calendar.insert.assert_not_awaited()
+    assert planner.get(task['id'])['requested_minutes'] == 90
+
+
 def test_plan_groups_pending_work_and_separates_booked_tasks(setup):
     planner, task, _, _ = setup
     other = planner.db.create_task('Remaining chapter', None, None, NOW)
@@ -38,7 +186,7 @@ def test_partial_report_closes_old_task_and_creates_one_successor(setup):
     planner.update(task['id'], lambda old: {
         'status': 'awaiting_feedback', 'token': 'handoff', 'snapshot': task_fields(task)})
     reply = planner.partial_reply(task['id'], 'handoff', '135 | 20/48 | 21')
-    assert 'Recorded' in reply
+    assert '已記下這次' in reply
     assert planner.db.get_task(task['id'])['status'] == 'done'
     successor = planner.db.list_open_tasks()[0]
     assert 'Continue pages 21–48' in successor['title']
@@ -60,7 +208,7 @@ def setup(request, tmp_path, monkeypatch):
     monkeypatch.setattr(module, "datetime", Clock)
     db = firestore_database(monkeypatch) if request.param == "firestore" else Database(tmp_path / "plans.db")
     db.initialize()
-    config = Settings(_env_file=None, enable_learning_calendar=True, learning_enabled_since=NOW.isoformat(),
+    config = Settings(_env_file=None, enable_learning_calendar=True, learning_auto_accept=False, learning_enabled_since=NOW.isoformat(),
         telegram_chat_id=123, calendar_account="owner@example.com")
     calendar = AsyncMock()
     calendar.configured = lambda: True
@@ -98,7 +246,8 @@ def test_manual_feedback_verifies_booking_without_waiting_for_tick(setup, case):
     reply = action()
     current = planner.get(task['id'])
     if case == 'ended':
-        assert reply.startswith('Recorded.')
+        assert 'learning_recovery' in reply['messages'][0]
+        assert current['status'] == 'awaiting_resolution'
         assert current['feedback']['outcome'] == 'skipped'
         assert 'already been handled' in action()
     else:
@@ -190,7 +339,7 @@ def test_deadline_plan_button_prepares_and_displays_proposal(system, monkeypatch
 
     assert response.status_code == 200
     assert "is next" in bot.send_message.await_args_list[-2].args[1]
-    assert "<b>Execution plan</b>" in bot.send_message.await_args_list[-1].args[1]
+    assert "<b>Your proposed work session, Sir.</b>" in bot.send_message.await_args_list[-1].args[1]
     buttons = bot.send_message.await_args_list[-1].kwargs["reply_markup"]["inline_keyboard"]
     assert [button["text"] for row in buttons for button in row] == [
         "Confirm schedule", "Adjust plan", "Defer"]
@@ -249,7 +398,7 @@ def test_ended_event_follows_up_once_and_feedback_is_durable(setup):
     asyncio.run(planner.tick(end + timedelta(minutes=6)))
     assert bot.send_message.await_count == 2
     assert planner.get(task["id"])["status"] == "awaiting_feedback"
-    assert "Completed" in planner.feedback(task, state["token"], "done", 60, "Finished faster")
+    assert "已記下這次完成" in planner.feedback(task, state["token"], "done", 60, "Finished faster")
     assert "already" in planner.feedback(task, state["token"], "done", 60)
     assert planner.db.list_open_tasks() == []
     profile = planner.db.get_task_action_state("learning:profile")
@@ -278,7 +427,7 @@ def test_no_slot_and_calendar_error_do_not_silently_book(setup):
     calendar.busy.return_value = [(NOW, NOW + timedelta(days=7))]
     asyncio.run(planner.tick(NOW))
     assert planner.get(task["id"])["status"] == "no_slot"
-    assert "No viable execution window" in bot.send_message.await_args.args[1]
+    assert "I could not find a suitable work session, Sir." in bot.send_message.await_args.args[1]
     calendar.insert.assert_not_awaited()
 
 
@@ -423,7 +572,8 @@ def test_edit_replaces_card_and_requires_fresh_approval(setup):
     assert "10/19 (Mon)" in text
     assert [b["text"] for b in buttons] == ["Confirm schedule", "Adjust plan", "Defer"]
     prompt = asyncio.run(planner.callback("edit", task["id"], old["token"], 50))
-    assert len(prompt["messages"][0]["reply_markup"]["inline_keyboard"]) == 8
+    rows = prompt["messages"][0]["reply_markup"]["inline_keyboard"]
+    assert sum(not row[0]["callback_data"].startswith("learn:day") for row in rows) == 8
     prompt = asyncio.run(planner.callback("manual", task["id"], old["token"], 50))
     assert prompt["messages"][0]["reply_markup"]["force_reply"]
     assert "no longer available" in asyncio.run(planner.callback("approve", task["id"], old["token"], 50))
@@ -1055,15 +1205,13 @@ def test_feedback_card_combines_time_and_duration_and_explains_input(setup):
     planner.update(task['id'], lambda old: state)
     asyncio.run(planner.deliver_feedback(task, state))
     text = bot.send_message.await_args.args[1]
-    assert '10/19 (Mon) 09:00 · 10 minutes planned' in text
-    assert '\nWhen ' not in text and '\nPlanned ' not in text
-    assert '[reason]' not in text
-    assert f'<code>/taskupdate {task["id"]} 15 done</code>' in text
-    assert 'What is the outcome? Choose below.' in text
-    assert 'For 15 minutes completed' in text
-    assert not any('\u4e00' <= char <= '\u9fff' for char in text)
+    assert '原訂 10/19 (Mon) 09:00–09:10' in text
+    assert '目前進度到哪裡了？' in text
+    assert '/taskupdate' not in text and 'Sir' not in text
+    assert [b['text'] for row in bot.send_message.await_args.kwargs['reply_markup']['inline_keyboard'] for b in row] == ['已完成', '完成一部分', '還沒開始']
     assert len(text.splitlines()) <= 9
     assert '\n\n' in text
+
 
 
 @pytest.mark.parametrize('timing', ['soon', 'keep', 'exact'])
@@ -1213,14 +1361,14 @@ def test_partial_pages_close_task_and_estimate_successor_remaining(setup):
     state = planner.get(task['id'])
     planner.update(task['id'], lambda old: {**old, 'status': 'awaiting_feedback'})
     reply = planner.partial_reply(task['id'], state['token'], '135 | 20/48 | 21')
-    assert 'Recorded' in reply
+    assert '已記下這次' in reply
     saved = planner.get(task['id'])
     assert saved['feedback']['actual_minutes'] == 135
     assert saved['progress']['next_page'] == 21
     assert saved['requested_minutes'] == 180
     assert saved['status'] == 'finished'
     assert planner.get(saved['successor_task_id'])['status'] == 'queued'
-    assert 'no longer open' in planner.partial_reply(task['id'], state['token'], '135 | 20/48 | 21')
+    assert '任務已經結束' in planner.partial_reply(task['id'], state['token'], '135 | 20/48 | 21')
     calendar.insert.assert_not_awaited()
 
 
@@ -1379,7 +1527,7 @@ def test_partial_feedback_replies_stay_in_feedback_flow(system, setup, monkeypat
         'message': {'message_id': 50, 'chat': {'id': 123}}}}
     assert client.post('/telegram/webhook', json=payload, headers=headers).status_code == 200
     assert main.db.get_task_action_state('learning:edit-chat:123')['mode'] == 'feedback'
-    for offset, text in enumerate(['invalid report', '135 | 20/48 | 21']):
+    for offset, text in enumerate(['兩小時', '第20頁，總共48頁']):
         assert client.post('/telegram/webhook', headers=headers, json={
             'update_id': 99901 + offset, 'message': {'message_id': 99901 + offset,
                 'chat': {'id': 123}, 'text': text}}).status_code == 200
@@ -1440,6 +1588,7 @@ def test_booked_edit_bypasses_other_proposal_and_preserves_progress(setup):
     other = planner.db.create_task('Other proposal', None, None, NOW)
     planner.update(other['id'], lambda old: {'status': 'proposed', 'token': 'other'})
     event = {'id': 'existing', 'etag': 'v1', '_calendar_id': planner.settings.calendar_id,
+             'creator': {'email': planner.settings.calendar_account}, 'organizer': {'self': True},
              'start': {'dateTime': state['start']}, 'end': {'dateTime': state['end']},
              'extendedProperties': {'private': {'chronosTask': str(task['id']), 'chronosToken': 'booked'}}}
     calendar.event.return_value = event
@@ -1447,6 +1596,12 @@ def test_booked_edit_bypasses_other_proposal_and_preserves_progress(setup):
     planner.ai = SimpleNamespace(parse_schedule_edit=AsyncMock(return_value=SimpleNamespace(
         actionable=True, timing='exact', start='2026-10-19T14:30:00+08:00', minutes=30,
         progress_note='Partly completed')))
+    async def move(event_id, body, etag):
+        assert event_id == event['id'] and etag == event['etag']
+        event.update(body)
+        event['etag'] = 'v2'
+        return event
+    calendar.move_event.side_effect = move
     reply = asyncio.run(planner.revise(task['id'], 'booked', '今天兩點半 已完成部分', NOW))
     assert 'updated' in reply
     assert planner.get(task['id'])['progress_note'] == 'Partly completed'
@@ -1465,6 +1620,63 @@ def test_booked_edit_bypasses_other_proposal_and_preserves_progress(setup):
     calendar.move_event.assert_not_awaited()
 
 
+@pytest.mark.parametrize("outcome", ["confirmed", "changed", "write_conflict", "expired"])
+def test_shortening_drifted_booking_requires_the_live_version(setup, outcome):
+    from types import SimpleNamespace
+    from chronos.task_actions import task_fields
+
+    planner, task, calendar, _ = setup
+    saved_start = NOW.replace(hour=13, minute=15)
+    live_start = saved_start + timedelta(days=2)
+    state = {"status": "scheduled", "token": "booked", "event_id": "existing",
+             "start": saved_start.isoformat(), "end": (saved_start + timedelta(hours=2)).isoformat(),
+             "minutes": 120, "snapshot": task_fields(task)}
+    planner.update(task["id"], lambda old: state)
+    planner.db.mutate_task_action_state("learning:day:2026-10-19", lambda old: {"booked": 120})
+    event = {"id": "existing", "etag": "v1", "creator": {"email": planner.settings.calendar_account},
+             "organizer": {"self": True}, "start": {"dateTime": live_start.isoformat()},
+             "end": {"dateTime": (live_start + timedelta(minutes=105)).isoformat()},
+             "extendedProperties": {"private": {"chronosTask": str(task["id"]), "chronosToken": "booked"}}}
+    calendar.event.return_value = event
+    planner.ai = SimpleNamespace(parse_schedule_edit=AsyncMock(return_value=SimpleNamespace(
+        actionable=True, timing="keep", minutes=30, progress_note="")))
+
+    async def move(event_id, body, etag):
+        assert event_id == "existing" and etag == "v1"
+        if outcome == "write_conflict":
+            raise CalendarError("version changed", 412)
+        event.update(body, etag="v2")
+        return event
+
+    calendar.move_event.side_effect = move
+    preview = asyncio.run(planner.revise(task["id"], "booked", "改成半小時，開始時間維持", NOW))
+    message = preview["messages"][0]
+    assert "10/19 13:15" in message["text"] and "10/21 13:15" in message["text"]
+    assert "13:45" in message["text"]
+    assert planner.ai.parse_schedule_edit.await_args.args[2]["start"] == live_start.isoformat()
+    calendar.move_event.assert_not_awaited()
+    review_id = message["reply_markup"]["inline_keyboard"][0][0]["callback_data"].rsplit(":", 1)[1]
+    if outcome == "changed":
+        event["etag"] = "v2"
+    now = NOW + timedelta(minutes=16) if outcome == "expired" else NOW
+    reply = asyncio.run(planner.revise(task["id"], "booked", "drift:" + review_id, now, review_id=review_id))
+    current = planner.get(task["id"])
+    if outcome == "confirmed":
+        assert "updated" in reply
+        assert current["start"] == live_start.isoformat()
+        assert current["end"] == (live_start + timedelta(minutes=30)).isoformat()
+        assert planner.db.get_task_action_state("learning:day:2026-10-19") == {}
+        assert planner.db.get_task_action_state("learning:day:2026-10-21") == {"booked": 30}
+        calendar.move_event.assert_awaited_once()
+        assert "drift_review" not in current
+    else:
+        assert "重新提出" in reply
+        assert current["start"] == saved_start.isoformat()
+        assert calendar.move_event.await_count == int(outcome == "write_conflict")
+        assert "pending_reschedule" not in current
+    calendar.agenda.assert_not_awaited()
+
+
 def test_booked_edit_recovers_uncertain_calendar_write(setup):
     from chronos.task_actions import task_fields
     planner, task, calendar, _ = setup
@@ -1474,6 +1686,7 @@ def test_booked_edit_recovers_uncertain_calendar_write(setup):
              'minutes': 60, 'snapshot': task_fields(task)}
     planner.update(task['id'], lambda old: state)
     event = {'id': 'existing', 'etag': 'v1', '_calendar_id': planner.settings.calendar_id,
+             'creator': {'email': planner.settings.calendar_account}, 'organizer': {'self': True},
              'start': {'dateTime': state['start']}, 'end': {'dateTime': state['end']},
              'extendedProperties': {'private': {'chronosTask': str(task['id']), 'chronosToken': 'booked'}}}
     calendar.event.return_value = event
@@ -1553,3 +1766,431 @@ def test_checkins_run_after_cutoff_without_new_proposals(setup, finish):
     assert bot.send_message.await_count == 2
     assert planner.get(queued['id']) is None
     calendar.insert.assert_awaited_once()
+
+
+@pytest.mark.parametrize('free_minutes,visible', [(89, False), (90, True), (91, True)])
+def test_date_options_require_continuous_duration(setup, free_minutes, visible):
+    planner, task, calendar, _ = setup
+    asyncio.run(planner.tick(NOW))
+    state = planner.get(task['id'])
+    state.update(minutes=90)
+    day = (NOW + timedelta(days=1)).replace(hour=9)
+    # Remove class load to isolate the exact-duration boundary.
+    planner.db.mutate_task_action_state('learning:course-calendar-policy', lambda old: {
+        'first_day': '2026-01-01', 'last_regular_day': '2026-12-31',
+        'excluded_dates': [(NOW + timedelta(days=i)).date().isoformat() for i in range(1, 4)]})
+    calendar.busy.return_value = [(day + timedelta(minutes=free_minutes), day.replace(hour=23))]
+    menu = asyncio.run(planner.dated_edit_menu(task['id'], state, NOW))
+    labels = [row[0]['text'] for row in menu['messages'][0]['reply_markup']['inline_keyboard']]
+    assert ('10/20 (Tue)' in labels) is visible
+    calendar.insert.assert_not_awaited()
+
+
+def test_date_callback_rechecks_busy_calendar_without_booking(setup):
+    planner, task, calendar, _ = setup
+    asyncio.run(planner.tick(NOW))
+    state = planner.update(task['id'], lambda old: {**old, 'status': 'editing', 'edit_message_id': 60})
+    tomorrow = (NOW + timedelta(days=1)).replace(hour=0)
+    calendar.busy.return_value = [(tomorrow, tomorrow + timedelta(days=1))]
+    reply = asyncio.run(planner.callback('day20261020', task['id'], state['token'], 60))
+    assert 'No continuous' in reply
+    assert planner.get(task['id'])['token'] == state['token']
+    calendar.insert.assert_not_awaited()
+
+
+def test_updated_notice_is_deleted_after_fifteen_seconds(system, monkeypatch):
+    _, service, telegram, _ = system
+    monkeypatch.setattr(main, 'telegram', telegram)
+    pause = AsyncMock()
+    monkeypatch.setattr(main.asyncio, 'sleep', pause)
+    telegram.send_message.return_value = {'ok': True, 'result': {'message_id': 987}}
+    telegram.request.return_value = {'ok': True}
+    receipt = {'delivered': False, 'reply': 'Updated. Review the new execution plan and press Confirm schedule to book it.'}
+    from test_system import observe_message_lifecycle
+    observe_message_lifecycle(telegram, delay=pause)
+    async def deliver_and_drain():
+        await main.deliver_learning_reply(123, 1234567, receipt)
+        await telegram.flush_expirations()
+    asyncio.run(deliver_and_drain())
+    pause.assert_awaited_once()
+    assert 0 <= pause.await_args.args[0] <= 15
+    telegram.request.assert_awaited_with('deleteMessage', {'chat_id': 123, 'message_id': 987})
+
+
+def test_owner_task_effort_drives_proposal_without_ai_estimate(setup):
+    planner, task, calendar, _ = setup
+    from chronos.tasks import TaskService
+    TaskService(planner.db, planner.settings.tz).edit(task['id'], task['title'], datetime.fromisoformat(task['due_at']), task['project'],
+                           {"estimated_minutes": 120})
+    planner.ai = AsyncMock()
+    asyncio.run(planner.tick(NOW))
+    state = planner.get(task['id'])
+    assert state['minutes'] == 120 and state['duration_source'] == 'owner'
+    planner.ai.estimate_duration.assert_not_awaited()
+    calendar.insert.assert_not_awaited()
+
+
+@pytest.mark.parametrize('finish', ['approve', 'postpone', 'reject'])
+def test_explicit_batch_continues_after_quiet_hours_without_forcing_tick(setup, finish):
+    planner, task, calendar, bot = setup
+    late = NOW.replace(hour=21, minute=25)
+    other = planner.db.create_task('Next requested chapter', NOW + timedelta(days=3), None, NOW)
+    unrelated = planner.db.create_task('Automatic backlog', None, None, NOW)
+    planner.update(unrelated['id'], lambda old: {'status': 'queued', 'requested_minutes': 30})
+    ids = [task['id'], other['id']]
+    planner.request_proposals(ids, minutes=90, immediate=True)
+    asyncio.run(planner.tick(late, force_proposal=True))
+    first = planner.get(task['id'])
+    assert first['status'] == 'proposed'
+    asyncio.run(planner.callback(finish, task['id'], first['token'], 50))
+    # New service instance models process restart / the next scheduler invocation.
+    planner = LearningCalendar(planner.db, calendar, bot, planner.settings)
+    asyncio.run(planner.tick(late))
+    state = planner.get(other['id'])
+    assert state['status'] == 'proposed' and state['delivery'] == 'proposal_sent'
+    assert state['minutes'] == 90 and state['duration_source'] == 'owner'
+    assert datetime.fromisoformat(state['start']).date() > late.date()
+    assert calendar.insert.await_count == int(finish == 'approve')
+    # Repeated ticks do not replay an already-delivered preview or book it.
+    count = bot.send_message.await_count
+    asyncio.run(planner.tick(late))
+    assert bot.send_message.await_count == count
+    asyncio.run(planner.callback('reject', other['id'], state['token'], 50))
+    result = asyncio.run(planner.tick(late))
+    assert result['quiet_hours'] is True
+    assert planner.get(unrelated['id'])['status'] == 'queued'
+    assert calendar.insert.await_count == int(finish == 'approve')
+
+
+def test_quiet_hours_preserve_automatic_backlog_without_owner_request(setup):
+    planner, task, calendar, bot = setup
+    planner.update(task['id'], lambda old: {'status': 'queued', 'requested_minutes': 90})
+    result = asyncio.run(planner.tick(NOW.replace(hour=21, minute=25)))
+    assert result['quiet_hours'] is True
+    assert planner.get(task['id'])['status'] == 'queued'
+    bot.send_message.assert_not_awaited()
+    calendar.insert.assert_not_awaited()
+
+
+
+def test_quiet_batch_recovers_rejected_delivery_without_regenerating_plan(setup):
+    planner, task, calendar, bot = setup
+    late = NOW.replace(hour=22)
+    planner.request_proposals([task['id']], minutes=90, immediate=True)
+    bot.send_message.return_value = {'ok': False}
+    with pytest.raises(CalendarError, match='will be retried'):
+        asyncio.run(planner.tick(late))
+    pending = planner.get(task['id'])
+    assert pending['status'] == 'proposed' and pending['delivery'] == 'proposal_pending'
+    bot.send_message.return_value = {'ok': True, 'result': {'message_id': 50}}
+    planner = LearningCalendar(planner.db, calendar, bot, planner.settings)
+    asyncio.run(planner.tick(late))
+    sent = planner.get(task['id'])
+    assert sent['token'] == pending['token'] and sent['start'] == pending['start']
+    assert sent['delivery'] == 'proposal_sent'
+    calendar.insert.assert_not_awaited()
+
+
+def test_replacing_explicit_batch_does_not_resume_old_members_at_night(setup):
+    planner, task, calendar, bot = setup
+    late = NOW.replace(hour=22)
+    other = planner.db.create_task('Replacement request', None, None, NOW)
+    planner.request_proposals([task['id']], minutes=90, immediate=True)
+    planner.request_proposals([other['id']], minutes=30, immediate=True)
+    asyncio.run(planner.tick(late))
+    state = planner.get(other['id'])
+    assert state['status'] == 'proposed' and state['minutes'] == 30
+    assert planner.get(task['id'])['status'] == 'queued'
+    asyncio.run(planner.callback('reject', other['id'], state['token'], 50))
+    result = asyncio.run(planner.tick(late))
+    assert result['quiet_hours'] is True
+    assert planner.get(task['id'])['status'] == 'queued'
+    calendar.insert.assert_not_awaited()
+
+
+def test_compact_plan_overview_and_pagination_are_read_only(setup):
+    from chronos.plan_overview import view
+    planner, task, calendar, bot = setup
+    states = ['needs_replan', 'queued', 'queued', 'queued', 'queued',
+              'postponed', 'scheduled', 'proposed', 'editing', 'awaiting_feedback']
+    records = [task] + [planner.db.create_task(f'Work <{i}>', None, None, NOW)
+                        for i in range(len(states) - 1)]
+    for record, status in zip(records, states):
+        planner.update(record['id'], lambda old, status=status: {'status': status})
+    before = [planner.get(record['id']) for record in records]
+    summary = view(planner)
+    assert '5 to arrange · 1 deferred · 1 scheduled' in summary['text']
+    assert '3 awaiting your response' in summary['text']
+    assert 'Commands' not in summary['text'] and '/planedit' not in summary['text']
+    choices = [b for row in summary['reply_markup']['inline_keyboard'] for b in row
+               if b['callback_data'].startswith('task:plan:')]
+    assert len(choices) == 2
+    assert {b['callback_data'] for b in choices} == {
+        f"task:plan:{record['id']}" for record in records[:2]}
+    first, last = view(planner, 'all'), view(planner, 'all', 999999)
+    assert first['text'].count('<b>') == 7
+    assert last['text'].count('<b>') == 5
+    assert 'Work &lt;' in first['text']
+    assert 'Awaiting approval' in last['text']
+    assert 'Scheduled' in view(planner, 'scheduled')['text']
+    assert [planner.get(record['id']) for record in records] == before
+    calendar.insert.assert_not_awaited()
+    bot.send_message.assert_not_awaited()
+
+
+def test_plan_navigation_uses_saved_receipts_without_generation(system, monkeypatch):
+    client, service, bot, config = system
+    config.enable_learning_calendar = True
+    task = service.create('Arrange this')
+    planner = main.learning_calendar()
+    planner.update(task['id'], lambda old: {'status': 'queued'})
+    monkeypatch.setattr(main, 'learning_calendar', lambda: planner)
+    headers = {'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}
+    payload = {'update_id': 998991, 'message': {'message_id': 70,
+               'chat': {'id': 123}, 'text': '/plan'}}
+    assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 200
+    assert bot.send_message.await_count == 1
+    assert 'to arrange' in bot.send_message.await_args.args[1]
+    navigation = {'update_id': 998992, 'callback_query': {'id': 'overview',
+                  'data': 'planview:all:0', 'from': {'id': 123},
+                  'message': {'message_id': 71, 'chat': {'id': 123}}}}
+    assert client.post('/telegram/webhook', headers=headers, json=navigation).status_code == 200
+    assert client.post('/telegram/webhook', headers=headers, json=navigation).status_code == 200
+    assert bot.send_message.await_count == 2
+    assert 'Arrange this' in bot.send_message.await_args.args[1]
+    assert planner.get(task['id']) == {'status': 'queued'}
+    main.ai.estimate_duration.assert_not_awaited()
+
+
+@pytest.mark.parametrize('occupied', [False, True])
+def test_requested_window_survives_queue_restart_without_outside_fallback(setup, occupied):
+    planner, task, calendar, bot = setup
+    begin = (NOW + timedelta(days=1)).replace(hour=0)
+    stop = begin + timedelta(days=2)
+    reply, queued = planner.request_proposals([task['id']], minutes=30, window=(begin, stop))
+    assert queued
+    calendar.busy.return_value = [(begin, stop)] if occupied else []
+    planner = LearningCalendar(planner.db, calendar, bot, planner.settings)
+    asyncio.run(planner.tick(NOW))
+    state = planner.get(task['id'])
+    assert state['requested_window'] == {'start': begin.isoformat(), 'end': stop.isoformat()}
+    if occupied:
+        assert state['status'] == 'no_slot'
+        assert 'calendar_moves' not in state
+        assert 'within' in planner.proposal_content(task, state)[0]
+    else:
+        assert state['status'] == 'proposed'
+        assert begin <= datetime.fromisoformat(state['start']) < datetime.fromisoformat(state['end']) <= stop
+    calendar.insert.assert_not_awaited()
+
+
+def test_requested_window_validation_has_no_queue_side_effects(setup):
+    planner, task, calendar, _ = setup
+    with pytest.raises(ValueError):
+        planner.request_proposals([task['id']], window=(NOW, NOW-timedelta(days=1)))
+    assert planner.get(task['id']) is None
+    calendar.insert.assert_not_awaited()
+
+
+@pytest.mark.parametrize('text', ['讀了兩小時，到第20頁，下次從21頁開始', '專心120分鐘，讀到20/48頁，下次從21頁', '135 | 20/48 | 21'])
+def test_natural_partial_feedback_records_owner_time_and_next_page(setup, text):
+    from chronos.task_actions import task_fields
+    planner, task, calendar, _ = setup
+    planner.update(task['id'], lambda old: {'token': 'natural', 'status': 'awaiting_feedback', 'snapshot': task_fields(task)})
+    reply = planner.partial_reply(task['id'], 'natural', text)
+    state = planner.get(task['id'])
+    assert '下次從第 21 頁繼續' in reply
+    assert state['feedback']['actual_minutes'] == (135 if '135' in text else 120)
+    assert state['progress']['next_page'] == 21
+    successor = planner.get(state['successor_task_id'])
+    if '/48' not in text:
+        assert state['progress']['total_pages'] is None
+        assert 'requested_minutes' not in successor
+    calendar.insert.assert_not_awaited()
+
+
+def test_partial_answers_collect_only_missing_fields_and_survive_restart(setup):
+    from chronos.task_actions import task_fields
+    planner, task, calendar, bot = setup
+    planner.update(task['id'], lambda old: {'token': 'natural', 'status': 'awaiting_feedback', 'snapshot': task_fields(task)})
+    reply = planner.partial_reply(task['id'], 'natural', '兩小時')
+    assert '讀到第幾頁' in reply
+    assert planner.db.get_task(task['id'])['status'] == 'open'
+    planner = LearningCalendar(planner.db, calendar, bot, planner.settings)
+    reply = planner.partial_reply(task['id'], 'natural', '到第20頁，總共48頁')
+    assert '已記下' in reply
+    assert planner.get(task['id'])['feedback']['actual_minutes'] == 120
+    assert planner.get(task['id'])['progress']['total_pages'] == 48
+    assert len(planner.db.list_open_tasks()) == 1
+
+
+@pytest.mark.parametrize('text', ['預計兩小時，到第20頁', '總共兩小時包含休息30分鐘，到第20頁', '讀了兩小時，到第20頁，下次從25頁開始', '-20分鐘，到第20頁'])
+def test_ambiguous_or_invalid_reports_do_not_complete_task(setup, text):
+    from chronos.task_actions import task_fields
+    planner, task, calendar, _ = setup
+    planner.update(task['id'], lambda old: {'token': 'natural', 'status': 'awaiting_feedback', 'snapshot': task_fields(task)})
+    planner.partial_reply(task['id'], 'natural', text)
+    assert planner.db.get_task(task['id'])['status'] == 'open'
+    assert 'successor_task_id' not in planner.get(task['id'])
+    assert len(planner.db.list_open_tasks()) == 1
+    calendar.insert.assert_not_awaited()
+
+
+def test_cancel_partial_draft_keeps_task_open_and_clears_only_draft(system, setup, monkeypatch):
+    from chronos.task_actions import task_fields
+    client, tasks, bot, config = system
+    _, _, calendar, _ = setup
+    config.enable_learning_calendar = True
+    monkeypatch.setattr(main, 'google_calendar', calendar)
+    task = tasks.create('Chapter reading')
+    planner = main.learning_calendar()
+    planner.update(task['id'], lambda old: {'token': 'cancel-feedback', 'status': 'awaiting_feedback',
+        'snapshot': task_fields(task), 'partial_draft': {'minutes': 120}})
+    main.db.mutate_task_action_state('learning:edit-chat:123', lambda old: {'task_id': task['id'],
+        'token': 'cancel-feedback', 'mode': 'feedback',
+        'expires_at': (datetime.now(config.tz)+timedelta(hours=1)).isoformat()})
+    payload = {'update_id': 99980, 'message': {'message_id': 99980, 'chat': {'id': 123}, 'text': '/cancel'}}
+    assert client.post('/telegram/webhook', json=payload, headers={'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}).status_code == 200
+    assert '先不記錄這次進度' in bot.send_message.await_args.args[1]
+    assert planner.get(task['id'])['status'] == 'awaiting_feedback'
+    assert 'partial_draft' not in planner.get(task['id'])
+    assert len(tasks.list_open()) == 1
+    assert not main.db.get_task_action_state('learning:edit-chat:123')
+    calendar.insert.assert_not_awaited()
+
+
+def test_completion_button_never_reports_planned_minutes_as_actual(setup):
+    planner, task, calendar, _ = setup
+    asyncio.run(planner.tick(NOW))
+    state = planner.get(task['id'])
+    planner.update(task['id'], lambda old: {**old, 'status': 'awaiting_feedback'})
+    reply = asyncio.run(planner.callback('done', task['id'], state['token'], 50))
+    assert '已記下這次完成' in reply
+    assert planner.get(task['id'])['feedback']['actual_minutes'] is None
+    assert not planner.db.get_task_action_state('learning:profile')
+    assert not planner.db.list_open_tasks()
+    calendar.insert.assert_not_awaited()
+
+@pytest.mark.parametrize('split', [False, True])
+def test_question_feedback_records_counts_and_continues_remaining_work(setup, split):
+    from chronos.task_actions import task_fields
+    planner, task, calendar, bot = setup
+    planner.db.edit_task(task['id'], '七題練習', datetime.fromisoformat(task['due_at']), task['project'], task['timing'])
+    task = planner.db.get_task(task['id'])
+    planner.update(task['id'], lambda old: {'token': 'questions', 'status': 'awaiting_feedback', 'snapshot': task_fields(task)})
+    if split:
+        reply = planner.partial_reply(task['id'], 'questions', '三個小時')
+        assert '完成幾題' in reply and '頁' not in reply
+        planner = LearningCalendar(planner.db, calendar, bot, planner.settings)
+        reply = planner.partial_reply(task['id'], 'questions', '4/7')
+    else:
+        reply = planner.partial_reply(task['id'], 'questions', '三個小時完成4/7')
+    assert '4/7 題' in reply and '剩下 3 題' in reply and '頁' not in reply
+    state = planner.get(task['id'])
+    assert state['feedback']['actual_minutes'] == 180
+    assert state['progress'] == {'unit': 'questions', 'completed_questions': 4, 'total_questions': 7, 'session_questions': 4}
+    successor = planner.db.get_task(state['successor_task_id'])
+    assert '3 questions remaining' in successor['title']
+    assert planner.get(successor['id'])['requested_minutes'] == 135
+    assert len(planner.db.list_open_tasks()) == 1
+    planner.partial_reply(task['id'], 'questions', '4/7')
+    assert len(planner.db.list_open_tasks()) == 1
+    calendar.insert.assert_not_awaited()
+
+
+@pytest.mark.parametrize('text', ['三小時完成8/7題', '三小時完成7/7題', '三小時完成0/7題', '三小時完成4.5題，共七題'])
+def test_invalid_question_counts_do_not_create_successors(setup, text):
+    from chronos.task_actions import task_fields
+    planner, task, calendar, _ = setup
+    planner.update(task['id'], lambda old: {'token': 'questions', 'status': 'awaiting_feedback', 'snapshot': task_fields(task)})
+    planner.partial_reply(task['id'], 'questions', text)
+    assert 'successor_task_id' not in planner.get(task['id'])
+    assert len(planner.db.list_open_tasks()) == 1
+    calendar.insert.assert_not_awaited()
+
+
+def test_explicit_question_correction_reuses_saved_duration(setup):
+    from chronos.task_actions import task_fields
+    planner, task, calendar, _ = setup
+    planner.update(task['id'], lambda old: {'token': 'questions', 'status': 'awaiting_feedback', 'snapshot': task_fields(task), 'partial_draft': {'minutes': 180}})
+    reply = planner.partial_reply(task['id'], 'questions', '要解七題我完成了四題')
+    assert '剩下 3 題' in reply
+    assert planner.get(task['id'])['feedback']['actual_minutes'] == 180
+    calendar.insert.assert_not_awaited()
+
+@pytest.mark.parametrize('text', ['三小時完成4/7', '4/7'])
+def test_fraction_without_task_unit_records_generic_counts(setup, text):
+    from chronos.task_actions import task_fields
+    planner, task, calendar, _ = setup
+    planner.update(task['id'], lambda old: {'token': 'generic', 'status': 'awaiting_feedback', 'snapshot': task_fields(task), 'partial_draft': {'minutes': 180}})
+    reply = planner.partial_reply(task['id'], 'generic', text)
+    assert '4/7 項' in reply and '剩下 3 項' in reply and '頁' not in reply
+    assert planner.get(task['id'])['progress']['unit'] == 'items'
+    calendar.insert.assert_not_awaited()
+
+
+def test_question_feedback_webhook_preserves_duration_and_deduplicates(system, setup, monkeypatch):
+    from chronos.task_actions import task_fields
+    client, tasks, bot, config = system
+    _, _, calendar, _ = setup
+    config.enable_learning_calendar = True
+    monkeypatch.setattr(main, 'google_calendar', calendar)
+    task = tasks.create('七題練習')
+    planner = main.learning_calendar()
+    planner.update(task['id'], lambda old: {'token': 'questions-webhook', 'status': 'awaiting_feedback', 'snapshot': task_fields(task)})
+    main.db.mutate_task_action_state('learning:edit-chat:123', lambda old: {'task_id': task['id'],
+        'token': 'questions-webhook', 'mode': 'feedback',
+        'expires_at': (datetime.now(config.tz)+timedelta(hours=1)).isoformat()})
+    for index, text in enumerate(['三個小時', '4/7']):
+        payload = {'update_id': 99990 + index, 'message': {'message_id': 99990 + index, 'chat': {'id': 123}, 'text': text}}
+        assert client.post('/telegram/webhook', json=payload, headers={'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}).status_code == 200
+    assert '剩下 3 題' in bot.send_message.await_args.args[1]
+    assert planner.get(task['id'])['feedback']['actual_minutes'] == 180
+    assert not main.db.get_task_action_state('learning:edit-chat:123')
+    calls = bot.send_message.await_count
+    assert client.post('/telegram/webhook', json=payload, headers={'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}).status_code == 200
+    assert bot.send_message.await_count == calls
+    assert len(tasks.list_open()) == 1
+    calendar.insert.assert_not_awaited()
+
+
+@pytest.mark.parametrize('setup', ['sqlite', 'firestore'], indirect=True)
+@pytest.mark.parametrize(('reply_id', 'text', 'expected'), [
+    (50, '我已經完成這個任務了', 'Completed'),
+    (50, '我已完成部分', '請用卡片按鈕'),
+    (49, '我已經完成這個任務了', '這張卡片目前無法辨識'),
+])
+def test_no_slot_card_reply_uses_exact_task_binding(system, setup, monkeypatch, reply_id, text, expected):
+    from chronos.task_actions import task_fields
+    from chronos.tasks import TaskService
+
+    client, _, bot, config = system
+    planner, task, calendar, _ = setup
+    config.enable_learning_calendar = True
+    monkeypatch.setattr(main, 'db', planner.db)
+    monkeypatch.setattr(main, 'tasks', TaskService(planner.db, config.tz))
+    monkeypatch.setattr(main, 'google_calendar', calendar)
+    other = planner.db.create_task('Another open task', None, None, NOW)
+    original = {'status': 'no_slot', 'token': 'no-slot', 'delivery': 'proposal_sent',
+                'message_id': 50, 'snapshot': task_fields(task)}
+    planner.update(task['id'], lambda _: original)
+    planner.db.mutate_task_action_state('learning:proposal-queue', lambda _: {'active_task_id': task['id']})
+    payload = {'update_id': 200, 'message': {'message_id': 201, 'chat': {'id': 123},
+               'text': text, 'reply_to_message': {'message_id': reply_id}}}
+    headers = {'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}
+    for _ in range(2):
+        assert client.post('/telegram/webhook', json=payload, headers=headers).status_code == 200
+    assert bot.send_message.await_count == 1
+    assert expected in bot.send_message.await_args.args[1]
+    if expected == 'Completed':
+        state = planner.get(task['id'])
+        assert state['status'] == 'finished'
+        assert state['feedback']['actual_minutes'] is None
+        queue = planner.db.get_task_action_state('learning:proposal-queue')
+        assert queue['active_task_id'] is None and queue['retire_message_ids'] == [50]
+        assert [entry['id'] for entry in planner.db.list_open_tasks()] == [other['id']]
+    else:
+        assert planner.get(task['id']) == original
+        assert {entry['id'] for entry in planner.db.list_open_tasks()} == {task['id'], other['id']}
+    calendar.insert.assert_not_awaited()
+    calendar.patch.assert_not_awaited()

@@ -1,0 +1,14 @@
+{
+  "release": "27be4e07a29b582583b721a53c26f50c09f271b8",
+  "revision": "chronos-reset-fix-27be4e0",
+  "menu_verified": true,
+  "commands": [
+    "task",
+    "plan",
+    "today",
+    "tomorrow",
+    "free",
+    "info"
+  ],
+  "messages_sent": false
+}

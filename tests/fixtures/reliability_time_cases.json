@@ -1,0 +1,42 @@
+[
+  {
+    "id": "weekday-conflict",
+    "text": "明天（星期二）下午兩點，做一小時",
+    "expected": "clarify"
+  },
+  {
+    "id": "meridiem",
+    "text": "明天 5:00 PM 改成三十分鐘",
+    "expected": "blocked-meal",
+    "parsed_expected": "2026-10-26T17:00:00+08:00",
+    "minutes": 30
+  },
+  {
+    "id": "month-zone",
+    "text": "10/31 23:30 UTC 開始，做三十分鐘",
+    "expected": "2026-11-01T07:30:00+08:00",
+    "minutes": 30
+  },
+  {
+    "id": "self-correction",
+    "text": "明天下午兩點，算了不要改開始時間，只改成三十分鐘",
+    "expected": "2026-10-26T10:00:00+08:00",
+    "minutes": 30
+  },
+  {
+    "id": "typo-relative",
+    "text": "資料庫那個報高，延後半個小時，長度跟其他事情不動",
+    "expected": "2026-10-26T10:30:00+08:00",
+    "minutes": 60
+  },
+  {
+    "id": "missing-reference",
+    "text": "照剛才的",
+    "expected": "clarify"
+  },
+  {
+    "id": "dst-fold",
+    "text": "改到 2026-11-01 01:30 America/New_York，三十分鐘，沒有指定 UTC offset",
+    "expected": "clarify"
+  }
+]

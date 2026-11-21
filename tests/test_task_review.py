@@ -130,7 +130,7 @@ def test_review_provider_contract_uses_real_structured_output(monkeypatch):
         data = json.loads(payload['contents'][0]['parts'][0]['text'])
         assert data['courses']['security'] == '資訊安全實務與管理'
         assert data['tasks'][0]['id'] == 7
-        assert 'Use Study' in prompt and 'never apply changes' in prompt
+        assert 'Use concise noun phrases' in prompt and 'never apply changes' in prompt
         assert 'course_key' in str(payload['generationConfig']['responseJsonSchema'])
         return httpx.Response(200, json={'candidates': [{'content': {'parts': [{'text': json.dumps({
             'items': [{'task_id': 7, 'title': 'Study network firewalls', 'course_key': 'security',
@@ -226,3 +226,52 @@ def test_review_rechecks_snapshots_after_generation(store, monkeypatch):
     result = store.process_update(80, action)
     assert '清單剛有變更' in result['reply']
     assert main.tasks.list_open()[0]['title'] == 'New wording'
+
+
+@pytest.mark.parametrize('operation', ['apply', 'cancel'])
+def test_review_result_expires_after_fifteen_seconds(system, monkeypatch, operation):
+    client, tasks, bot, cfg = system
+    task = tasks.create('Learn network firewall')
+    monkeypatch.setattr(main.ai, 'review_tasks', AsyncMock(return_value=output(task)))
+    pause = AsyncMock()
+    monkeypatch.setattr(main.asyncio, 'sleep', pause)
+    replies = iter([
+        {'ok': True, 'result': {'message_id': 49}},
+        {'ok': True, 'result': {'message_id': 50}},
+        {'ok': False},
+        {'ok': True, 'result': {'message_id': 51}},
+    ])
+    async def send(chat_id, text, **options):
+        result = next(replies)
+        await bot.track_delivery(result, chat_id, text, options.get('reply_markup'),
+            requires_reply=options.get('requires_response'), delete_after_seconds=options.get('delete_after_seconds'))
+        return result
+    bot.send_message.side_effect = send
+    bot.expiry.sleep = pause
+    headers = {'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}
+    assert client.post('/telegram/webhook', headers=headers, json={'update_id': 740,
+        'message': {'message_id': 48, 'chat': {'id': 123}, 'text': '/reviewtasks'}}).status_code == 200
+    pause.assert_awaited_once()
+    bot.request.assert_awaited_once_with('deleteMessage', {'chat_id':123, 'message_id':49})
+    pause.reset_mock()
+    bot.request.reset_mock()
+    token = main.db.get_update(740)['messages'][1]['task_review']
+    payload = {'update_id': 741, 'callback_query': {'id': 'expiry',
+        'data': 'taskreview:' + operation + ':' + token,
+        'message': {'message_id': 50, 'chat': {'id': 123}, 'text': 'preview'}}}
+    assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 502
+    pause.assert_not_awaited()
+    bot.request.assert_not_awaited()
+    async def wait_then_check(seconds):
+        assert 0 <= seconds <= 15
+        assert not any(call.args == ('deleteMessage', {'chat_id':123, 'message_id':51})
+                       for call in bot.request.await_args_list)
+    pause.side_effect = wait_then_check
+    assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 200
+    pause.assert_awaited_once()
+    assert 0 <= pause.await_args.args[0] <= 15
+    bot.request.assert_any_await('deleteMessage', {'chat_id': 123, 'message_id': 51})
+    assert client.post('/telegram/webhook', headers=headers, json=payload).status_code == 200
+    pause.assert_awaited_once()
+    assert bot.send_message.await_count == 4
+    assert tasks.list_open()[0]['project'] == ('ispm' if operation == 'apply' else None)

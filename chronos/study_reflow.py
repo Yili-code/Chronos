@@ -1,5 +1,5 @@
 """Preview personal calendar moves, then reconcile each approved move by version."""
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta, time, timezone
 import re
 
 from .google_calendar import CalendarError
@@ -13,15 +13,36 @@ class ReflowReviewError(CalendarError):
 def bounds(event, tz):
     start, end = event.get("start", {}), event.get("end", {})
     if start.get("dateTime") and end.get("dateTime"):
-        return tuple(datetime.fromisoformat(v["dateTime"].replace("Z", "+00:00")).astimezone(tz)
-                     for v in (start, end))
+        try:
+            parsed = tuple(datetime.fromisoformat(v['dateTime'].replace('Z', '+00:00')) for v in (start, end))
+            if (any(v.utcoffset() is None for v in parsed)
+                    or parsed[0].astimezone(timezone.utc) >= parsed[1].astimezone(timezone.utc)):
+                raise ValueError()
+            return tuple(v.astimezone(tz) for v in parsed)
+        except (ValueError, TypeError, AttributeError):
+            raise CalendarError('A calendar event has an invalid or ambiguous time. Planning paused.') from None
     if start.get("date") and end.get("date"):
         return tuple(datetime.combine(datetime.fromisoformat(v["date"]).date(), time(), tz)
                      for v in (start, end))
     raise CalendarError("A calendar event has no usable time. Earlier planning paused.")
 
 
-def movable(event, settings, now, *, allow_started=False):
+def verified_booking(event, settings, task_id, state):
+    """A course-like title is editable only with the original managed identity."""
+    props = event.get("extendedProperties", {}).get("private", {})
+    if (task_id is None or not state or state.get("status") != "scheduled"
+            or state.get("pending_reschedule") or state.get("event_id") != event.get("id")
+            or props.get("chronosTask") != str(task_id) or not state.get("token")
+            or props.get("chronosToken") != state["token"]):
+        return False
+    try:
+        expected = tuple(datetime.fromisoformat(state[k]).astimezone(settings.tz) for k in ("start", "end"))
+        return bounds(event, settings.tz) == expected
+    except (KeyError, TypeError, ValueError, CalendarError):
+        return False
+
+
+def movable(event, settings, now, *, allow_started=False, task_id=None, study_state=None):
     owner = settings.calendar_account.casefold()
     primary = settings.calendar_id.strip().casefold()
     source = event.get("_calendar_id", "").casefold()
@@ -35,7 +56,8 @@ def movable(event, settings, now, *, allow_started=False):
         and event.get("start", {}).get("dateTime")
         and bounds(event, settings.tz)[1 if allow_started else 0] > now
         and 0 < (bounds(event, settings.tz)[1] - bounds(event, settings.tz)[0]).total_seconds() <= 180 * 60
-        and not re.search(r"上課|課表|課程|\b(class|lecture|laboratory)\b", event.get("summary", ""), re.I))
+        and (not re.search(r"上課|課表|課程|\b(class|lecture|laboratory)\b", event.get("summary", ""), re.I)
+             or verified_booking(event, settings, task_id, study_state)))
 
 
 async def preview(planner, task, state, now):
@@ -53,7 +75,7 @@ async def preview(planner, task, state, now):
         window = bounds(event, config.tz)
         props = event.get("extendedProperties", {}).get("private", {})
         linked = next((key for key, s in states.items() if s and s.get("event_id") == event["id"]), None)
-        eligible = movable(event, config, now)
+        eligible = movable(event, config, now, task_id=linked, study_state=states.get(linked))
         if props.get("chronosTask") or linked is not None:
             linked_state = states.get(linked) or {}
             eligible = (eligible and linked_state.get("status") == "scheduled"
@@ -128,7 +150,16 @@ async def preview(planner, task, state, now):
 async def apply(planner, task, state, now):
     """Replay uncertain writes using an event marker; never repeat a different edit."""
     from .learning_calendar import overlaps, class_windows
+    from .task_focus import validate as validate_focus
+    validate_focus(planner, state)
     moves = state["calendar_moves"]
+    additions = state.get('revision_additions', [])
+    if state.get('task_slot'):
+        from .task_slot import validate_target
+        validate_target(planner, state)
+    if state.get('study_revision'):
+        from .study_revision import validate_additions
+        validate_additions(planner, state)
     marker = state["token"]
     # Re-read every event before the first write. Changed events invalidate approval.
     current = {}
@@ -145,20 +176,26 @@ async def apply(planner, task, state, now):
                 raise ReflowReviewError("A moved activity changed again. Reflow paused; check /plan.")
         elif event.get("etag") != move["etag"] or not movable(
                 {**event, "_calendar_id": planner.settings.calendar_id}, planner.settings, now,
-                allow_started=bool(state.get("window_replan") and move["task_id"] is not None)):
+                allow_started=bool(state.get("window_replan") and move["task_id"] is not None),
+                task_id=move["task_id"], study_state=planner.get(move["task_id"]) if move["task_id"] is not None else None):
             raise ReflowReviewError("A reviewed activity changed. Reflow paused; check /plan.")
+        saved = None
         if move["task_id"] is not None:
             saved = planner.get(move["task_id"])
             if (not saved or saved.get("token") != move["task_token"] or saved["status"] != "scheduled"
                     or move["task_snapshot"] != task_fields(tasks.get(move["task_id"], {}))):
                 raise ReflowReviewError("A study booking changed. Reflow paused; check /plan.")
+        if state.get('study_revision') and not applied and saved != state['revision_states'][str(move['task_id'])]:
+            raise ReflowReviewError('A study record changed. Prepare a fresh proposal.')
         current[move["event_id"]] = event
     days = {state["start"][:10]} | {m[k][:10] for m in moves for k in ("old_start", "start")}
     budgets = {day: dict(planner.db.get_task_action_state("learning:day:" + day) or {}) for day in days}
     for move in moves:
         if move["task_id"] is not None:
             budgets[move["old_start"][:10]].pop(move["task_token"], None)
-            budgets[move["start"][:10]][move["task_token"]] = planner.get(move["task_id"])["minutes"]
+            budgets[move["start"][:10]][move["task_token"]] = move.get("minutes", planner.get(move["task_id"])["minutes"])
+    for item in additions:
+        budgets[item['start'][:10]][item['token']] = item['minutes']
     if not state.get("window_replan"):
         budgets[state["start"][:10]][state["token"]] = state["minutes"]
     policy = planner.db.get_task_action_state("learning:course-calendar-policy")
@@ -168,8 +205,8 @@ async def apply(planner, task, state, now):
         if load > planner.settings.learning_daily_minutes:
             raise ReflowReviewError("The reviewed arrangement now exceeds the daily study limit. Prepare a fresh proposal.")
     # Check destinations against all calendars again, including overlapping fixed events.
-    begin = min(datetime.fromisoformat(m["start"]) for m in moves)
-    end = max(datetime.fromisoformat(m["end"]) for m in moves)
+    begin = min((datetime.fromisoformat(m["start"]) for m in [*moves, *additions]),default=datetime.fromisoformat(state["start"]))
+    end = max((datetime.fromisoformat(m["end"]) for m in [*moves, *additions]),default=datetime.fromisoformat(state["end"]))
     agenda = await planner.calendar.agenda(min(begin, datetime.fromisoformat(state["start"])),
                                            max(end, datetime.fromisoformat(state["end"])))
     moving_ids = {m["event_id"] for m in moves}
@@ -181,7 +218,10 @@ async def apply(planner, task, state, now):
     fixed_events = [(event, window) for event, window in nonmoving_events
                     if event.get("transparency") != "transparent"]
     fixed = [window for _, window in fixed_events]
-    targets = [(m["start"], m["end"]) for m in moves]
+    if state.get('owner_window'):
+        from .nightly_planning import class_blocks
+        fixed+=class_blocks(datetime.fromisoformat(state['start']).date(),planner.settings,policy)
+    targets = [(m["start"], m["end"]) for m in [*moves, *additions]]
     if not state.get("window_replan"):
         targets.append((state["start"], state["end"]))
     if state.get("window_replan"):
@@ -189,7 +229,7 @@ async def apply(planner, task, state, now):
                   for t in tasks.values() for s in [planner.get(t["id"])]
                   if s and s.get("start") and s.get("status") == "creating"]
     expected_blockers = {(item["event_id"], item.get("calendar_id", "").casefold()): item
-                         for item in state.get("blocked_events", [])}
+                         for item in [*state.get("blocked_events", []), *state.get("focus_kept", [])]}
     current_blockers = {(event.get("id"), event.get("_calendar_id", "").casefold()): (event, window)
                         for event, window in nonmoving_events}
     for identity, expected in expected_blockers.items():
@@ -200,12 +240,41 @@ async def apply(planner, task, state, now):
             raise ReflowReviewError("A fixed activity changed. Prepare a fresh proposal.")
     unexpected = [window for event, window in fixed_events
                   if (event.get("id"), event.get("_calendar_id", "").casefold()) not in expected_blockers]
-    if state.get("window_replan") and overlaps(
+    if state.get("window_replan") and not state.get("study_revision") and overlaps(
             datetime.fromisoformat(state["start"]), datetime.fromisoformat(state["end"]), unexpected):
         raise ReflowReviewError("The requested window has a new fixed activity. Replanning paused.")
     for start, stop in targets:
         if datetime.fromisoformat(start) <= now or overlaps(datetime.fromisoformat(start), datetime.fromisoformat(stop), fixed):
             raise ReflowReviewError("A reviewed destination is now busy or has passed. Reflow paused; check /plan.")
+    if state.get('revision_breaks') and any(overlaps(datetime.fromisoformat(s['start']),datetime.fromisoformat(s['end']),fixed) for s in state['revision_breaks']):
+        raise ReflowReviewError('A reviewed rest break is now busy. Prepare a fresh proposal.')
+    if state.get('study_revision') or state.get('task_slot'):
+        from .learning_calendar import find_slot
+        from .backward_planning import reserved_windows
+        from .nightly_planning import state_window
+        pending = []
+        affected = {m['task_id'] for m in [*moves, *additions]}
+        for i in tasks:
+            saved = planner.get(i) or {}
+            source = state_window(saved)
+            if i not in affected and saved.get('status') in {'queued', 'planning', 'proposed', 'editing', 'creating'} and source.get('start') and source.get('end'):
+                pending.append(tuple(datetime.fromisoformat(source[k]) for k in ('start', 'end')))
+        occupied = [*fixed, *reserved_windows(planner.db), *pending]
+        for item in [*moves, *additions]:
+            a, b = (datetime.fromisoformat(item[k]) for k in ('start', 'end'))
+            minutes = int((b-a).total_seconds()/60)
+            load = {day: sum(bucket.values()) for day, bucket in budgets.items()}
+            if item['task_id'] is not None:
+                load[a.date().isoformat()] -= minutes
+            check_now = min(now, a - timedelta(minutes=10)) if state.get('task_slot') else now
+            config=planner.settings.model_copy(update={'learning_start_hour':0,'learning_end_hour':24}) if state.get('owner_window') else planner.settings
+            if state.get('owner_window'):
+                from .study_constraints import approved_window
+                if not approved_window(state,a,b):raise ReflowReviewError('A reviewed slot is outside the owner window.')
+            if find_slot(tasks.get(item['task_id'], {}), check_now, occupied, [], config, minutes, load, policy,
+                         window=(a,b), align_minutes=not (state.get('task_slot') or state.get('owner_window')),lead_minutes=0 if state.get('owner_window') else 10) != (a,b):
+                raise ReflowReviewError('Study constraints changed. Prepare a fresh proposal.')
+            occupied.append((a,b))
     for move in moves:
         event = current[move["event_id"]]
         props = event.get("extendedProperties", {}).get("private", {})
@@ -228,11 +297,15 @@ def record_move(planner, move):
         days = {move["old_start"][:10], move["start"][:10]}
         buckets = {day: planner.db.get_task_action_state("learning:day:" + day) or {} for day in days}
         buckets[move["old_start"][:10]].pop(move["task_token"], None)
-        buckets[move["start"][:10]][move["task_token"]] = saved["minutes"]
+        buckets[move["start"][:10]][move["task_token"]] = move.get("minutes", saved["minutes"])
         for day, bucket in buckets.items():
             planner.db._save_task_action_state("learning:day:" + day, bucket)
-        planner.db._save_task_action_state(f"learning:task:{move['task_id']}",
-            {**saved, "start": move["start"], "end": move["end"]})
+        revised = {**saved, "start": move["start"], "end": move["end"], "minutes": move.get("minutes", saved["minutes"])}
+        if 'minutes' in move:
+            revised['requested_minutes'] = move['minutes']
+            if 'nightly_slot' in revised:
+                revised['nightly_slot'] = {k: move[k] for k in ('start', 'end')}
+        planner.db._save_task_action_state(f"learning:task:{move['task_id']}", revised)
     planner.db._run_task_action(record)
 
 

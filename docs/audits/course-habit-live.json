@@ -1,0 +1,153 @@
+{
+  "cases": [
+    {
+      "case": 1,
+      "label": "numbered",
+      "reply": "通常都是 1. 學習本週上課內容 2. 完成至少六題程式設計題目",
+      "expected": "set",
+      "before": "set",
+      "before_correct": true,
+      "after": "set",
+      "after_correct": true,
+      "saved_items": [
+        "學習本週上課內容",
+        "完成至少六題程式設計題目"
+      ],
+      "response": "已記住 程式競賽技巧導論 的課後偏好：\n1. 學習本週上課內容\n2. 完成至少六題程式設計題目\n之後課後先提出建議，接受後才新增任務。"
+    },
+    {
+      "case": 2,
+      "label": "prose",
+      "reply": "每次下課後都先複習本週內容，再完成至少六題程式題。",
+      "expected": "set",
+      "before": "progress",
+      "before_correct": false,
+      "after": "set",
+      "after_correct": true,
+      "saved_items": [
+        "複習本週內容",
+        "完成至少六題程式題"
+      ],
+      "response": "已記住 程式競賽技巧導論 的課後偏好：\n1. 複習本週內容\n2. 完成至少六題程式題\n之後課後先提出建議，接受後才新增任務。"
+    },
+    {
+      "case": 3,
+      "label": "Chinese numerals",
+      "reply": "以後固定：一、複習本週內容；二、完成至少六題程式題。",
+      "expected": "set",
+      "before": "progress",
+      "before_correct": false,
+      "after": "set",
+      "after_correct": true,
+      "saved_items": [
+        "複習本週內容",
+        "完成至少六題程式題"
+      ],
+      "response": "已記住 程式競賽技巧導論 的課後偏好：\n1. 複習本週內容\n2. 完成至少六題程式題\n之後課後先提出建議，接受後才新增任務。"
+    },
+    {
+      "case": 4,
+      "label": "bullets",
+      "reply": "記住這堂課的固定安排：\n- 複習本週內容\n- 完成至少六題程式題",
+      "expected": "set",
+      "before": "progress",
+      "before_correct": false,
+      "after": "set",
+      "after_correct": true,
+      "saved_items": [
+        "複習本週內容",
+        "完成至少六題程式題"
+      ],
+      "response": "已記住 程式競賽技巧導論 的課後偏好：\n1. 複習本週內容\n2. 完成至少六題程式題\n之後課後先提出建議，接受後才新增任務。"
+    },
+    {
+      "case": 5,
+      "label": "English",
+      "reply": "After every class, review this week's material and solve at least six programming problems.",
+      "expected": "set",
+      "before": "progress",
+      "before_correct": false,
+      "after": "set",
+      "after_correct": true,
+      "saved_items": [
+        "review this week's material",
+        "solve at least six programming problems"
+      ],
+      "response": "已記住 程式競賽技巧導論 的課後偏好：\n1. review this week's material\n2. solve at least six programming problems\n之後課後先提出建議，接受後才新增任務。"
+    },
+    {
+      "case": 6,
+      "label": "partial update",
+      "reply": "以後第二項改成完成至少十題程式題，第一項不變。",
+      "expected": "set",
+      "before": "progress",
+      "before_correct": false,
+      "after": "set",
+      "after_correct": true,
+      "saved_items": [
+        "學習本週上課內容",
+        "完成至少十題程式題"
+      ],
+      "response": "已記住 程式競賽技巧導論 的課後偏好：\n1. 學習本週上課內容\n2. 完成至少十題程式題\n之後課後先提出建議，接受後才新增任務。"
+    },
+    {
+      "case": 7,
+      "label": "shown reference",
+      "reply": "以後這堂課都照這樣做。",
+      "expected": "set",
+      "before": "progress",
+      "before_correct": false,
+      "after": "set",
+      "after_correct": true,
+      "saved_items": [
+        "學習本週上課內容",
+        "完成至少六題程式設計題目"
+      ],
+      "response": "已記住 程式競賽技巧導論 的課後偏好：\n1. 學習本週上課內容\n2. 完成至少六題程式設計題目\n之後課後先提出建議，接受後才新增任務。"
+    },
+    {
+      "case": 8,
+      "label": "disable",
+      "reply": "這門課以後不要再固定提出課後任務。",
+      "expected": "disable",
+      "before": "progress",
+      "before_correct": false,
+      "after": "disable",
+      "after_correct": true,
+      "saved_items": [],
+      "response": "已停用 程式競賽技巧導論 之後的課後任務建議。已送出的卡片不變，沒有新增任務。"
+    },
+    {
+      "case": 9,
+      "label": "one-time report",
+      "reply": "今天複習了投影片，也做了六題，不用記住。",
+      "expected": "progress",
+      "before": "progress",
+      "before_correct": true,
+      "after": "progress",
+      "after_correct": true,
+      "saved_items": [
+        "學習本週上課內容",
+        "完成至少六題程式設計題目"
+      ],
+      "response": "已記錄 程式競賽技巧導論（10/22）的進度。\n填寫進度代辦已完成，其他代辦保持不變。"
+    },
+    {
+      "case": 10,
+      "label": "missing reference",
+      "reply": "以後都照今天這樣做。",
+      "expected": "clarify",
+      "before": "progress",
+      "before_correct": false,
+      "after": "clarify",
+      "after_correct": true,
+      "saved_items": [],
+      "response": "你希望這門課之後固定提出哪兩項任務？請列出兩項；目前沒有變更偏好或新增任務。"
+    }
+  ],
+  "before_correct": 2,
+  "after_correct": 10,
+  "live_provider_sample": true,
+  "production_writes": false,
+  "model": "gemini-3.5-flash-lite"
+}

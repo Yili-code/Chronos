@@ -1,0 +1,36 @@
+{
+  "phase": "reviewed recipient envelopes",
+  "date": "2026-11-03 Asia/Taipei",
+  "base_commit": "6b6d6c6996136d5c5560682636a64dfd71449609",
+  "tests": {
+    "tests": 3531,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "seconds": 177.341,
+  "external_writes": "mocked only",
+  "production_deployed": false,
+  "regression_reproduced": "Delayed cancellation of an old send confirmation cancelled a newer confirmation for the same draft version.",
+  "root_fix": "Match both draft version and send token inside the atomic cancellation transition.",
+  "build": {
+    "wheel_sha256": "909a6491267a692381f19b1f4c521042b623fac703feaa2da6d5cb489f15c0c1",
+    "source_matches": {
+      "chronos/gmail.py": true,
+      "chronos/mail_recipients.py": true,
+      "chronos/mail_correspondence.py": true,
+      "chronos/mail_send.py": true,
+      "chronos/mail_workflow.py": true,
+      "chronos/main.py": true
+    }
+  },
+  "checks": [
+    "Ruff F821/F822/F823",
+    "compileall",
+    "UV lock check",
+    "source distribution and wheel build",
+    "151 Markdown files / 119 local links / 0 missing",
+    "git diff --check"
+  ],
+  "acceptance": "This phase does not establish full professional-assistant acceptance or live Gmail writes."
+}

@@ -1,0 +1,420 @@
+[
+  {
+    "case": {
+      "id": 1,
+      "text": "把資料庫報告的工作時段改到 10/25 下午兩點，維持一小時",
+      "timing": "exact",
+      "start": "2026-10-25T14:00:00+08:00",
+      "minutes": 60
+    },
+    "intent": {
+      "action": "plan_edit",
+      "task_ids": [
+        701
+      ],
+      "target_selection": "single",
+      "instruction": "把資料庫報告的工作時段改到 10/25 下午兩點，維持一小時",
+      "question": null,
+      "start": "2026-10-25T14:00:00+08:00",
+      "end": "2026-10-25T15:00:00+08:00",
+      "reference": null,
+      "page": 1,
+      "minutes": 60,
+      "outcome": null,
+      "operation": null,
+      "day": null,
+      "end_day": null,
+      "title": null,
+      "content": null,
+      "event_category": null,
+      "edit_field": null,
+      "preference_operation": null,
+      "preference_key": null,
+      "preference_value": null,
+      "assignment_course": null
+    },
+    "model": "gemini-3.5-flash-lite",
+    "edit": {
+      "actionable": true,
+      "minutes": 60,
+      "timing": "exact",
+      "window_end": null,
+      "start": "2026-10-25T14:00:00+08:00",
+      "progress_note": ""
+    }
+  },
+  {
+    "case": {
+      "id": 2,
+      "text": "把資料庫報告的工作時段延後半小時，長度不變",
+      "timing": "exact",
+      "start": "2026-10-25T10:30:00+08:00",
+      "minutes": 60
+    },
+    "intent": {
+      "action": "plan_edit",
+      "task_ids": [
+        701
+      ],
+      "target_selection": "single",
+      "instruction": "把資料庫報告的工作時段延後半小時，長度不變",
+      "question": null,
+      "start": null,
+      "end": null,
+      "reference": null,
+      "page": 1,
+      "minutes": null,
+      "outcome": null,
+      "operation": null,
+      "day": null,
+      "end_day": null,
+      "title": null,
+      "content": null,
+      "event_category": null,
+      "edit_field": null,
+      "preference_operation": null,
+      "preference_key": null,
+      "preference_value": null,
+      "assignment_course": null
+    },
+    "model": "gemini-3.5-flash-lite",
+    "edit": {
+      "actionable": true,
+      "minutes": 60,
+      "timing": "exact",
+      "window_end": null,
+      "start": "2026-10-25T10:30:00+08:00",
+      "progress_note": ""
+    }
+  },
+  {
+    "case": {
+      "id": 3,
+      "text": "資料庫報告那個工作時段縮短成三十分鐘，開始時間不變",
+      "timing": "keep",
+      "start": "2026-10-25T10:00:00+08:00",
+      "minutes": 30
+    },
+    "intent": {
+      "action": "plan_edit",
+      "task_ids": [
+        701
+      ],
+      "target_selection": "single",
+      "instruction": "資料庫報告那個工作時段縮短成三十分鐘，開始時間不變",
+      "question": null,
+      "start": null,
+      "end": null,
+      "reference": null,
+      "page": 1,
+      "minutes": 30,
+      "outcome": null,
+      "operation": null,
+      "day": null,
+      "end_day": null,
+      "title": null,
+      "content": null,
+      "event_category": null,
+      "edit_field": null,
+      "preference_operation": null,
+      "preference_key": null,
+      "preference_value": null,
+      "assignment_course": null
+    },
+    "model": "gemini-3.5-flash-lite",
+    "edit": {
+      "actionable": true,
+      "minutes": 30,
+      "timing": "keep",
+      "window_end": null,
+      "start": null,
+      "progress_note": ""
+    }
+  },
+  {
+    "case": {
+      "id": 4,
+      "text": "把資料庫報告移到明天早上有空的時候，維持一小時",
+      "timing": "window",
+      "start": "2026-10-25T09:00:00+08:00",
+      "minutes": 60
+    },
+    "intent": {
+      "action": "plan_edit",
+      "task_ids": [
+        701
+      ],
+      "target_selection": "single",
+      "instruction": "把資料庫報告移到明天早上有空的時候，維持一小時",
+      "question": null,
+      "start": null,
+      "end": null,
+      "reference": null,
+      "page": 1,
+      "minutes": 60,
+      "outcome": null,
+      "operation": null,
+      "day": null,
+      "end_day": null,
+      "title": null,
+      "content": null,
+      "event_category": null,
+      "edit_field": null,
+      "preference_operation": null,
+      "preference_key": null,
+      "preference_value": null,
+      "assignment_course": null
+    },
+    "model": "gemini-3.5-flash-lite",
+    "edit": {
+      "actionable": true,
+      "minutes": 60,
+      "timing": "window",
+      "window_end": "2026-10-25T12:00:00+08:00",
+      "start": "2026-10-25T06:00:00+08:00",
+      "progress_note": ""
+    }
+  },
+  {
+    "case": {
+      "id": 5,
+      "text": "把資料庫報告的工作時段改成今天接下來最早有空的時候",
+      "timing": "window",
+      "minutes": 60,
+      "start": "2026-10-24T09:15:00+08:00",
+      "window_end": "2026-10-25T00:00:00+08:00"
+    },
+    "intent": {
+      "action": "plan_edit",
+      "task_ids": [
+        701
+      ],
+      "target_selection": "single",
+      "instruction": "把資料庫報告的工作時段改成今天接下來最早有空的時候",
+      "question": null,
+      "start": null,
+      "end": null,
+      "reference": null,
+      "page": 1,
+      "minutes": null,
+      "outcome": null,
+      "operation": null,
+      "day": null,
+      "end_day": null,
+      "title": null,
+      "content": null,
+      "event_category": null,
+      "edit_field": null,
+      "preference_operation": null,
+      "preference_key": null,
+      "preference_value": null,
+      "assignment_course": null
+    },
+    "model": "gemini-3.5-flash-lite",
+    "edit": {
+      "actionable": true,
+      "minutes": 60,
+      "timing": "window",
+      "window_end": "2026-10-25T00:00:00+08:00",
+      "start": "2026-10-24T09:00:00+08:00",
+      "progress_note": ""
+    }
+  },
+  {
+    "case": {
+      "id": 6,
+      "text": "資料庫報告的工作時段多給我半小時，開始時間不要動",
+      "timing": "keep",
+      "start": "2026-10-25T10:00:00+08:00",
+      "minutes": 90
+    },
+    "intent": {
+      "action": "plan_edit",
+      "task_ids": [
+        701
+      ],
+      "target_selection": "single",
+      "instruction": "資料庫報告的工作時段多給我半小時，開始時間不要動",
+      "question": null,
+      "start": null,
+      "end": null,
+      "reference": null,
+      "page": 1,
+      "minutes": null,
+      "outcome": null,
+      "operation": null,
+      "day": null,
+      "end_day": null,
+      "title": null,
+      "content": null,
+      "event_category": null,
+      "edit_field": null,
+      "preference_operation": null,
+      "preference_key": null,
+      "preference_value": null,
+      "assignment_course": null
+    },
+    "model": "gemini-3.5-flash-lite",
+    "edit": {
+      "actionable": true,
+      "minutes": 90,
+      "timing": "keep",
+      "window_end": null,
+      "start": null,
+      "progress_note": ""
+    }
+  },
+  {
+    "case": {
+      "id": 7,
+      "text": "把資料庫報告改到 10/25 下午兩點十分開始，做一小時",
+      "timing": "exact",
+      "start": "2026-10-25T14:10:00+08:00",
+      "minutes": 60
+    },
+    "intent": {
+      "action": "plan_edit",
+      "task_ids": [
+        701
+      ],
+      "target_selection": "single",
+      "instruction": "把資料庫報告改到 10/25 下午兩點十分開始，做一小時",
+      "question": null,
+      "start": "2026-10-25T14:10:00+08:00",
+      "end": "2026-10-25T15:10:00+08:00",
+      "reference": null,
+      "page": 1,
+      "minutes": 60,
+      "outcome": null,
+      "operation": null,
+      "day": null,
+      "end_day": null,
+      "title": null,
+      "content": null,
+      "event_category": null,
+      "edit_field": null,
+      "preference_operation": null,
+      "preference_key": null,
+      "preference_value": null,
+      "assignment_course": null
+    },
+    "model": "gemini-3.5-flash-lite",
+    "edit": {
+      "actionable": true,
+      "minutes": 60,
+      "timing": "exact",
+      "window_end": null,
+      "start": "2026-10-25T14:10:00+08:00",
+      "progress_note": ""
+    }
+  },
+  {
+    "case": {
+      "id": 8,
+      "text": "資料庫報告晚一點再做",
+      "clarify": true
+    },
+    "intent": {
+      "action": "clarify",
+      "task_ids": [],
+      "target_selection": "single",
+      "instruction": "資料庫報告晚一點再做",
+      "question": "請問您想將資料庫報告安排到什麼時候？",
+      "start": null,
+      "end": null,
+      "reference": null,
+      "page": 1,
+      "minutes": null,
+      "outcome": null,
+      "operation": null,
+      "day": null,
+      "end_day": null,
+      "title": null,
+      "content": null,
+      "event_category": null,
+      "edit_field": null,
+      "preference_operation": null,
+      "preference_key": null,
+      "preference_value": null,
+      "assignment_course": null
+    },
+    "model": "gemini-3.5-flash-lite"
+  },
+  {
+    "case": {
+      "id": 9,
+      "text": "資料庫報告改到 10/25 下午四點，做一小時",
+      "timing": "exact",
+      "start": "2026-10-25T16:00:00+08:00",
+      "minutes": 60,
+      "conflict": true
+    },
+    "intent": {
+      "action": "plan_edit",
+      "task_ids": [
+        701
+      ],
+      "target_selection": "single",
+      "instruction": "資料庫報告改到 10/25 下午四點，做一小時",
+      "question": null,
+      "start": "2026-10-25T16:00:00+08:00",
+      "end": "2026-10-25T17:00:00+08:00",
+      "reference": null,
+      "page": 1,
+      "minutes": 60,
+      "outcome": null,
+      "operation": null,
+      "day": null,
+      "end_day": null,
+      "title": null,
+      "content": null,
+      "event_category": null,
+      "edit_field": null,
+      "preference_operation": null,
+      "preference_key": null,
+      "preference_value": null,
+      "assignment_course": null
+    },
+    "model": "gemini-3.5-flash-lite",
+    "edit": {
+      "actionable": true,
+      "minutes": 60,
+      "timing": "exact",
+      "window_end": null,
+      "start": "2026-10-25T16:00:00+08:00",
+      "progress_note": ""
+    }
+  },
+  {
+    "case": {
+      "id": 10,
+      "text": "把那個工作時段改到明天下午兩點",
+      "ambiguous": true
+    },
+    "intent": {
+      "action": "clarify",
+      "task_ids": [],
+      "target_selection": "single",
+      "instruction": "把那個工作時段改到明天下午兩點",
+      "question": "請問您想移動哪一個任務的工作時段？",
+      "start": null,
+      "end": null,
+      "reference": null,
+      "page": 1,
+      "minutes": null,
+      "outcome": null,
+      "operation": null,
+      "day": null,
+      "end_day": null,
+      "title": null,
+      "content": null,
+      "event_category": null,
+      "edit_field": null,
+      "preference_operation": null,
+      "preference_key": null,
+      "preference_value": null,
+      "assignment_course": null
+    },
+    "model": "gemini-3.5-flash-lite"
+  }
+]

@@ -29,11 +29,11 @@ def test_telegram_uses_external_ai(task_service, monkeypatch):
     parse = AsyncMock(return_value=ParsedTask("Review external analysis"))
     monkeypatch.setattr(main.ai, "parse", parse)
     reply = asyncio.run(main.handle_message("新增 工作"))
-    assert reply.startswith("<b>Task created</b>")
+    assert reply.startswith("<b>已加入待辦</b>")
     assert "<b>Review external analysis</b>" in reply
     assert "<b>Due</b>" not in reply
     assert task_service.list_open()[0]["due_at"] is None
-    assert "<b>Tasks</b>\n1. " in reply
+    assert "<b>Unscheduled</b>\n1. " in reply
     assert parse.await_count == 1
     due = datetime(2026, 9, 20, 12, tzinfo=main.settings.tz)
     edit = AsyncMock(return_value=ParsedTask("Review external analysis", due))
@@ -41,7 +41,7 @@ def test_telegram_uses_external_ai(task_service, monkeypatch):
     reply = asyncio.run(main.handle_message("/edit 1 改到週日中午"))
     assert "<b>Updated · Task 1</b>" in reply
     assert "<b>After</b> 09/20 (Sun) 12:00" in reply
-    assert "<b>Tasks</b>" in reply
+    assert "<b>Unscheduled</b>" in reply
     assert task_service.list_open()[0]["due_at"] == due.isoformat()
 
 
@@ -54,10 +54,10 @@ def test_failure_does_not_change_tasks(task_service, monkeypatch):
     edit_failure = asyncio.run(main.handle_message("/edit 1 改到明天"))
     assert "External AI failed" in edit_failure
     assert "Task 1 is unchanged" in edit_failure
-    assert asyncio.run(main.handle_message("/reschedule 1 明天")) == "Unknown command. Use /info to see available commands."
+    assert asyncio.run(main.handle_message("/reschedule 1 明天")) == "I could not recognise that request, Sir. Please use /info for the available options."
     assert task_service.list_open() == before
     assert "Original task" in asyncio.run(main.handle_message("/tasks"))
-    assert asyncio.run(main.handle_message("/done 1")) == "Completed Original task\n\nNo open tasks. All clear."
+    assert asyncio.run(main.handle_message("/done 1")) == "Completed Original task\n\nNo open tasks, Sir. A welcome state of affairs."
 
 
 def test_edit_uses_natural_language_and_returns_latest_list(task_service, monkeypatch):
@@ -72,7 +72,7 @@ def test_edit_uses_natural_language_and_returns_latest_list(task_service, monkey
     assert "<b>Before</b> Draft launch plan" in reply
     assert "<b>After</b> Finalize launch plan" in reply
     assert "<b>After</b> 10/03 (Sat) 18:00" in reply
-    assert "<b>Tasks</b>\n1. 🚨 <b>Finalize launch plan</b>" in reply
+    assert "<b>Unscheduled</b>\n1. 🚨 <b>Finalize launch plan</b>" in reply
     stored = task_service.list_open()[0]
     assert stored["title"] == "Finalize launch plan"
     assert stored["project"] is None
@@ -81,5 +81,22 @@ def test_edit_uses_natural_language_and_returns_latest_list(task_service, monkey
 def test_edit_missing_position_skips_ai(task_service, monkeypatch):
     edit = AsyncMock()
     monkeypatch.setattr(main.ai, "edit", edit)
-    assert asyncio.run(main.handle_message("/edit 1 rename it")) == "Task 1 not found.\n\nNo open tasks. All clear."
+    assert asyncio.run(main.handle_message("/edit 1 rename it")) == "Task 1 not found.\n\nNo open tasks, Sir. A welcome state of affairs."
     edit.assert_not_awaited()
+
+
+def test_batch_done_uses_original_positions(task_service):
+    for position in range(1, 12):
+        task_service.create(f"Task <{position}>")
+
+    invalid = asyncio.run(main.handle_message("/done 7 12 8"))
+    assert invalid.startswith("Task 12 not found.")
+    assert len(task_service.list_open()) == 11
+
+    reply = asyncio.run(main.handle_message("/done 7 8 9 10 8"))
+    assert reply.split("\n\n")[0].splitlines() == [
+        f"Completed Task &lt;{position}&gt;" for position in (7, 8, 9, 10)
+    ]
+    assert [task["title"] for task in task_service.list_open()] == [
+        f"Task <{position}>" for position in (1, 2, 3, 4, 5, 6, 11)
+    ]

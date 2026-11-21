@@ -57,7 +57,7 @@ async def tick_exams(db, telegram, chat_id, now):
         if claim is None:
             break  # do not send later parts after an uncertain or pending part
         try:
-            response = await telegram.send_message(chat_id, text)
+            response = await telegram.send_message(chat_id, text, requires_response=False)
         except TelegramError:
             ledger.finish(key, claim, now)
             break

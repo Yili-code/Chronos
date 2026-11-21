@@ -1,0 +1,670 @@
+[
+  {
+    "id": 1,
+    "category": "新增任務",
+    "request": "幫我記下要買牛奶",
+    "expected": "task_create"
+  },
+  {
+    "id": 2,
+    "category": "新增任務",
+    "request": "明天下午提醒我交軟體工程報告",
+    "expected": "task_create"
+  },
+  {
+    "id": 3,
+    "category": "新增任務",
+    "request": "新增一個任務：複習資料庫第三章",
+    "expected": "task_create"
+  },
+  {
+    "id": 4,
+    "category": "新增任務",
+    "request": "下週五之前完成作業系統作業",
+    "expected": "task_create"
+  },
+  {
+    "id": 5,
+    "category": "新增任務",
+    "request": "今天要讀 graph algorithms chapter 4",
+    "expected": "task_create"
+  },
+  {
+    "id": 6,
+    "category": "新增任務",
+    "request": "把資料庫第一章到第五章分成五個任務",
+    "expected": "task_create"
+  },
+  {
+    "id": 7,
+    "category": "新增任務",
+    "request": "週日晚上十一點五十九分前交報告",
+    "expected": "task_create"
+  },
+  {
+    "id": 8,
+    "category": "新增任務",
+    "request": "記下要寄履歷給公司",
+    "expected": "task_create"
+  },
+  {
+    "id": 9,
+    "category": "新增任務",
+    "request": "新增繳電費的待辦，月底以前",
+    "expected": "task_create"
+  },
+  {
+    "id": 10,
+    "category": "新增任務",
+    "request": "我要準備期中考，先記成待辦不要排時間",
+    "expected": "task_create"
+  },
+  {
+    "id": 11,
+    "category": "修改任務",
+    "request": "把資料庫報告改名為完成資料庫期末報告",
+    "expected": "task_edit"
+  },
+  {
+    "id": 12,
+    "category": "修改任務",
+    "request": "資料庫報告延到下週五截止",
+    "expected": "task_edit"
+  },
+  {
+    "id": 13,
+    "category": "修改任務",
+    "request": "資料庫報告取消截止時間",
+    "expected": "task_edit"
+  },
+  {
+    "id": 14,
+    "category": "修改任務",
+    "request": "把資料庫報告標籤改成 database",
+    "expected": "task_edit"
+  },
+  {
+    "id": 15,
+    "category": "修改任務",
+    "request": "資料庫報告內容補上需要附 ER diagram",
+    "expected": "task_edit"
+  },
+  {
+    "id": 16,
+    "category": "修改任務",
+    "request": "資料庫報告剩下兩頁，修改內容就好",
+    "expected": "task_edit"
+  },
+  {
+    "id": 17,
+    "category": "修改任務",
+    "request": "把 #701 的標題改成完成報告",
+    "expected": "task_edit"
+  },
+  {
+    "id": 18,
+    "category": "修改任務",
+    "request": "資料庫報告不要標籤了",
+    "expected": "task_edit"
+  },
+  {
+    "id": 19,
+    "category": "修改任務",
+    "request": "資料庫報告的期限改成明天中午十二點",
+    "expected": "task_edit"
+  },
+  {
+    "id": 20,
+    "category": "修改任務",
+    "request": "task 1 的內容改成剩下 SQL 查詢",
+    "expected": "task_edit"
+  },
+  {
+    "id": 21,
+    "category": "清單與完成",
+    "request": "資料庫報告全部完成了",
+    "expected": "task_complete"
+  },
+  {
+    "id": 22,
+    "category": "清單與完成",
+    "request": "把 #701 標記完成",
+    "expected": "task_complete"
+  },
+  {
+    "id": 23,
+    "category": "清單與完成",
+    "request": "資料庫報告撤銷剛才修改",
+    "expected": "undo"
+  },
+  {
+    "id": 24,
+    "category": "清單與完成",
+    "request": "把所有任務清空",
+    "expected": "clear_tasks"
+  },
+  {
+    "id": 25,
+    "category": "清單與完成",
+    "request": "優化任務用詞，給我建議",
+    "expected": "task_review"
+  },
+  {
+    "id": 26,
+    "category": "清單與完成",
+    "request": "我有哪些待辦",
+    "expected": "task_list"
+  },
+  {
+    "id": 27,
+    "category": "清單與完成",
+    "request": "現在有哪些執行計畫",
+    "expected": "plan_list"
+  },
+  {
+    "id": 28,
+    "category": "清單與完成",
+    "request": "查詢 AI 用量",
+    "expected": "ai_usage"
+  },
+  {
+    "id": 29,
+    "category": "清單與完成",
+    "request": "目前有哪些提醒",
+    "expected": "reminder_list"
+  },
+  {
+    "id": 30,
+    "category": "清單與完成",
+    "request": "列出最新公告",
+    "expected": "announcements"
+  },
+  {
+    "id": 31,
+    "category": "查詢行程",
+    "request": "明天有什麼行程",
+    "expected": "agenda"
+  },
+  {
+    "id": 32,
+    "category": "查詢行程",
+    "request": "今天下午有事嗎",
+    "expected": "agenda"
+  },
+  {
+    "id": 33,
+    "category": "查詢行程",
+    "request": "下週一早上有什麼安排",
+    "expected": "agenda"
+  },
+  {
+    "id": 34,
+    "category": "查詢行程",
+    "request": "這星期五晚上有行程嗎",
+    "expected": "agenda"
+  },
+  {
+    "id": 35,
+    "category": "查詢行程",
+    "request": "明天早上六點到中午有什麼事",
+    "expected": "agenda"
+  },
+  {
+    "id": 36,
+    "category": "查詢行程",
+    "request": "查今天整天行程",
+    "expected": "agenda"
+  },
+  {
+    "id": 37,
+    "category": "查詢行程",
+    "request": "Show tomorrow agenda",
+    "expected": "agenda"
+  },
+  {
+    "id": 38,
+    "category": "查詢行程",
+    "request": "週日有什麼安排",
+    "expected": "agenda"
+  },
+  {
+    "id": 39,
+    "category": "查詢行程",
+    "request": "下週二下午有課嗎",
+    "expected": "agenda"
+  },
+  {
+    "id": 40,
+    "category": "查詢行程",
+    "request": "今晚有什麼安排",
+    "expected": "agenda"
+  },
+  {
+    "id": 41,
+    "category": "行事曆活動",
+    "request": "明天晚上八點參加 AtCoder 比賽，三小時",
+    "expected": "event_create",
+    "expected_event": {
+      "days_ahead": 1,
+      "hour": 20,
+      "minutes": 180
+    }
+  },
+  {
+    "id": 42,
+    "category": "行事曆活動",
+    "request": "下週一下午兩點開會一小時",
+    "expected": "event_create",
+    "expected_event": {
+      "next_weekday": 0,
+      "hour": 14,
+      "minutes": 60
+    }
+  },
+  {
+    "id": 43,
+    "category": "行事曆活動",
+    "request": "明天晚上六點和朋友聚餐兩小時",
+    "expected": "event_create",
+    "expected_event": {
+      "days_ahead": 1,
+      "hour": 18,
+      "minutes": 120
+    }
+  },
+  {
+    "id": 44,
+    "category": "行事曆活動",
+    "request": "後天下午三點看牙醫三十分鐘",
+    "expected": "event_create",
+    "expected_event": {
+      "days_ahead": 2,
+      "hour": 15,
+      "minutes": 30
+    }
+  },
+  {
+    "id": 45,
+    "category": "行事曆活動",
+    "request": "明天早上十點面試，到十一點",
+    "expected": "event_create",
+    "expected_event": {
+      "days_ahead": 1,
+      "hour": 10,
+      "minutes": 60
+    }
+  },
+  {
+    "id": 46,
+    "category": "行事曆活動",
+    "request": "明天下午兩點到四點參加社團活動",
+    "expected": "event_create",
+    "expected_event": {
+      "days_ahead": 1,
+      "hour": 14,
+      "minutes": 120
+    }
+  },
+  {
+    "id": 47,
+    "category": "行事曆活動",
+    "request": "明天晚上九點 Codeforces contest 兩小時",
+    "expected": "event_create",
+    "expected_event": {
+      "days_ahead": 1,
+      "hour": 21,
+      "minutes": 120
+    }
+  },
+  {
+    "id": 48,
+    "category": "行事曆活動",
+    "request": "下週三下午五點和同學討論專題一小時",
+    "expected": "event_create",
+    "expected_event": {
+      "next_weekday": 2,
+      "hour": 17,
+      "minutes": 60
+    }
+  },
+  {
+    "id": 49,
+    "category": "行事曆活動",
+    "request": "明天晚上七點生日聚餐到九點",
+    "expected": "event_create",
+    "expected_event": {
+      "days_ahead": 1,
+      "hour": 19,
+      "minutes": 120
+    }
+  },
+  {
+    "id": 50,
+    "category": "行事曆活動",
+    "request": "明天上午九點線上會議，九十分鐘",
+    "expected": "event_create",
+    "expected_event": {
+      "days_ahead": 1,
+      "hour": 9,
+      "minutes": 90
+    }
+  },
+  {
+    "id": 51,
+    "category": "提醒",
+    "request": "明天下午三點提醒我打電話，不用追蹤完成",
+    "expected": "reminder_create"
+  },
+  {
+    "id": 52,
+    "category": "提醒",
+    "request": "十分鐘後通知我喝水，只發通知",
+    "expected": "reminder_create"
+  },
+  {
+    "id": 53,
+    "category": "提醒",
+    "request": "明天早上八點提醒帶雨傘，不用建立任務",
+    "expected": "reminder_create"
+  },
+  {
+    "id": 54,
+    "category": "提醒",
+    "request": "今晚九點發通知提醒休息，不需追蹤",
+    "expected": "reminder_create"
+  },
+  {
+    "id": 55,
+    "category": "提醒",
+    "request": "明天中午十二點提醒吃藥，只要通知",
+    "expected": "reminder_create"
+  },
+  {
+    "id": 56,
+    "category": "提醒",
+    "request": "後天上午九點通知我出門，不建待辦",
+    "expected": "reminder_create"
+  },
+  {
+    "id": 57,
+    "category": "提醒",
+    "request": "一小時後提醒我站起來，只需通知",
+    "expected": "reminder_create"
+  },
+  {
+    "id": 58,
+    "category": "提醒",
+    "request": "明天晚上十點通知我睡覺，不追蹤完成",
+    "expected": "reminder_create"
+  },
+  {
+    "id": 59,
+    "category": "提醒",
+    "request": "明天下午四點提醒澆花，只通知不建任務",
+    "expected": "reminder_create"
+  },
+  {
+    "id": 60,
+    "category": "提醒",
+    "request": "下週一早上七點提醒帶證件，只發通知",
+    "expected": "reminder_create"
+  },
+  {
+    "id": 61,
+    "category": "排程與計畫",
+    "request": "幫資料庫報告排一段時間",
+    "expected": "plan_request"
+  },
+  {
+    "id": 62,
+    "category": "排程與計畫",
+    "request": "幫我找下一個有空的時段",
+    "expected": "free"
+  },
+  {
+    "id": 63,
+    "category": "排程與計畫",
+    "request": "明晚七點到九點幫我空出來",
+    "expected": "replan"
+  },
+  {
+    "id": 64,
+    "category": "排程與計畫",
+    "request": "我有哪些工作計畫",
+    "expected": "plan_list"
+  },
+  {
+    "id": 65,
+    "category": "排程與計畫",
+    "request": "資料庫報告這次做了三十分鐘，還沒完成",
+    "expected": "plan_feedback"
+  },
+  {
+    "id": 66,
+    "category": "排程與計畫",
+    "request": "資料庫報告明天截止，幫我倒推計畫",
+    "expected": "backward"
+  },
+  {
+    "id": 67,
+    "category": "排程與計畫",
+    "request": "查詢 TronClass 掃描日期設定",
+    "expected": "calendar_view"
+  },
+  {
+    "id": 68,
+    "category": "排程與計畫",
+    "request": "取消這次詢問",
+    "expected": "cancel"
+  },
+  {
+    "id": 69,
+    "category": "排程與計畫",
+    "request": "下一批郵件",
+    "expected": "mail_next"
+  },
+  {
+    "id": 70,
+    "category": "排程與計畫",
+    "request": "Chronos 有什麼功能",
+    "expected": "info"
+  },
+  {
+    "id": 71,
+    "category": "偏好記憶",
+    "request": "記住我喜歡用繁體中文",
+    "expected": "preference"
+  },
+  {
+    "id": 72,
+    "category": "偏好記憶",
+    "request": "以後叫我 YiLi",
+    "expected": "preference"
+  },
+  {
+    "id": 73,
+    "category": "偏好記憶",
+    "request": "記住我不喜歡表情符號",
+    "expected": "preference"
+  },
+  {
+    "id": 74,
+    "category": "偏好記憶",
+    "request": "之後回覆簡潔一點，記住這個偏好",
+    "expected": "preference"
+  },
+  {
+    "id": 75,
+    "category": "偏好記憶",
+    "request": "我有哪些已保存的偏好",
+    "expected": "preference"
+  },
+  {
+    "id": 76,
+    "category": "偏好記憶",
+    "request": "忘記我不喜歡表情符號這個偏好",
+    "expected": "preference"
+  },
+  {
+    "id": 77,
+    "category": "偏好記憶",
+    "request": "把回覆語言偏好改成英文",
+    "expected": "preference"
+  },
+  {
+    "id": 78,
+    "category": "偏好記憶",
+    "request": "記住我比較喜歡早上讀書",
+    "expected": "preference"
+  },
+  {
+    "id": 79,
+    "category": "偏好記憶",
+    "request": "以後新任務都用自然的英文標題",
+    "expected": "preference"
+  },
+  {
+    "id": 80,
+    "category": "偏好記憶",
+    "request": "忘記我的稱呼偏好",
+    "expected": "preference"
+  },
+  {
+    "id": 81,
+    "category": "確認與界線",
+    "request": "收到",
+    "expected": "acknowledge"
+  },
+  {
+    "id": 82,
+    "category": "確認與界線",
+    "request": "好的",
+    "expected": "acknowledge"
+  },
+  {
+    "id": 83,
+    "category": "確認與界線",
+    "request": "謝謝",
+    "expected": "acknowledge"
+  },
+  {
+    "id": 84,
+    "category": "確認與界線",
+    "request": "不需要記錄",
+    "expected": "acknowledge"
+  },
+  {
+    "id": 85,
+    "category": "確認與界線",
+    "request": "不用更新 task list",
+    "expected": "acknowledge"
+  },
+  {
+    "id": 86,
+    "category": "確認與界線",
+    "request": "先保持原樣就好，不必再更新",
+    "expected": "acknowledge"
+  },
+  {
+    "id": 87,
+    "category": "確認與界線",
+    "request": "Got it",
+    "expected": "acknowledge"
+  },
+  {
+    "id": 88,
+    "category": "確認與界線",
+    "request": "Thanks",
+    "expected": "acknowledge"
+  },
+  {
+    "id": 89,
+    "category": "確認與界線",
+    "request": "不要更新任務清單",
+    "expected": "acknowledge"
+  },
+  {
+    "id": 90,
+    "category": "確認與界線",
+    "request": "No need to record",
+    "expected": "acknowledge"
+  },
+  {
+    "id": 91,
+    "category": "安全與歧義",
+    "request": "把那個改掉",
+    "expected": "clarify"
+  },
+  {
+    "id": 92,
+    "category": "安全與歧義",
+    "request": "第二個",
+    "expected": "clarify"
+  },
+  {
+    "id": 93,
+    "category": "安全與歧義",
+    "request": "好了",
+    "expected": "clarify",
+    "allowed": [
+      "clarify",
+      "unsupported",
+      "acknowledge"
+    ]
+  },
+  {
+    "id": 94,
+    "category": "安全與歧義",
+    "request": "幫我處理一下",
+    "expected": "clarify"
+  },
+  {
+    "id": 95,
+    "category": "安全與歧義",
+    "request": "改到明天",
+    "expected": "clarify"
+  },
+  {
+    "id": 96,
+    "category": "安全與歧義",
+    "request": "對",
+    "expected": "clarify",
+    "allowed": [
+      "clarify",
+      "unsupported",
+      "acknowledge"
+    ]
+  },
+  {
+    "id": 97,
+    "category": "安全與歧義",
+    "request": "把報告刪掉然後寄信給老師",
+    "expected": "clarify",
+    "allowed": [
+      "clarify",
+      "unsupported"
+    ]
+  },
+  {
+    "id": 98,
+    "category": "安全與歧義",
+    "request": "明天幫我排一下但不知道做什麼",
+    "expected": "clarify"
+  },
+  {
+    "id": 99,
+    "category": "安全與歧義",
+    "request": "幫我新增任務又刪掉全部舊的",
+    "expected": "clarify",
+    "allowed": [
+      "clarify",
+      "unsupported"
+    ]
+  },
+  {
+    "id": 100,
+    "category": "安全與歧義",
+    "request": "把它延後",
+    "expected": "clarify"
+  }
+]

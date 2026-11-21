@@ -9,7 +9,7 @@ import pytest
 from chronos import main, calendar_replan
 from chronos.ai import AIError, ExternalAI
 from chronos.db import Database
-from chronos.intents import Intent
+from chronos.intents import Intent, explicit_plan_batch
 from chronos.settings import Settings
 from chronos.tasks import TaskService, ParsedTask
 from test_firestore import database as firestore_fake
@@ -38,6 +38,16 @@ def classify(monkeypatch, **kwargs):
     mock = AsyncMock(return_value=Intent(**kwargs))
     monkeypatch.setattr(main.ai, "classify_intent", mock)
     return mock
+
+
+@pytest.mark.parametrize('text,ids', [
+    ('將 task 3, 4, 5 先排到 calendar 中，每個預估一個半小時', [103, 104, 105]),
+    ('Schedule tasks #105, #103 and #104, 90 minutes each', [105, 103, 104]),
+])
+def test_explicit_batch_guard_separates_references_from_duration(text, ids):
+    items = [{'id': 101 + i, 'title': f'Operating System lecture {i + 1}'} for i in range(5)]
+    assert explicit_plan_batch(text, items, ids)
+    assert not explicit_plan_batch(text, items, ids[::-1])
 
 
 def test_failure_never_falls_through_to_creation(store, monkeypatch):
@@ -119,6 +129,23 @@ def test_model_text_is_not_an_executable_command(store, monkeypatch):
     run("記錄文字")
     assert len(main.tasks.list_open()) == 2
     main.ai.parse_many.assert_awaited_once_with("記錄文字")
+
+
+def test_natural_tag_removal_preserves_other_fields_and_can_undo(store, monkeypatch):
+    task = main.tasks.create("Complete database report", project="database")
+    classify(monkeypatch, action="task_edit", task_ids=[task["id"]], instruction="資料庫報告不要標籤了")
+    parser = AsyncMock(return_value=ParsedTask(task["title"], project=None))
+    monkeypatch.setattr(main.ai, "edit", parser)
+    run("資料庫報告不要標籤了")
+    after = main.tasks.list_open()[0]
+    assert after["title"] == task["title"] and after["due_at"] == task["due_at"]
+    assert after["project"] is None
+    parser.assert_awaited_once()
+    assert parser.await_args.args[0]["id"] == task["id"]
+    assert parser.await_args.args[1] == "資料庫報告不要標籤了"
+    classify(monkeypatch, action="undo")
+    run("撤銷剛剛修改", 2)
+    assert main.tasks.list_open()[0]["project"] == "database"
 
 
 def test_clear_requires_existing_confirmation(store, monkeypatch):
@@ -227,14 +254,37 @@ def test_reminder_cancel_rejects_invented_token(store, monkeypatch):
 
 
 def test_valid_agenda_is_read_only(store, monkeypatch):
-    start = datetime.now(main.settings.tz).replace(hour=0, minute=0, second=0, microsecond=0)
+    start = datetime(2026, 11, 19, tzinfo=main.settings.tz)
     classify(monkeypatch, action="agenda", start=start, end=start + timedelta(days=1))
     calendar = AsyncMock()
     calendar.agenda.return_value = []
     monkeypatch.setattr(main, "google_calendar", calendar)
-    assert "No events scheduled" in run("今天有什麼安排")["reply"]
+    result = run("11/19 我有甚麼事情")
+    assert result["messages"] == [{
+        "text": "<b>11/19 (四)</b>\n\nNo events scheduled.",
+        "parse_mode": "HTML",
+        "delete_after_seconds": 15,
+    }]
     calendar.agenda.assert_awaited_once_with(start, start + timedelta(days=1))
     main.ai.parse.assert_not_awaited()
+
+
+@pytest.mark.parametrize("text,hour,normalize", [
+    ("明天有什麼行程", 0, True),
+    ("今晚有什麼安排", 18, True),
+    ("查詢明天 00:00:00 到 23:59:59 的行程", 0, False),
+    ("查詢明天零點到二十三點五十九分五十九秒的行程", 0, False),
+])
+def test_agenda_includes_midnight_boundary_without_overriding_explicit_seconds(store, monkeypatch, text, hour, normalize):
+    start = datetime.now(main.settings.tz).replace(hour=hour, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    end = start.replace(hour=23, minute=59, second=59)
+    classify(monkeypatch, action="agenda", start=start, end=end)
+    calendar = AsyncMock()
+    calendar.agenda.return_value = []
+    monkeypatch.setattr(main, "google_calendar", calendar)
+    run(text)
+    calendar.agenda.assert_awaited_once_with(start, end + timedelta(seconds=1) if normalize else end)
+    assert main.tasks.list_open() == []
 
 
 def test_natural_scan_policy_update_is_validated(store, monkeypatch):
@@ -252,6 +302,71 @@ def test_natural_plan_request_uses_existing_proposal_state(store, monkeypatch):
     run("幫我安排報告")
     assert main.learning_calendar().get(task["id"])["status"] == "queued"
     main.ai.parse.assert_not_awaited()
+
+
+def test_batch_plan_preserves_each_duration_fixed_ids_and_replay(store, monkeypatch):
+    items = [main.tasks.create(f"Lecture {i}") for i in range(5)]
+    main.tasks.complete(items[0]['id'])
+    ids = [item['id'] for item in items[2:]]
+    monkeypatch.setattr(main.settings, "enable_learning_calendar", True)
+    classify(monkeypatch, action="plan_request", task_ids=ids, target_selection="all", minutes=90)
+    text = "將 task 2, 3, 4 先排到 calendar 中，每個預估一個半小時"
+    first = run(text)
+    assert '90 minutes each' in first['reply']
+    assert first['messages'][0]['planning_requested'] is True
+    states = [main.learning_calendar().get(i) for i in ids]
+    assert all(s['requested_minutes'] == 90 and s['duration_source'] == 'owner' for s in states)
+    assert main.db.get_task_action_state('learning:proposal-queue')['requested_task_ids'] == ids
+    run(text)
+    assert [main.learning_calendar().get(i) for i in ids] == states
+    assert main.learning_calendar().get(items[1]['id']) is None
+
+
+@pytest.mark.parametrize('selection', ['single', 'ambiguous'])
+def test_multiple_candidate_plans_are_not_implicitly_a_batch(store, monkeypatch, selection):
+    ids = [main.tasks.create(f"Lecture {i}")['id'] for i in range(2)]
+    monkeypatch.setattr(main.settings, "enable_learning_calendar", True)
+    classify(monkeypatch, action="plan_request", task_ids=ids, target_selection=selection)
+    assert '要操作哪一項' in run('幫我安排 lecture')['reply']
+    assert all(main.learning_calendar().get(i) is None for i in ids)
+
+
+@pytest.mark.parametrize('text', ['幫我安排 Operating System lecture', '安排 task 1 或 task 2', '安排 task 1, 2, 3'])
+def test_model_all_selection_requires_explicit_matching_owner_evidence(store, monkeypatch, text):
+    ids = [main.tasks.create(f'Operating System lecture {i}')['id'] for i in range(2)]
+    monkeypatch.setattr(main.settings, 'enable_learning_calendar', True)
+    classify(monkeypatch, action='plan_request', task_ids=ids, target_selection='all', minutes=90)
+    assert '要操作哪一項' in run(text)['reply']
+    assert all(main.learning_calendar().get(i) is None for i in ids)
+
+
+def test_batch_plan_rechecks_every_target_after_interpretation(store, monkeypatch):
+    items = [main.tasks.create(f"Lecture {i}") for i in range(2)]
+    monkeypatch.setattr(main.settings, "enable_learning_calendar", True)
+    classify(monkeypatch, action="plan_request", task_ids=[t['id'] for t in items], target_selection="all", minutes=90)
+    action = asyncio.run(main.prepare_message('安排這兩項各 90 分鐘', update_id=1, chat_id=123))
+    main.tasks.complete(items[1]['id'])
+    assert '任務已變更' in main.db.process_update(1, action)['reply']
+    assert all(main.learning_calendar().get(t['id']) is None for t in items)
+
+
+def test_natural_plan_webhook_triggers_proposal_once_with_durable_receipt(system, monkeypatch):
+    client, tasks, bot, config = system
+    config.enable_learning_calendar = True
+    ids = [tasks.create(f'Lecture {i}')['id'] for i in range(3)]
+    classify(monkeypatch, action='plan_request', task_ids=ids, target_selection='all', minutes=90)
+    tick = AsyncMock()
+    monkeypatch.setattr('chronos.learning_calendar.LearningCalendar.tick', tick)
+    payload = {'update_id': 99001, 'message': {'chat': {'id': 123}, 'message_id': 120,
+        'text': '安排這三項，各 90 分鐘'}}
+    assert client.post('/telegram/webhook', json=payload,
+        headers={'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}).status_code == 200
+    tick.assert_awaited_once_with(force_proposal=True)
+    tokens = [main.learning_calendar().get(i)['token'] for i in ids]
+    assert client.post('/telegram/webhook', json=payload,
+        headers={'X-Telegram-Bot-Api-Secret-Token': 'test-hook'}).status_code == 200
+    assert [main.learning_calendar().get(i)['token'] for i in ids] == tokens
+    main.ai.classify_intent.assert_awaited_once()
 
 
 def test_natural_backward_preview_binds_for_confirmation(system, monkeypatch):
@@ -295,8 +410,11 @@ def test_legacy_card_edit_keeps_deterministic_path(system, monkeypatch):
     main.ai.classify_intent.assert_not_awaited()
 
 
-def test_batch_creation_is_atomic_and_replay_safe(store, monkeypatch):
-    text = "一次新增多筆 tasks 複習 database 第一章到第五章 需附上 hashtag"
+@pytest.mark.parametrize("text", [
+    "一次新增多筆 tasks 複習 database 第一章到第五章 需附上 hashtag",
+    "把資料庫第一章到第五章分成五個任務",
+])
+def test_batch_creation_is_atomic_and_replay_safe(store, monkeypatch, text):
     classify(monkeypatch, action="task_create", instruction="Review database chapters 1 to 5")
     parser = AsyncMock(return_value=[ParsedTask(f"Review database chapter {n}", project="database")
                                     for n in range(1, 6)])
@@ -308,7 +426,14 @@ def test_batch_creation_is_atomic_and_replay_safe(store, monkeypatch):
     second = store.process_update(9001, action)
     assert len(main.tasks.list_open()) == 5
     assert first["reply"] == second["reply"]
-    assert len(first["messages"]) == 11
+    assert len(first["messages"]) == 6
+    acknowledgement = first["messages"][0]
+    assert acknowledgement["task_created"] is True
+    assert "task_id" not in acknowledgement
+    assert acknowledgement["text"].startswith("<b>已加入 5 項待辦</b>")
+    assert [row[0]["callback_data"] for row in acknowledgement["reply_markup"]["inline_keyboard"]] == [
+        f"task:edit:{task['id']}" for task in main.tasks.list_open()]
+    assert first["messages"] == second["messages"]
     assert sum(bool(m.get('task_review')) for m in first['messages']) == 5
     assert all(item["project"] is None for item in main.tasks.list_open())
 
@@ -335,7 +460,7 @@ def test_ai_acknowledgement_never_changes_tasks_or_calls_edit(store, monkeypatch
     edit = AsyncMock()
     monkeypatch.setattr(main.ai, "edit", edit)
     receipt = run("先保持原樣就好", bound_task_id=task["id"] if bound else None)
-    assert receipt["reply"] == "收到"
+    assert receipt["reply"] == "Understood, Sir."
     assert "messages" not in receipt
     assert main.tasks.list_open() == before
     edit.assert_not_awaited()
@@ -346,6 +471,153 @@ def test_explicit_no_change_reply_skips_ai(store, monkeypatch):
     task = main.tasks.create("Preserve me")
     classify_mock = classify(monkeypatch, action="task_complete", task_ids=[task["id"]])
     before = main.tasks.list_open()
-    assert run("不需要記錄", bound_task_id=task["id"])["reply"] == "收到"
+    assert run("不需要記錄", bound_task_id=task["id"])["reply"] == "Understood, Sir. I’ll leave everything as it is."
     assert main.tasks.list_open() == before
     classify_mock.assert_not_awaited()
+
+
+@pytest.mark.parametrize("text,fragment", [
+    ("你好！", "Hello, Sir"), ("Thank you!", "welcome"),
+    ("你是真人嗎？", "AI assistant"), ("Who are you?", "Chronos"),
+    ("不用更新 task list。", "leave everything"),
+    ("What can you do?", "/info"), ("晚安", "Good night"),
+])
+def test_social_turns_preserve_tasks_pending_context_and_receipts(store, monkeypatch, text, fragment):
+    task = main.tasks.create("Keep this task")
+    before = main.tasks.list_open()
+    pending = {"instruction": "Edit title", "candidate_ids": [task["id"]]}
+    store.mutate_task_action_state("intent:clarify:123", lambda old: pending)
+    classifier = classify(monkeypatch, action="task_create")
+    receipt = run(text, update=77001, bound_task_id=task["id"])
+    assert fragment in receipt["reply"]
+    assert run(text, update=77001) == receipt
+    assert main.tasks.list_open() == before
+    assert store.get_task_action_state("intent:clarify:123") == pending
+    classifier.assert_not_awaited()
+    main.ai.parse_many.assert_not_awaited()
+
+
+@pytest.mark.parametrize("text", ["謝謝，明天提醒我交報告", "Hi, add a task to read", "你好是報告標題", "Who are you meeting tomorrow?"])
+def test_social_prefix_never_swallows_real_request(store, monkeypatch, text):
+    classifier = classify(monkeypatch, action="clarify", question="Which time?")
+    run(text)
+    classifier.assert_awaited_once()
+    assert main.tasks.list_open() == []
+
+
+def test_explicit_creation_keeps_social_word_as_task_title(store, monkeypatch):
+    classify(monkeypatch, action="unsupported")
+    action = asyncio.run(main.prepare_message("Hello", create_only=True))
+    store.process_update(77002, action)
+    main.ai.parse_many.assert_awaited_once_with("Hello")
+    assert len(main.tasks.list_open()) == 1
+
+
+def test_pending_question_explanation_preserves_original_request(store, monkeypatch):
+    mock = classify(monkeypatch, action='clarify', instruction='報名 Taione 和 YC', question='想在哪天處理報名？')
+    run('報名 Taione 和 YC')
+    reply = run('看不懂你的意思', update=2)
+    assert '報名 Taione 和 YC' in reply['messages'][0]['text']
+    assert '想在哪天處理報名' in reply['messages'][0]['text']
+    assert mock.await_count == 1
+    assert store.get_task_action_state('intent:clarify:123')['instruction'] == '報名 Taione 和 YC'
+    assert not main.tasks.list_open()
+
+
+def test_recent_request_is_bounded_and_passed_as_context(store, monkeypatch):
+    mock = classify(monkeypatch, action='task_create', instruction='報名 Taione 和 YC')
+    run('報名 Taione 和 YC')
+    mock.return_value = Intent(action='clarify', question='要安排多久？')
+    run('明後天因為要等 GPT 額度恢復', update=2)
+    recent = mock.await_args.kwargs['context']['recent_request']
+    assert recent['instruction'] == '報名 Taione 和 YC'
+    assert datetime.fromisoformat(recent['expires_at']) > datetime.now(main.settings.tz)
+
+
+def test_new_work_with_window_queues_same_created_task_and_replay(store, monkeypatch):
+    monkeypatch.setattr(main.settings, 'enable_learning_calendar', True)
+    begin = (datetime.now(main.settings.tz) + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    stop = begin + timedelta(days=2)
+    classify(monkeypatch, action='task_create', instruction='明天或後天安排 Taione 與 YC 報名，等 GPT 額度恢復', start=begin, end=stop)
+    reply = run('明天或後天安排個時間報名 Taione 和 YC')
+    items = main.tasks.list_open()
+    assert len(items) == 1
+    state = store.get_task_action_state(f"learning:task:{items[0]['id']}")
+    assert state['requested_window'] == {'start': begin.isoformat(), 'end': stop.isoformat()}
+    assert state['status'] == 'queued'
+    assert any(m.get('planning_requested') for m in reply['messages'])
+    assert run('明天或後天安排個時間報名 Taione 和 YC') == reply
+    assert len(main.tasks.list_open()) == 1
+
+
+def test_invalid_window_does_not_create(store, monkeypatch):
+    monkeypatch.setattr(main.settings, 'enable_learning_calendar', True)
+    now = datetime.now(main.settings.tz)
+    classify(monkeypatch, action='task_create', start=now, end=now-timedelta(days=1))
+    run('安排報名')
+    assert not main.tasks.list_open()
+    main.ai.parse.assert_not_awaited()
+
+
+def test_date_only_followup_reuses_created_id_despite_wrong_model_action(store, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    monkeypatch.setattr(main.settings, 'enable_learning_calendar', True)
+    mock = classify(monkeypatch, action='task_create', instruction='報名 Taione 和 YC')
+    run('報名 Taione 和 YC')
+    task = main.tasks.list_open()[0]
+    assert store.get_task_action_state('intent:recent:123')['task_ids'] == [task['id']]
+    planner = SimpleNamespace(request_proposals=Mock(return_value=('正在安排', True)))
+    monkeypatch.setattr(main, 'learning_calendar', lambda: planner)
+    mock.return_value = Intent(action='task_create', instruction='報名 Taione 和 YC，明後天因為要等 GPT 額度恢復')
+    run('明後天因為要等 GPT 額度恢復', update=2)
+    assert len(main.tasks.list_open()) == 1
+    assert main.ai.parse.await_count == 1
+    args, options = planner.request_proposals.call_args
+    assert args == ([task['id']],)
+    begin, stop = options['window']
+    assert begin.date() == datetime.now(main.settings.tz).date() + timedelta(days=1)
+    assert stop - begin == timedelta(days=2)
+
+
+def test_date_prefixed_new_request_does_not_inherit_recent_id(store, monkeypatch):
+    classify(monkeypatch, action='task_create', instruction='報名 Taione 和 YC')
+    run('報名 Taione 和 YC')
+    run('明天新增另一個報告任務', update=2)
+    assert len(main.tasks.list_open()) == 2
+
+
+def test_ambiguous_meeting_topic_is_clarified_before_independent_next_message(system):
+    client, tasks, bot, _ = system
+    headers = {"X-Telegram-Bot-Api-Secret-Token": "test-hook"}
+
+    def send(update_id, text):
+        return client.post("/telegram/webhook", json={
+            "update_id": update_id,
+            "message": {"message_id": update_id, "chat": {"id": 123}, "text": text},
+        }, headers=headers)
+
+    first = "重新規劃 11/18、11/19 的 meeting 主題"
+    assert send(98901, first).status_code == 200
+    main.ai.classify_intent.assert_not_awaited()
+    call = bot.send_message.await_args
+    assert "擬定會議議程" in call.args[1] and "修改行事曆上的會議標題" in call.args[1]
+    assert call.kwargs["requires_response"] is True
+    assert main.db.get_task_action_state("intent:clarify:123")["instruction"] == first
+    assert not tasks.list_open()
+
+    second = "檢查台南大學的參賽條件"
+    assert send(98902, second).status_code == 200
+    assert main.ai.classify_intent.await_args.args[0] == second
+    assert main.ai.parse.await_args.args[0] == second
+    assert len(tasks.list_open()) == 1
+    assert send(98901, first).status_code == 200
+    assert sum("擬定會議議程" in call.args[1] for call in bot.send_message.await_args_list) == 1
+
+
+def test_classifier_question_is_preserved_even_with_acknowledge_action(store, monkeypatch):
+    classify(monkeypatch, action="acknowledge", question="想調整哪一場會議？")
+    receipt = run("幫我調整一下")
+    assert receipt["messages"][0]["text"] == "想調整哪一場會議？"
+    assert receipt["messages"][0]["requires_response"] is True
+    assert store.get_task_action_state("intent:clarify:123")["question"] == "想調整哪一場會議？"

@@ -1,20 +1,30 @@
 """Cloud-driven tomorrow agenda with per-part durable delivery receipts."""
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta, time, timezone
 from html import escape
 from hashlib import sha256
 import re
 from uuid import uuid4
 
 from .task_timing import display_date
+from .tasks import project_display_name
 
 
-def render_agenda(events, day, tz, label="Tomorrow", db=None, now=None, show_task_ids=False, *, heading=None):
+def render_agenda(events, day, tz, label="Tomorrow", db=None, now=None, show_task_ids=False, *, heading=None,
+                  compact=False, show_project_tags=False, event_groups=None):
+    if db is not None and heading is None:
+        from .planning_holds import events as hold_events
+        begin=datetime.combine(day,time.min,tz)
+        events=[*events,*hold_events(db,max(begin,(now or datetime.now(tz))),begin+timedelta(days=1))]
     if heading is None:
-        heading = f"<b>{label} · {display_date(day.isoformat())}</b>"
+        date = display_date(day.isoformat())
+        heading = f"<b>{date if compact else label + ' · ' + date}</b>"
     now = now or datetime.now(tz)
+    project_aliases = None
     rows = []
     for event in events:
         title = escape((event.get("summary") or "Untitled event")[:500])
+        if compact:
+            title = " ".join(title.split())
         props = event.get("extendedProperties", {}).get("private", {})
         token = props.get("chronosToken")
         marker = None
@@ -38,42 +48,99 @@ def render_agenda(events, day, tz, label="Tomorrow", db=None, now=None, show_tas
             if marker is None and finish and datetime.fromisoformat(finish) <= now:
                 marker = "◇ Awaiting"
         if marker:
-            title += f"\n{marker}"
+            title += (" · " if compact else "\n") + marker
         if event["start"].get("date"):
             start = event["start"]["date"]
-            rows.append((start, f"All day · {title}"))
+            rows.append((start, f"All day · {title}", event))
         else:
             start = datetime.fromisoformat(event["start"]["dateTime"]).astimezone(tz)
             end = datetime.fromisoformat(event["end"]["dateTime"]).astimezone(tz)
-            duration = round((end - start).total_seconds() / 60)
+            duration = round((end.astimezone(timezone.utc) - start.astimezone(timezone.utc)).total_seconds() / 60)
             task_id = str(props.get("chronosTask", ""))
             task_suffix = f"({task_id})" if show_task_ids and re.fullmatch(r"[1-9][0-9]*", task_id) else ""
             begin = start.strftime("%H:%M") if start.date() == day else start.strftime("%m/%d %H:%M")
             stop = end.strftime("%H:%M") if end.date() == day else end.strftime("%m/%d %H:%M")
-            rows.append((start.isoformat(), f"{begin}–{stop} · {duration} minutes{task_suffix}\n{title}"))
+            if show_project_tags:
+                hashtag = ""
+                if db is not None and re.fullmatch(r"[1-9][0-9]*", task_id):
+                    task = db.get_task(int(task_id))
+                    if task and task.get("project"):
+                        if project_aliases is None:
+                            project_aliases = db.list_tag_aliases()
+                        project = project_display_name(str(task["project"]), project_aliases)
+                        hashtag = f" · #{escape(project)}"
+                row = f"{begin}–{stop}{hashtag}\n{title}"
+            else:
+                row = f"{begin}–{stop} · {title}" if compact else f"{begin}–{stop} · {duration} minutes{task_suffix}\n{title}"
+            rows.append((start.isoformat(), row, event))
     parts, text = [], heading
-    for _, row in sorted(rows):
-        if len(text) + len(row) > 3000:
+    first_row = True
+    group = []
+    for _, row, event in sorted(rows, key=lambda item: (item[0], item[1])):
+        if len((text+row).encode('utf-16-le')) // 2 > 3000:
             parts.append(text)
+            if event_groups is not None:
+                event_groups.append(group)
+            group = []
             text = heading + " · continued"
-        text += ("\n\n" if text else "") + row
+            first_row = True
+        separator = "\n\n" if first_row or not compact else "\n"
+        text += (separator if text else "") + row
+        first_row = False
+        group.append(event)
     parts.append(text if rows else (heading + "\n\n" if heading else "") + "No events scheduled.")
+    if event_groups is not None:
+        event_groups.append(group)
     return parts
 
 
+def is_full_day(start, end):
+    return start.time() == time.min and end == start + timedelta(days=1)
+
+
 def render_window_agenda(events, start, end, tz, db=None):
-    heading = f"{start:%m/%d %H:%M}–{end:%m/%d %H:%M}" if len(events) > 1 else ""
-    return render_agenda(events, start.date(), tz, db=db, heading=heading)
+    if is_full_day(start, end):
+        weekday = "一二三四五六日"[start.weekday()]
+        heading = f"<b>{start:%m/%d} ({weekday})</b>"
+    else:
+        heading = f"<b>{start:%m/%d %H:%M}–{end:%m/%d %H:%M}</b>"
+    if db is not None:
+        from .planning_holds import events as hold_events
+        events=[*events,*hold_events(db,start,end)]
+    return render_agenda(events, start.date(), tz, db=db, heading=heading, show_project_tags=True)
+
+
+def window_agenda_messages(events, start, end, tz, db=None):
+    options = {"delete_after_seconds": 15} if is_full_day(start, end) else {}
+    return [
+        {"text": part, "parse_mode": "HTML", **options}
+        for part in render_window_agenda(events, start, end, tz, db=db)
+    ]
 
 
 async def tomorrow_agenda(calendar, settings, now=None, *, day_offset=1, db=None):
-    """Read the full local day live, without changing evening delivery receipts."""
+    return [message['text'] for message in await agenda_messages(calendar, settings, now, day_offset=day_offset, db=db)]
+
+
+async def agenda_messages(calendar, settings, now=None, *, day_offset=1, db=None):
+    """Read the remaining today or full future day without delivery receipts."""
     now = (now or datetime.now(settings.tz)).astimezone(settings.tz)
     day = now.date() + timedelta(days=day_offset)
     start = datetime.combine(day, time.min, settings.tz)
+    end = start + timedelta(days=1)
+    if day_offset == 0:
+        start = now
     await calendar.verify_owner()
-    events = await calendar.agenda(start, start + timedelta(days=1))
-    return render_agenda(events, day, settings.tz, "Today" if day_offset == 0 else "Tomorrow", db=db, now=now, show_task_ids=day_offset == 0)
+    events = await calendar.agenda(start, end)
+    groups = []
+    parts = render_agenda(events, day, settings.tz, "Today" if day_offset == 0 else "Tomorrow", db=db, now=now,
+                          show_project_tags=day_offset == 0, event_groups=groups)
+    messages = [{'text': part, 'parse_mode': 'HTML'} for part in parts]
+    if day_offset == 0 and db is not None:
+        from .agenda_context import snapshot
+        for message, group in zip(messages, groups):
+            message['today_agenda'] = snapshot(group, db, now, settings)
+    return messages
 
 
 async def send_evening_agenda(db, calendar, telegram, settings, now=None):
@@ -100,7 +167,7 @@ async def send_evening_agenda(db, calendar, telegram, settings, now=None):
                 raise RuntimeError("Evening agenda delivery needs inspection; no duplicate was sent.")
             return {"already_sent": True}
         try:
-            result = await telegram.send_message(settings.telegram_chat_id, state["parts"][state["next"]], parse_mode="HTML")
+            result = await telegram.send_message(settings.telegram_chat_id, state["parts"][state["next"]], parse_mode="HTML", requires_response=False)
         except Exception:
             db.mutate_task_action_state(key, lambda old: {**old, "status": "uncertain"})
             raise RuntimeError("Evening agenda delivery is uncertain; inspect before retrying.") from None

@@ -51,7 +51,7 @@ async def command(db, ai, calendar, settings, text, chat_id, update_id, now=None
         items = (db.get_task_action_state(KEY) or {}).values()
         return '\n\n'.join(f"{item['token']} · {item['status']} · {line(item, settings)}" for item in items
                            if item['status'] in {'active', 'pending', 'sending', 'uncertain', 'failed'}
-                           and not (item['status'] == 'pending' and preview_expired(item, now))) or 'No upcoming reminders.'
+                           and not (item['status'] == 'pending' and preview_expired(item, now))) or 'You have no upcoming reminders, Sir.'
     if text.startswith('/cancelreminder '):
         return cancel(db, text.split(maxsplit=1)[1].strip(), chat_id)
     output = await ai.parse_reminder(re.sub(r'^/remind\s*', '', text), now)
@@ -84,12 +84,12 @@ async def command(db, ai, calendar, settings, text, chat_id, update_id, now=None
         return items
     item = db.mutate_task_action_state(KEY, save)[token]
     if item['status'] == 'pending':
-        return {'messages': [{'text': '<b>Time overlap — add anyway?</b>\n' + line(item, settings)
+        return {'messages': [{'text': '<b>This overlaps another commitment, Sir. Add it anyway?</b>\n' + line(item, settings)
                  + '\n\n' + '\n'.join(item['conflicts']), 'parse_mode': 'HTML',
                  'reply_markup': {'inline_keyboard': [[
                      {'text': 'Add anyway', 'callback_data': 'reminder:allow:' + token},
                      {'text': 'Cancel', 'callback_data': 'reminder:cancel:' + token}]]}}]}
-    return {'messages': [{'text': '<b>Reminder added</b>\n' + line(item, settings), 'parse_mode': 'HTML'}]}
+    return {'messages': [{'text': '<b>Your reminder is set, Sir.</b>\n' + line(item, settings), 'parse_mode': 'HTML'}]}
 
 
 def cancel(db, token, chat_id):
@@ -107,7 +107,7 @@ def confirm(db, token, action, chat_id, now=None):
             return items
         if action == 'cancel' and item['status'] in {'pending', 'active'}:
             items[token] = {**item, 'status': 'cancelled'}
-            reply = 'Reminder cancelled.'
+            reply = 'Your reminder has been cancelled, Sir.'
         elif action == 'allow' and item['status'] == 'pending':
             expired = preview_expired(item, now)
             items[token] = {**item, 'status': 'expired' if expired else 'active'}
@@ -124,7 +124,8 @@ async def tick(db, telegram, settings, now=None):
     sent = 0
     failed = 0
     for token, item in recover_stale_sends(db, now).items():
-        if item['status'] != 'active' or datetime.fromisoformat(item['start']) > now:
+        if (item['status'] != 'active' or item.get('chat_id') != settings.telegram_chat_id
+                or datetime.fromisoformat(item['start']) > now):
             continue
         if item.get('next_retry_at') and now < datetime.fromisoformat(item['next_retry_at']):
             continue
@@ -138,9 +139,23 @@ async def tick(db, telegram, settings, now=None):
         saved = db.mutate_task_action_state(KEY, reserve)[token]
         if saved.get('claim') != claim:
             continue
+        current = (db.get_task_action_state(KEY) or {}).get(token)
+        if not current or current.get('status') != 'sending' or current.get('claim') != claim:
+            continue
+        if any(current.get(field) != item.get(field) for field in ('chat_id', 'start', 'end', 'title')):
+            # An external state edit invalidated the claimed payload. Do not
+            # deliver stale content or silently move a claim to another owner.
+            def invalidate(old):
+                latest = (old or {}).get(token)
+                if latest and latest.get('claim') == claim and latest.get('status') == 'sending':
+                    return {**old, token: {**latest, 'status': 'uncertain'}}
+                return old
+            db.mutate_task_action_state(KEY, invalidate)
+            failed += 1
+            continue
         status = 'uncertain'
         try:
-            result = await telegram.send_message(item['chat_id'], '<b>Reminder</b>\n' + line(item, settings), parse_mode='HTML')
+            result = await telegram.send_message(item['chat_id'], '<b>A reminder for you, Sir.</b>\n' + line(item, settings), parse_mode='HTML', requires_response=False)
             if result.get('ok'):
                 status = 'sent'
                 sent += 1

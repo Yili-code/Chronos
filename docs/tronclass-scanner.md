@@ -29,6 +29,52 @@ Deployment alone does not execute a scan. `-EnableSchedule` checks the actual sc
 
 Verify these separately: source commit/image digest, Job configuration, execution completion, sanitized application outcome, persisted scan state, Telegram delivery, and Scheduler state. A successful Job process does not establish that the upstream scan succeeded: inspect the application outcome such as `completed`, `paused_by_calendar`, or `failure_recorded`.
 
+## Natural-language queries and manual refresh
+
+`assignment_query` reads persisted records and scan freshness without starting a
+Job, creating tasks, calling generation, or changing the scan baseline. It never
+equates no new discoveries with no outstanding tracked assignments. Both cached
+failure evidence and calendar-paused results are visible. Query course keys map
+only to the seven configured course IDs; listing uses stable task IDs and source
+links, not mutable task-list positions.
+
+An explicit `assignment_scan`, `/refreshassignments`, or refresh button persists
+an owner-bound request in the existing task-action state. After the receipt and
+acknowledgement are delivered, the public service invokes a fixed configured Job
+with Application Default Credentials and no per-execution overrides or school
+credentials. It does not wait for the upstream scan inside the webhook. Concurrent
+requests share the active record; a five-minute cooldown bounds repeated scans.
+Ambiguous launch outcomes remain uncertain instead of blindly launching twice.
+The existing ten-minute scanner lease also prevents concurrent collection.
+
+Any finishing scanner execution can satisfy a pending request, including a run
+already underway when the request arrived. Results use application outcomes, not
+the Cloud Run process exit status: `failure_recorded` must still answer the owner
+as a failure even though the process may exit zero. Interactive runs suppress the
+scheduled no-new notice and duplicate background failure alert, while existing
+first-discovery assignment cards remain idempotent. Final responses use the
+existing durable delivery ledger; uncertain delivery is not automatically resent.
+Explicit rejection can be retried on a later scanner execution. An execution
+that cannot start the application at all cannot publish its result; requests
+expire after thirty minutes and queries report the unknown outcome, never an
+empty source. Reconcile the Job execution before repeating an uncertain scan.
+
+Enable only after deploying the scanner and service from the same validated
+commit and sharing the same Firestore project/database/collection prefix:
+
+```powershell
+.\scripts\deploy_tronclass_assignment_scan.ps1
+.\scripts\deploy_cloud_run.ps1 -ProjectId YOUR_PROJECT -EnableAssignmentRefresh
+```
+
+This deployment switch verifies the scanner commit label, grants the runtime
+service account `roles/run.invoker` on that one Job, and configures
+`CHRONOS_ASSIGNMENT_SCAN_JOB`, `CHRONOS_ASSIGNMENT_SCAN_PROJECT` and
+`CHRONOS_ASSIGNMENT_SCAN_REGION`. Ordinary releases preserve these bindings.
+No school secrets are granted to the public runtime. Deployments and live manual
+scans remain separate authorized actions; tests do not establish active IAM,
+credentials, source availability or Telegram delivery.
+
 ## Read-only diagnostic tools
 
 `scripts/deploy_tronclass_auth_probe.ps1` and `scripts/deploy_tronclass_assignment_discovery.ps1` deploy their tools without executing them. Add `-ExecuteNow` only for an intended authentication or discovery check. Reports exclude credentials, cookies, tickets, query strings and page text. The discovery tool uses the same semester and roster scope as the scanner.

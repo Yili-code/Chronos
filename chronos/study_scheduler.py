@@ -8,6 +8,7 @@ from .study_delivery import StudyDeliveryLedger
 from .telegram import TelegramError
 from .academic_calendar import CalendarEvent, day_policy
 from .calendar_snapshot import is_current
+from . import course_habits
 
 
 def delivery_outcome(result: object) -> tuple[int | None, bool]:
@@ -47,11 +48,13 @@ async def tick_study(db, telegram, chat_id: int, now: datetime) -> dict:
         if db.get_course_session(candidate.session_id) is not None:
             continue
         key = candidate.session_id + ":prompt"
+        proposal = course_habits.prepare(db, candidate, chat_id, now)
         claim = ledger.claim(key, now)
         if claim is not None:
             try:
                 result = await telegram.send_message(
-                    chat_id, prompt_text(slot.name), parse_mode="HTML"
+                    chat_id, proposal[0] if proposal else prompt_text(slot.name), parse_mode="HTML", requires_response=True,
+                    **({'reply_markup': proposal[1]} if proposal else {}),
                 )
             except TelegramError:
                 ledger.finish(key, claim, now)
@@ -63,10 +66,12 @@ async def tick_study(db, telegram, chat_id: int, now: datetime) -> dict:
         delivery = db.get_study_delivery(key)
         if delivery and delivery["status"] == "sent":
             # A crash after recording the receipt is repaired without re-sending.
-            db.create_course_session(new_session(slot, now.date(), delivery["message_id"]), create_tasks=True)
+            db.create_course_session(new_session(slot, now.date(), delivery["message_id"]), create_tasks=not bool(proposal))
             created += 1
     reminders = 0
     for session in db.list_pending_course_sessions():
+        if db.get_task_action_state('course-proposal:' + course_habits.token_for(session)):
+            continue
         session = db.mutate_course_session(session.session_id,
             lambda current: mark_missed_at_day_end(current, local_date=now.date()))
         if suppress_course(session.course_key, session.class_date):
@@ -92,7 +97,7 @@ async def tick_study(db, telegram, chat_id: int, now: datetime) -> dict:
             try:
                 result = await telegram.send_message(chat_id,
                     f"尚未收到 {session.course_name} 的課堂進度。請直接回覆原始訊息；我會依此整理後續。",
-                    reply_to_message_id=session.prompt_message_id)
+                    reply_to_message_id=session.prompt_message_id, delete_after_seconds=60)
             except TelegramError:
                 ledger.finish(key, claim, now)
                 continue
@@ -128,7 +133,7 @@ async def notify_study_failures(db, telegram, chat_id: int, now: datetime) -> di
             try:
                 result = await telegram.send_message(chat_id,
                     f"{label}的送達狀態無法確認，且已達重試上限。"
-                    f"Chronos 已停止自動重送。{guidance}")
+                    f"Chronos 已停止自動重送。{guidance}", requires_response=True)
             except TelegramError:
                 ledger.finish(key, claim, now)
             else:

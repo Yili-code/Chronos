@@ -10,6 +10,7 @@ from chronos.gmail import GmailError
 from chronos.mail_workflow import MailWorkflow, MailSummary, filter_reason
 from chronos.settings import Settings
 from chronos.tasks import ParsedTask
+from chronos.mail_task_event import MailTaskIntent
 from chronos.telegram import TelegramError
 
 
@@ -47,7 +48,8 @@ def workflow(request, tmp_path, monkeypatch):
     else:
         db = Database(tmp_path / "mail.db")
         db.initialize()
-    config = Settings(_env_file=None, enable_gmail=True, gmail_account="owner@example.com",
+    # Legacy delivery/reconciliation contracts remain covered independently of screening.
+    config = Settings(_env_file=None, enable_gmail=True, gmail_first_layer_screening=False, gmail_account="owner@example.com",
                       gmail_client_id="client", gmail_client_secret="secret", gmail_refresh_token="refresh",
                       telegram_chat_id=123, telegram_bot_token="token", telegram_webhook_secret="hook")
     gmail = AsyncMock()
@@ -64,6 +66,9 @@ def workflow(request, tmp_path, monkeypatch):
     ai = AsyncMock()
     ai._generate_output.return_value = MailSummary(summary="待完成報告", next_step="確認期限")
     ai.parse.return_value = ParsedTask("Finish report")
+    async def generate(*args, **kwargs):
+        return MailTaskIntent(kind='reading') if args[-2] is MailTaskIntent else ai._generate_output.return_value
+    ai._generate_output.side_effect = generate
     return MailWorkflow(db, gmail, bot, ai, config)
 
 
@@ -118,7 +123,8 @@ async def test_task_creation_is_atomic_across_updates_and_preserves_source(workf
     actions = [await workflow.prepare_action("ab13", "新增任務：明天完成報告") for _ in range(2)]
     first = workflow.db.process_update(701, actions[0])
     second = workflow.db.process_update(702, actions[1])
-    assert "#1" in first["reply"] and "#1" in second["reply"]
+    assert first["reply"] == second["reply"] == "郵件任務已新增。"
+    assert workflow.get("message:ab13")["task_id"] == 1
     tasks = workflow.db.list_open_tasks()
     assert len(tasks) == 1
     assert "#all/ab13" in tasks[0]["timing"]["source_text"]
@@ -214,12 +220,12 @@ def test_mail_card_escapes_html_and_hides_display_noise():
     text = format_mail_card(mail, "原文摘錄（摘要暫不可用）：A & B <test>", "owner@example.com")
     assert "7693d1e" not in text and "暫不可用" not in text
     assert "<b>寄件者</b>  Yili &lt;notifications@github.com&gt;" in text
-    assert "<b>Original excerpt</b>\nA &amp; B &lt;test&gt;" in text
+    assert "<b>原文摘錄</b>\nA &amp; B &lt;test&gt;" in text
     assert "<script>" not in text
-    assert "Open email</a>" in text
+    assert "開啟郵件</a>" in text
     assert "7693d1e" in mail["subject"]
     buttons = mail_buttons("ab12", True)["inline_keyboard"]
-    assert [b["text"] for row in buttons for b in row] == ["Trash", "Task", "Archive", "Read"]
+    assert [b["text"] for row in buttons for b in row] == ["垃圾桶", "加入安排", "封存", "已讀"]
 
 
 @pytest.mark.parametrize("subject", ["安全性快訊", "New sign-in on Windows", "Unusual login activity", "Your password was changed", "密碼已變更"])
@@ -254,17 +260,17 @@ async def test_read_action_finishes_backlog_item_without_archiving(workflow):
 async def test_task_button_requires_yes_and_supports_edit_cancel(workflow):
     workflow.patch("message:ab12", mail=message())
     preview = await workflow.prepare_action("ab12", "task")
-    assert preview().startswith("Create this task?")
+    assert preview().startswith("新增這個郵件任務？")
     assert not workflow.db.list_open_tasks()
     state = workflow.get("message:ab12")
     old = state["draft_token"]
     (await workflow.prepare_action("ab12", "edit_" + old))()
-    assert "before confirming" in (await workflow.prepare_action("ab12", "confirm_" + old))()
+    assert "請先輸入" in (await workflow.prepare_action("ab12", "confirm_" + old))()
     (await workflow.prepare_action("ab12", "Review deployment failure"))()
     token = workflow.get("message:ab12")["draft_token"]
-    assert "expired" in (await workflow.prepare_action("ab12", "confirm_" + old))()
-    assert "Added task" in (await workflow.prepare_action("ab12", "confirm_" + token))()
-    assert "No duplicate" in (await workflow.prepare_action("ab12", "confirm_" + token))()
+    assert "已過期" in (await workflow.prepare_action("ab12", "confirm_" + old))()
+    assert "郵件任務已新增。" in (await workflow.prepare_action("ab12", "confirm_" + token))()
+    assert "未重複新增" in (await workflow.prepare_action("ab12", "confirm_" + token))()
     assert len(workflow.db.list_open_tasks()) == 1
     workflow.ai.parse.assert_not_awaited()
 

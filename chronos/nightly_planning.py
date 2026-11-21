@@ -22,7 +22,7 @@ def class_blocks(day, settings, policy):
             for start, end in class_windows(day, settings.tz, policy)]
 
 
-def free_windows(day, busy, settings, policy=None):
+def free_windows(day, busy, settings, policy=None, *, minimum_minutes=30):
     """Subtract merged commitments; 30 minutes is a gap threshold, not a grid."""
     from .learning_calendar import short_task_windows
     begin, end = day_bounds(day, settings)
@@ -31,10 +31,10 @@ def free_windows(day, busy, settings, policy=None):
         if a < end and b > begin)
     cursor, result = begin, []
     for start, stop in blocked:
-        if start - cursor >= timedelta(minutes=30):
+        if start - cursor >= timedelta(minutes=minimum_minutes):
             result.append((cursor, start))
         cursor = max(cursor, stop)
-    if end - cursor >= timedelta(minutes=30):
+    if end - cursor >= timedelta(minutes=minimum_minutes):
         result.append((cursor, end))
     return result
 
@@ -57,17 +57,20 @@ def state_window(state):
     return state.get('nightly_slot', state) if state.get('duration_source') == 'nightly_ai' else state
 
 
-def slot_allowed(planner, task, state, now, busy, booked_minutes=None):
-    """Recheck the exact allocated slot without imposing a 15/30-minute grid."""
+def check_slot(planner, task, state, now, busy, booked_minutes=None):
+    """Return a valid exact allocation or concrete reasons why it was invalidated."""
     from .learning_calendar import class_windows, overlaps, short_task_windows
     from .backward_planning import reserved_windows
     cfg = planner.settings
     start, end = (datetime.fromisoformat(state['nightly_slot'][k]).astimezone(cfg.tz) for k in ('start', 'end'))
-    begin, stop = day_bounds(start.date(), cfg)
+    from .study_constraints import approved_window
+    begin, stop = day_bounds(start.date(), cfg.model_copy(update={'learning_start_hour':0,'learning_end_hour':24}) if state.get('owner_window') else cfg)
+    working_allowed=approved_window(state,start,end) if state.get('owner_window') else begin<=start<end<=stop
     due = deadline(task, cfg)
     policy = planner.db.get_task_action_state('learning:course-calendar-policy')
-    blocked = [*busy, *reserved_windows(planner.db), *class_blocks(start.date(), cfg, policy),
-               *short_task_windows(start.date(), cfg.tz, 30)]
+    classes = class_blocks(start.date(), cfg, policy)
+    reserved = reserved_windows(planner.db)
+    pending = []
     load = sum((b - a).total_seconds() / 60 for a, b in class_windows(start.date(), cfg.tz, policy))
     day_key = start.date().isoformat()
     load += (booked_minutes[day_key] if booked_minutes is not None and day_key in booked_minutes else
@@ -79,13 +82,57 @@ def slot_allowed(planner, task, state, now, busy, booked_minutes=None):
         source = state_window(old)
         if source.get('start') and source.get('end'):
             a, b = (datetime.fromisoformat(source[k]).astimezone(cfg.tz) for k in ('start', 'end'))
-            blocked.append((a, b))
+            pending.append((a, b))
             load += max(0, (min(stop, b) - max(begin, a)).total_seconds() / 60)
-    valid = (begin <= start < end <= stop and start > now and (due is None or end <= due)
-             and int((end - start).total_seconds() / 60) == state['requested_minutes']
-             and load + state['requested_minutes'] <= cfg.learning_daily_minutes
-             and not overlaps(start, end, blocked))
-    return (start, end) if valid else None
+    reasons = []
+    if not working_allowed:
+        reasons.append('working_hours')
+    if start <= now:
+        reasons.append('elapsed')
+    if due is not None and end > due:
+        reasons.append('deadline')
+    if int((end - start).total_seconds() / 60) != state['requested_minutes']:
+        reasons.append('duration_changed')
+    if load + state['requested_minutes'] > cfg.learning_daily_minutes:
+        reasons.append('daily_limit')
+    if overlaps(start, end, [*busy, *reserved]):
+        reasons.append('calendar_conflict')
+    if overlaps(start, end, [*classes, *short_task_windows(start.date(), cfg.tz, 30)]):
+        reasons.append('fixed_commitment')
+    if overlaps(start, end, pending):
+        reasons.append('pending_plan')
+    return ((start, end) if not reasons else None), reasons
+
+
+def slot_allowed(planner, task, state, now, busy, booked_minutes=None):
+    return check_slot(planner, task, state, now, busy, booked_minutes)[0]
+
+
+def replacement_slot(planner, task, state, now, busy, booked_minutes=None):
+    """Search current capacity while retaining every other pending allocation."""
+    from .learning_calendar import find_slot, short_task_windows
+    from .backward_planning import reserved_windows
+    cfg, db = planner.settings, planner.db
+    policy = db.get_task_action_state('learning:course-calendar-policy')
+    pending = []
+    for other in db.list_open_tasks():
+        old = planner.get(other['id'])
+        if other['id'] == task['id'] or not old or old.get('status') not in {'queued', 'planning', 'proposed', 'editing', 'creating'}:
+            continue
+        source = state_window(old)
+        if source.get('start') and source.get('end'):
+            pending.append(tuple(datetime.fromisoformat(source[k]).astimezone(cfg.tz) for k in ('start', 'end')))
+    budgets, classes = {}, []
+    for offset in range(8):
+        day = now.date() + timedelta(days=offset)
+        key = day.isoformat()
+        begin, end = day_bounds(day, cfg)
+        classes.extend([*class_blocks(day, cfg, policy), *short_task_windows(day, cfg.tz, 30)])
+        budgets[key] = ((booked_minutes[key] if booked_minutes is not None and key in booked_minutes else
+                        sum((db.get_task_action_state('learning:day:' + key) or {}).values()))
+                        + sum(max(0, (min(end, b) - max(begin, a)).total_seconds() / 60) for a, b in pending))
+    return find_slot(task, now, [*busy, *reserved_windows(db), *pending, *classes], [], cfg,
+                     state['requested_minutes'], budgets, policy)
 
 
 def deadline(task, settings):

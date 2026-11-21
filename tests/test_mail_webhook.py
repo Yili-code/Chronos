@@ -1,16 +1,25 @@
+import pytest
 from unittest.mock import AsyncMock
 
 from chronos import main
 from chronos.tasks import ParsedTask
-from test_system import system
+from chronos.mail_task_event import MailTaskIntent
+from test_system import system, observe_message_lifecycle
+
+
+@pytest.fixture(autouse=True)
+def immediate_notice_timer(monkeypatch):
+    monkeypatch.setattr(main.asyncio, "sleep", AsyncMock())
 
 
 def enable(config, monkeypatch):
+    observe_message_lifecycle(main.telegram, delay=main.asyncio.sleep)
     config.enable_gmail = True
     config.gmail_account = "owner@example.com"
     config.gmail_client_id = "client"
     config.gmail_client_secret = "secret"
     config.gmail_refresh_token = "refresh"
+    monkeypatch.setattr(main.ai, '_generate_output', AsyncMock(return_value=MailTaskIntent(kind='reading')))
     gmail = AsyncMock()
     monkeypatch.setattr(main, "gmail", gmail)
     mail = main.mail_workflow()
@@ -83,9 +92,12 @@ def test_mail_status_is_authenticated_and_read_only(system, monkeypatch):
     gmail.verify_account.assert_not_awaited()
     result = client.get("/internal/mail/status", headers={"X-Chronos-Scheduler-Secret": "test-scheduler"})
     assert result.status_code == 200
-    assert result.json()["send_enabled"] is False
+    assert result.json()["send_enabled"] is True
+    assert result.json()["send_requires_confirmation"] is True
+    assert result.json()["automatic_send_enabled"] is False
     gmail.trash.assert_not_awaited()
     gmail.mark_read.assert_not_awaited()
+    gmail.send_reviewed_draft.assert_not_awaited()
     bot.send_message.assert_not_awaited()
 
 
@@ -168,7 +180,7 @@ def test_task_confirmation_buttons_and_edit_reply(system, monkeypatch):
     assert post(client, 9200, callback="mail:task:ab12").status_code == 200
     assert not tasks.list_open()
     buttons = bot.send_message.call_args.kwargs["reply_markup"]["inline_keyboard"][0]
-    assert [b["text"] for b in buttons] == ["Yes", "Edit", "Cancel"]
+    assert [b["text"] for b in buttons] == ["確認", "修改", "取消"]
     edit = buttons[1]["callback_data"]
     bot.send_message.return_value = {"ok": True, "result": {"message_id": 701}}
     assert post(client, 9201, callback=edit, card=700).status_code == 200
@@ -181,7 +193,7 @@ def test_task_confirmation_buttons_and_edit_reply(system, monkeypatch):
     assert len(tasks.list_open()) == 1
     assert tasks.list_open()[0]["title"] == "Investigate failed deployment"
     deleted = [call.args[1]["message_id"] for call in bot.request.await_args_list]
-    assert deleted == [500, 702]
+    assert deleted == [500, 702, 702]
     assert post(client, 9203, callback=yes, card=702).status_code == 200
     assert len(tasks.list_open()) == 1
 
@@ -224,3 +236,86 @@ def test_daily_mail_endpoint_auth_and_separation(system, monkeypatch):
     assert client.post('/internal/daily', headers=headers).status_code == 200
     daily_tasks.assert_awaited_once()
     mail.assert_awaited_once()
+
+
+@pytest.mark.parametrize("callback", ["mail:read:ab12", "mail:keep:ab12", "mail:task:ab12"])
+def test_terminal_mail_notices_expire_and_replay_does_not_resend(system, monkeypatch, callback):
+    client, tasks, bot, config = system
+    enable(config, monkeypatch)
+    if callback == "mail:task:ab12":
+        main.mail_workflow().patch("message:ab12", task_id=42)
+    bot.send_message.return_value = {"ok": True, "result": {"message_id": 777}}
+    assert post(client, 9500, callback=callback).status_code == 200
+    main.asyncio.sleep.assert_awaited_once()
+    assert 0 <= main.asyncio.sleep.await_args.args[0] <= 15
+    assert bot.request.await_args.args == ("deleteMessage", {"chat_id": 123, "message_id": 777})
+    assert post(client, 9500, callback=callback).status_code == 200
+    bot.send_message.assert_awaited_once()
+    main.asyncio.sleep.assert_awaited_once()
+
+
+def test_notice_cleanup_failure_retries_deletion_without_resend(system, monkeypatch):
+    client, tasks, bot, config = system
+    enable(config, monkeypatch)
+    main.mail_workflow().patch("message:ab12", task_id=42)
+    bot.send_message.return_value = {"ok": True, "result": {"message_id": 777}}
+    async def delete(method, data):
+        if data["message_id"] == 777:
+            return {"ok": False, "error_code": 500}
+        return {"ok": True}
+    bot.request.side_effect = delete
+    assert post(client, 9501, callback="mail:task:ab12").status_code == 200
+    assert bot.expiry.read()
+    assert main.db.get_update(9501)["delivered"]
+    bot.request.side_effect = None
+    bot.request.return_value = {"ok": True}
+    assert post(client, 9501, callback="mail:task:ab12").status_code == 200
+    bot.send_message.assert_awaited_once()
+    assert not bot.expiry.read()
+
+
+def test_failed_notice_send_does_not_start_deletion_timer(system, monkeypatch):
+    client, tasks, bot, config = system
+    enable(config, monkeypatch)
+    main.mail_workflow().patch("message:ab12", task_id=42)
+    bot.send_message.return_value = {"ok": False, "error_code": 500}
+    assert post(client, 9502, callback="mail:task:ab12").status_code == 502
+    main.asyncio.sleep.assert_not_awaited()
+    assert not bot.expiry.read()
+
+
+def test_newsletter_read_callback_deletes_only_the_telegram_page(system, monkeypatch):
+    import asyncio
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    from chronos.mail_screening import digest
+
+    client, _, bot, config = system
+    gmail = enable(config, monkeypatch)
+    fixed = datetime.now(config.tz)
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed if tz else fixed.replace(tzinfo=None)
+
+    monkeypatch.setattr(main, "datetime", FixedDateTime)
+    monkeypatch.setattr("chronos.message_lifecycle.time", SimpleNamespace(time=fixed.timestamp))
+    workflow = main.mail_workflow()
+    day = "daily:2026-11-05"
+    workflow.patch(day + ":screening-digest", pages=["<b>電子報｜11/05</b>"], html=True)
+    bot.send_message.return_value = {"ok": True, "result": {"message_id": 511}}
+    asyncio.run(digest(workflow, day, {"ids": []}))
+    button, = bot.send_message.await_args.kwargs["reply_markup"]["inline_keyboard"][0]
+    assert button["text"] == "已讀"
+    bot.request.assert_not_awaited()
+
+    payload = {"update_id": 91051, "callback_query": {"id": "read",
+        "data": button["callback_data"], "message": {"message_id": 511, "chat": {"id": 123, "type": "private"}}}}
+    response = client.post("/telegram/webhook", json=payload,
+                           headers={"X-Telegram-Bot-Api-Secret-Token": "test-hook"})
+    assert response.status_code == 200
+    bot.expiry.sleep.assert_awaited_once_with(15)
+    bot.request.assert_awaited_once_with("deleteMessage", {"chat_id": 123, "message_id": 511})
+    gmail.mark_read.assert_not_awaited()

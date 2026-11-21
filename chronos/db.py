@@ -5,11 +5,13 @@ from contextvars import ContextVar
 from datetime import datetime
 from dataclasses import replace
 from pathlib import Path
+from zoneinfo import ZoneInfo
 from typing import Callable, Iterator
 
+from .course_tags import assignment_project
 from .reply_policy import is_no_change_reply
 from .course_tracking import ProgressReportKind, ProgressSession, accept_reply, mark_missed_at_day_end
-from .course_tracking_store import session_from_firestore, session_to_firestore
+from .course_tracking_store import course_progress_receipt, session_from_firestore, session_to_firestore
 from .assignments import Assignment, to_record, from_record, set_deadline, owner_deadline_edit
 from .task_timing import normalize_timing, task_sort_key
 from .task_actions import TaskActions, task_fields
@@ -151,8 +153,23 @@ class Database(TaskActions):
             )
             return state
 
-    def __init__(self, path: Path):
+    def compare_mail_states(self, expected, changes):
+        """Commit a workflow only if every observed document is unchanged."""
+        if not set(changes) <= set(expected):
+            raise ValueError("Mail changes require an expected state")
+        scope = self.connect() if self._transaction.get() is not None else self.transaction()
+        with scope as connection:
+            if any(self.get_mail_state(key) != value for key, value in expected.items()):
+                return False
+            for key, value in changes.items():
+                connection.execute(
+                    "INSERT INTO mail_state VALUES (?, ?) ON CONFLICT(state_key) DO UPDATE SET state_json=excluded.state_json",
+                    (key, json.dumps(value)))
+            return True
+
+    def __init__(self, path: Path, *, tz=None):
         self.path = path
+        self.tz = tz or ZoneInfo('Asia/Taipei')
         self._transaction: ContextVar[sqlite3.Connection | None] = ContextVar("transaction", default=None)
 
     def initialize(self) -> None:
@@ -357,7 +374,7 @@ class Database(TaskActions):
             excluded = {row['task_id'] for row in connection.execute(
                 "SELECT task_id, record_json FROM assignments")
                 if json.loads(row['record_json']).get('course_id') not in TRACKED_COURSES}
-        return sorted((self._task_data(row) for row in rows if row['id'] not in excluded), key=task_sort_key)
+        return sorted((self._task_data(row) for row in rows if row['id'] not in excluded), key=lambda task: task_sort_key(task, self.tz))
 
     def create_assignment(self, assignment: Assignment) -> dict:
         """Persist source identity and its ordinary task together, exactly once."""
@@ -365,7 +382,7 @@ class Database(TaskActions):
             row = connection.execute("SELECT * FROM assignments WHERE source_key=?", (assignment.key,)).fetchone()
             if row:
                 return {"task_id": row["task_id"], "assignment": from_record(json.loads(row["record_json"]))}
-            task = self.create_task(assignment.title, assignment.deadline, assignment.course_id, assignment.discovered_at)
+            task = self.create_task(assignment.title, assignment.deadline, assignment_project(assignment.course_id), assignment.discovered_at)
             connection.execute("INSERT INTO assignments VALUES (?, ?, ?)",
                                (assignment.key, task["id"], json.dumps(to_record(assignment))))
             return {"task_id": task["id"], "assignment": assignment}
@@ -528,6 +545,17 @@ class Database(TaskActions):
                     connection.execute("UPDATE assignments SET record_json=? WHERE task_id=?", (json.dumps(data), task_id))
         return cursor.rowcount == 1
 
+    def complete_tasks(self, task_ids: list[int], completed_at: datetime) -> bool:
+        scope = self.connect() if self._transaction.get() is not None else self.transaction()
+        with scope:
+            for task_id in task_ids:
+                task = self.get_task(task_id)
+                if task is None or task["status"] != "open":
+                    return False
+            for task_id in task_ids:
+                self.complete_task(task_id, completed_at)
+        return True
+
     def confirm_assignment_deadline(self, task_id: int, deadline: datetime) -> bool:
         scope = self.connect() if self._transaction.get() is not None else self.transaction()
         with scope as connection:
@@ -634,14 +662,17 @@ class Database(TaskActions):
             ).fetchone()
         return session_from_firestore(dict(row)) if row else None
 
-    def record_course_reply(self, prompt_id: int, message_id: int, text: str, *, local_date=None) -> str:
+    def record_course_reply(
+        self, prompt_id: int, message_id: int, text: str, *, local_date=None,
+        expire_prompt: bool = False,
+    ) -> str | dict:
         """Called inside process_update, sharing the webhook receipt transaction."""
         with self.connect() as connection:
             row = connection.execute(
                 "SELECT * FROM course_sessions WHERE prompt_message_id = ?", (prompt_id,)
             ).fetchone()
             if row is None:
-                return "這則回覆未對應到課後進度問題。請直接回覆原始訊息。"
+                return "這張卡片目前無法辨識。請用 /tasks 查看待辦，或用 /plan 查看最新規劃。"
             session = session_from_firestore(dict(row))
             if is_no_change_reply(text):
                 return "收到"
@@ -663,14 +694,7 @@ class Database(TaskActions):
                 now = datetime.now().astimezone()
                 self.complete_task(session.survey_task_id, now)
             self.save_course_session(answered)
-            if answered.report_kind is ProgressReportKind.UNKNOWN_SCOPE:
-                return (f"已記錄 {session.course_name}（{session.class_date:%m/%d}）：範圍尚待確認。\n"
-                        "填寫進度代辦已完成，已新增確認上課範圍代辦。")
-            if answered.report_kind is ProgressReportKind.NO_PROGRESS:
-                return (f"已記錄 {session.course_name}（{session.class_date:%m/%d}）：今天無課或沒有進度。\n"
-                        "填寫進度代辦已完成，其他代辦保持不變。")
-            return (f"已記錄 {session.course_name}（{session.class_date:%m/%d}）的進度。\n"
-                    "填寫進度代辦已完成，其他代辦保持不變。")
+            return course_progress_receipt(answered, expire_prompt=expire_prompt)
 
     def get_course_session(self, session_id: str) -> ProgressSession | None:
         with self.connect() as connection:
@@ -719,5 +743,6 @@ def create_database(settings):
             project_id=settings.firestore_project_id or None,
             database_id=settings.firestore_database,
             collection_prefix=settings.firestore_collection_prefix,
+            tz=settings.tz,
         )
-    return Database(settings.database_path)
+    return Database(settings.database_path, tz=settings.tz)

@@ -9,15 +9,41 @@ from .google_calendar import CalendarError
 from .learning_calendar import find_slot, overlaps
 from .study_reflow import bounds, movable, apply, reconcile, ReflowReviewError
 from .task_actions import task_fields
+from .temporal_constraints import literal_weekday_conflict
+
+
+def cancel_request(text):
+    return bool(re.fullmatch(r'\s*(?:/cancel(?:@[A-Za-z0-9_]+)?|取消(?:剛才|刚才)?(?:那個|那个|這次|这次)?(?:調整|调整|改排|提案)?|cancel(?:\s+(?:this|that|the))?(?:\s+(?:change|proposal|adjustment))?)(?:[，,]\s*原行程不要動)?[。.!！]?\s*',text or '',re.I))
 
 
 def key(chat_id):
     return f'replan:chat:{chat_id}'
 
 
+def revoke_pending(db, chat_id, previous):
+    """New constraints revoke the old approval before any external parsing."""
+    if not previous or previous.get('status') != 'pending':
+        return True
+    current = db.mutate_task_action_state(key(chat_id), lambda old:
+        {**old, 'status': 'editing'} if old and old.get('token') == previous['token']
+        and old.get('status') == 'pending' else old)
+    return bool(current and current.get('token') == previous['token'] and current.get('status') == 'editing')
+
+
 def card(state):
-    lines = ['<b>Review calendar changes</b>',
-             f"Requested window: {escape(state['start'])} → {escape(state['end'])}"]
+    if state.get('task_slot'):
+        from .task_slot import card as slot_card
+        return slot_card(state)
+    if state.get('ordered_sequence'):
+        from .sequence_replan import card as ordered_card
+        return ordered_card(state)
+    start_label = state['start'][:16].replace('T', ' ')
+    end_label = state['end'][11:16] if state['start'][:10] == state['end'][:10] else state['end'][:16].replace('T', ' ')
+    lines = ['<b>行程調整提案</b>', f"範圍：{escape(start_label)} → {escape(end_label)}"]
+    if state.get('focus_reservation'):lines.append('保留給：'+escape(state['focus_reservation']['title']))
+    if state.get('focus_task'):lines.append('這是專注時段保留，不會標記任務完成；原有目標工作時段保留。')
+    if state.get('owner_window'):lines.append(f"工作會限制在這個範圍，間隔休息 {state.get('break_minutes',0)} 分鐘。")
+    for rest in state.get('revision_breaks',[]):lines.append(f"短休息：{rest['start'][11:16]}–{rest['end'][11:16]}")
     blocked = state.get('blocked_events', [])
     if blocked:
         lines += ['', '<b>Still occupied</b>',
@@ -29,6 +55,11 @@ def card(state):
         lines += ['', '<b>' + escape(move['title']) + '</b>',
                   f"{move['old_start'][:16].replace('T', ' ')}–{move['old_end'][11:16]}",
                   f"→ {move['start'][:16].replace('T', ' ')}–{move['end'][11:16]}"]
+    for item in state.get('revision_additions', []):
+        lines += ['', '<b>' + escape(item['title']) + '</b>',
+                  f"New session: {item['start'][:16].replace('T', ' ')}–{item['end'][11:16]} · {item['minutes']} minutes"]
+    if state.get('revision_additions'):
+        lines += ['', 'Unfinished chapters remain open. New sessions enter the existing booking workflow after Allow.']
     lines += ['', 'Nothing changes until Allow.']
     token = state['token']
     return {'messages': [{'text': '\n'.join(lines), 'parse_mode': 'HTML', 'replan_token': token,
@@ -37,15 +68,35 @@ def card(state):
 
 
 def bind(db, chat_id, message_id, message):
-    token = message.get('replan_token')
+    token = message.get('replan_token') or message.get('replan_preview_token')
     if token:
-        db.mutate_task_action_state(key(chat_id), lambda old: {**old, 'message_id': message_id}
+        db.mutate_task_action_state(key(chat_id), lambda old: {**old,
+            'preview_message_ids': list(dict.fromkeys([*old.get('preview_message_ids', []), message_id])),
+            **({'message_id': message_id} if message.get('replan_token') else {})}
                                     if old and old.get('token') == token else old)
 
 
+def clears_all_day_tomorrow(instruction):
+    return bool(re.fullmatch(
+        r"\s*(?:幫我|帮我)?\s*(?:清空|騰出|腾出|空出)\s*(?:明天|明日)\s*"
+        r"(?:整天|全天)\s*的?\s*(?:所有|全部)?\s*(?:行程|安排|活動|活动)"
+        r"(?:[，,。]\s*(?:我有|我要|因為|因为).+)?[。！!]?[\s]*",
+        instruction,
+    ))
+
+
 def explicit_window(instruction, now):
-    """Resolve a complete, explicit same-day request without model ambiguity."""
+    """Resolve a complete, explicit request without model ambiguity."""
+    if clears_all_day_tomorrow(instruction):
+        start = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(days=1)
+        return ReplanOutput(actionable=True, start=start.isoformat(), end=end.isoformat(),
+                            destination_start=end.isoformat())
     normalized = re.sub(r"\s+", "", instruction)
+    if re.search(r'(?:今天|今日)下午.*(?:留給|留给).{1,120}(?:準備|准备)',instruction,re.I):
+        start=max(now,now.replace(hour=13,minute=0,second=0,microsecond=0))
+        end=now.replace(hour=18,minute=0,second=0,microsecond=0)
+        return ReplanOutput(actionable=True,start=start.isoformat(),end=end.isoformat(),destination_start=end.isoformat())
     if re.fullmatch(r"(?:幫我)?(?:清空|騰出|空出)(?:今天晚上|今晚)(?:的)?(?:所有)?(?:行程|事情|安排|活動)?[。！!]?", normalized):
         start = max(now, now.replace(hour=18, minute=0, second=0, microsecond=0))
         end = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -88,7 +139,7 @@ def explicit_window(instruction, now):
     return ReplanOutput(actionable=True, start=now.isoformat(), end=end, destination_start=end)
 
 
-async def preview(planner, chat_id, instruction, update_id, now=None):
+async def preview(planner, chat_id, instruction, update_id, now=None, *, focus_task=None, focus_window=None):
     now = now or datetime.now(planner.settings.tz)
     db, config = planner.db, planner.settings
     previous = db.get_task_action_state(key(chat_id))
@@ -97,8 +148,13 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
         return 'A calendar change needs recovery. Use Allow on its existing card before replanning.'
     if previous and previous.get('token') == token:
         return card(previous)
+    if not revoke_pending(db, chat_id, previous):
+        return 'The previous review changed. Check its current result before requesting a replacement.'
+    conflict = literal_weekday_conflict(instruction, now.astimezone(config.tz))
+    if conflict:
+        return conflict
     try:
-        output = explicit_window(instruction, now) or await planner.ai.parse_replan(instruction, now,
+        output = (ReplanOutput(actionable=True, start=focus_window[0].isoformat(), end=focus_window[1].isoformat(), destination_start=focus_window[1].isoformat()) if focus_window else explicit_window(instruction, now)) or await planner.ai.parse_replan(instruction, now,
             {k: previous[k] for k in ('start', 'end', 'destination_start')} if previous and previous.get('status') == 'editing' else None)
         if not output.actionable:
             raise ValueError
@@ -119,7 +175,13 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
     events = await planner.calendar.agenda(now, horizon)
     tasks = {t['id']: t for t in db.list_open_tasks()}
     states = {i: planner.get(i) for i in tasks}
+    focus=re.search(r'(?:留給|留给)\s*(.{1,100}?(?:準備|准备))',instruction,re.I)
+    focus_title = focus_task["title"] if focus_task else focus[1].strip() if focus else None
+    if focus_task and (focus_task["id"] not in tasks or task_fields(tasks[focus_task["id"]]) != task_fields(focus_task)):
+        return "指定任務已變更，請重新確認。沒有調整行程。"
+    study_only=bool(focus_task) or bool(re.search(r'讀書計畫|读书计划|學習計畫|学习计划|讀書安排|study plans?',instruction,re.I))
     selected, fixed, blocked = [], [], []
+    focus_kept = []
     for event in events:
         window = bounds(event, config.tz)
         if event.get('status') == 'cancelled':
@@ -131,13 +193,17 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
         linked = next((i for i, s in states.items() if s and s.get('event_id') == event['id']
                        and event.get('_calendar_id', '').casefold() in {config.calendar_id.casefold(), config.calendar_account.casefold(), 'primary'}), None)
         props = event.get('extendedProperties', {}).get('private', {})
-        eligible = movable(event, config, now, allow_started=linked is not None)
+        eligible = movable(event, config, now, allow_started=linked is not None, task_id=linked, study_state=states.get(linked)) and (not study_only or linked is not None)
         if linked is not None or props.get('chronosTask'):
             saved = states.get(linked) or {}
             eligible = (eligible and saved.get('status') == 'scheduled'
                 and props.get('chronosTask') == str(linked) and props.get('chronosToken') == saved.get('token')
                 and not saved.get('pending_reschedule')
                 and window == tuple(datetime.fromisoformat(saved[k]) for k in ('start', 'end')))
+        if eligible and focus_task and linked == focus_task["id"]:
+            fixed.append(window)
+            focus_kept.append({"event_id":event["id"], "etag":event.get("etag"), "calendar_id":event.get("_calendar_id", ""), "old_start":window[0].isoformat(), "old_end":window[1].isoformat()})
+            continue
         if not eligible:
             reasons = []
             if window[1] <= now:
@@ -159,7 +225,9 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
                 fixed.append(window)
         else:
             selected.append((event, window, linked))
-    if not selected:
+    if focus_task and blocked:
+        return "無法將整個下午留給這項任務，以下固定活動會保留：\n" + "\n".join(item["description"] for item in blocked) + "\n沒有調整行程。"
+    if not selected and not focus_title:
         if blocked:
             return 'The window cannot be fully freed. These activities cannot be moved automatically:\n' + \
                 '\n'.join(item['description'] for item in blocked) + '\nNothing changed.'
@@ -199,7 +267,9 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
             'start': slot[0].isoformat(), 'end': slot[1].isoformat()})
     state = {'status': 'pending', 'token': token, 'chat_id': chat_id, 'start': start.isoformat(),
              'end': end.isoformat(), 'destination_start': destination.isoformat(), 'calendar_moves': moves,
-             'blocked_events': blocked,
+             'blocked_events': blocked, 'focus_kept':focus_kept,
+             'focus_reservation': {'start':start.isoformat(),'end':end.isoformat(),'title':focus_title,'chat_id':chat_id} if focus_title else None,
+             'focus_task': {'id':focus_task['id'],'snapshot':task_fields(focus_task)} if focus_task else None,
              'window_replan': True, 'minutes': 0, 'expires_at': (now + timedelta(hours=2)).isoformat()}
     def save(old):
         return old if old and old.get('status') == 'creating' else state
@@ -210,11 +280,23 @@ async def preview(planner, chat_id, instruction, update_id, now=None):
 async def callback(planner, chat_id, message_id, token, action, now=None):
     now = now or datetime.now(planner.settings.tz)
     db = planner.db
+    if action=='release':
+        from .planning_holds import release
+        return release(db,chat_id,token)
+    existing = db.get_task_action_state(key(chat_id)) or {}
+    if existing.get('task_slot') and existing.get('token') == token:
+        from .task_slot import callback as slot_callback
+        return await slot_callback(planner, chat_id, message_id, token, action, now)
+    if existing.get('ordered_sequence') and existing.get('token') == token:
+        from .sequence_replan import callback as ordered_callback
+        return await ordered_callback(planner, chat_id, message_id, token, action, now)
     def claim(old):
         if not old or old.get('token') != token or old.get('message_id') != message_id:
             return old
         if old['status'] not in {'pending', 'creating', 'editing'}:
             return old
+        if old['status'] == 'editing' and action == 'allow':
+            return old  # Edit revokes approval until a replacement preview exists.
         if old['status'] == 'creating' and action != 'allow':
             return old
         if old['status'] != 'creating' and old['expires_at'] <= now.isoformat():
@@ -225,7 +307,7 @@ async def callback(planner, chat_id, message_id, token, action, now=None):
     if not state or state.get('token') != token or state.get('message_id') != message_id:
         return 'This proposal is no longer active. Use /replan.'
     if state['status'] == 'editing':
-        return 'Enter revised constraints, e.g. "move to tomorrow or later". Use /cancel to cancel or /replan to choose another window.'
+        return 'Use a fresh study-plan correction to revise this proposal.' if state.get('study_revision') else 'Enter revised constraints, e.g. "move to tomorrow or later". Use /cancel to cancel or /replan to choose another window.'
     if state['status'] == 'cancelled':
         return 'Cancelled. Original calendar events kept.'
     if state['status'] == 'expired':
@@ -237,6 +319,12 @@ async def callback(planner, chat_id, message_id, token, action, now=None):
     await planner.calendar.verify_owner()
     try:
         await apply(planner, {}, state, now)
+        if state.get("focus_reservation"):
+            from .planning_holds import save as save_hold
+            save_hold(db,state["token"],[state["focus_reservation"]],now)
+        if state.get('study_revision'):
+            from .study_revision import finish
+            finish(planner, state)
     except ReflowReviewError:
         if not state.get('recovering'):
             db.mutate_task_action_state(key(chat_id), lambda old: {**old, 'status': 'pending'}
@@ -248,4 +336,15 @@ async def callback(planner, chat_id, message_id, token, action, now=None):
         await reconcile(planner, state)
         return 'Calendar changes paused. Some moves may already have succeeded. Tap Allow to recover; check Calendar if an activity changed externally.'
     db.mutate_task_action_state(key(chat_id), lambda old: {**old, 'status': 'done'} if old.get('token') == token else old)
+    if state.get('study_revision'):
+        lines = ['Calendar updated.' if state['calendar_moves'] else 'Study plan reviewed.']
+        lines += [f"{m['title']}: {m['start'][11:16]}–{m['end'][11:16]} · {m['minutes']} minutes" for m in state['calendar_moves']]
+        lines += [f"Queued unfinished task: {m['title']} · {m['minutes']} minutes. Booking will be checked again." for m in state['revision_additions']]
+        text='\n'.join(lines)
+        if state.get('revision_breaks'):
+            return {'messages':[{'text':text,'reply_markup':{'inline_keyboard':[[{'text':'解除本次休息保留','callback_data':'replan:release:'+token}]]}}]}
+        return text
+    if state.get('focus_reservation'):
+        return {'messages':[{'text':'下午已保留給'+state['focus_reservation']['title']+'。已移開 '+str(len(state['calendar_moves']))+' 項讀書安排；固定活動保持原安排。用 /today 可查看目前結果。',
+            'reply_markup':{'inline_keyboard':[[{'text':'解除這段保留','callback_data':'replan:release:'+token}]]}}]}
     return 'Calendar updated.\n' + '\n'.join(f"{m['title']}: {m['old_start'][:16]} → {m['start'][:16]}" for m in state['calendar_moves'])

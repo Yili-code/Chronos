@@ -1,0 +1,26 @@
+# Mail acknowledgements and mobile links
+
+- Updated: 2026-11-05 Asia/Taipei.
+- Baseline: origin/main 90baa66; isolated branch codex/mail-mobile-cleanup and worktree. Fetch succeeded; unrelated original work preserved.
+- Scope: seven-second terminal mail notices, concise consistent mail UI and noun titles, visible source links with account-aware URL generation, recovery card wording and existing action visibility.
+- Findings: mail branch bypasses existing transient cleanup; source_text URLs are not rendered. Recovery actions already exist below screenshot crop; preserve behavior and stored reason keys.
+- Status: implementation in progress; no commit/push/deployment. Deployment not authorized by this request.
+- Validation pending: focused regressions, full Python suite, docs/diff, PR CI. Actual mobile Gmail app and Telegram delivery remain unverified.
+
+- Follow-up authorization: user requested all second-screenshot improvements, tests, and direct deployment after verification. Preserve existing production settings and credential references; zero-traffic readiness/version checks and guarded promotion required.
+- Implemented: consistent concise mail terminal notices; persisted deletion deadline and retry without resend; noun email titles and legacy render compatibility; account-aware browser URLs with RFC Message-ID search when available (Google documents rfc822msgid operator); visible task, schedule and feedback links; compact schedule/feedback titles and complete time ranges; neutral Chinese recovery card, preserved existing choices/reason storage; expired pending schedule notices transition directly to verified feedback; old schedule card cleanup only after successful feedback delivery with retry.
+- Evidence so far: initial mail/recovery regressions 103 passed; new link/timer/retry regressions 22 passed. Initial default Python lacked dependencies, switched to existing .venv. Restricted test temp directory access required approved execution outside restriction. Larger scheduling regressions running.
+- Caveats: Gmail does not provide a guaranteed public universal native-app message URL. Browser route retains account selection and exact Message-ID search where possible; native phone handling remains unverified. Existing legacy source IDs use thread/message fallback; no private production records rewritten.
+
+- Final local validation: 4,207 Python tests passed in 221.73s; one pre-existing Starlette deprecation warning. Extension 21 passed; documentation 123 local links, zero missing; compilation and diff checks passed. New expiry/replay/cleanup/link/overdue-schedule regressions cover SQLite and strict Firestore where applicable.
+- Mail scheduled-success cards also expire after seven seconds; persisted pending deletions resume on tick. Tasks and /plan adjustment entry remain available. This resolves accumulation without making progress cards disappear before a response.
+- Publishing three atomic commits for mail action/link presentation, recovery copy, and schedule-card lifecycle. PR CI, merge-source CI, guarded deployment pending. Actual phone/native Gmail behavior and Telegram timing remain unobserved live.
+
+- Publication: atomic commits d0f11f6, 4e67b07, 22044dc pushed. PR https://github.com/Yili-code/Chronos/pull/138 CI 41956161349 passed extension and Python 3.11/3.12, merged with expected-head guard as 89c3405350dea3646851232ed2877690e1c86958. Merge-source CI 41956605992 in progress; no deployment yet.
+- Production preflight read: chronos-executive-90baa66 ready at 100% traffic. Candidate helper preserves runtime identity/resources/settings/secret references except release SHA; read-only Gmail/Calendar/Telegram verification, source CI guard, baseline ancestry guard, and unchanged-traffic guard before promotion.
+
+- COMPLETED 2026-11-05T10:46:34.410680+08:00: exact merge-source CI 41956605992 passed Python 3.11, Python 3.12 and extension. Deployed 89c3405350dea3646851232ed2877690e1c86958 as chronos-mail-mobile-89c3405 and verified 100% traffic.
+- Zero-traffic candidate readiness/version, authenticated runtime status, Gmail account/Telegram owner-chat reads and Calendar read verification passed. Existing runtime identity/resources/timeout/concurrency and all env/credential references preserved except release SHA. Baseline unchanged before guarded promotion; final service readiness reports exact source and Firestore ready.
+- Exact archived deployment-source regressions: 146 passed in 8.33s. Application source on main is unchanged from locally validated final tree. Rollback revision chronos-executive-90baa66 retained. Sanitized local evidence .tmp/mail-mobile-release-89c3405.json.
+- No production task/email/Calendar records were created or modified for test fixtures. New incoming notices use the new lifecycle; existing task links/titles gain render-time compatibility. Previously sent Telegram text is not bulk-rewritten. Actual native mobile Gmail opening and visible Telegram deletion timing remain unverified on the user's device; timer/replay/retry contracts are mock-tested.
+- Application implementation, validation, PR, merge and authorized deployment complete. Final handoff publication is documentation-only; no application redeployment required. Original workspace unrelated modifications preserved; other computers not verified synchronized.

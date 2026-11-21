@@ -1,0 +1,105 @@
+{
+  "recorded_at": "2026-11-05T14:32:47.038322+08:00",
+  "scope": "Owner-authorized same-cohort mail screening quality repair and replacement delivery",
+  "preview": {
+    "migrated_grounded_previews": 24,
+    "expected_cases": 24,
+    "classified": 24,
+    "tiers": {
+      "information": 23,
+      "important": 1
+    },
+    "source_kinds": {
+      "newsletter": 5,
+      "notification": 14,
+      "promotion": 5
+    },
+    "source_span_grounded": 14,
+    "quoted_source_grounded": 10,
+    "expired_information": 3,
+    "facts_at_least_two": 21,
+    "important_without_action": 0,
+    "review_without_question": 0,
+    "mailbox_writes": 0,
+    "telegram_sends": 0,
+    "policy": "c53d2678cabce0e3ab15b8395157ea5b9b4b4dd04bfe53173c7815abd4290ff4"
+  },
+  "layout": {
+    "individual_cards": 1,
+    "digest_pages": 4,
+    "information_entries": 23,
+    "max_visible_utf16_units": 1309,
+    "all_facts_preserved": true,
+    "all_deadlines_preserved": true,
+    "internal_warnings_absent": true,
+    "mailbox_writes": 0,
+    "telegram_sends": 0
+  },
+  "deployment": {
+    "sha": "522224e739ecfd5f9e85e43d0f1ef1469e097818",
+    "revision": "chronos-mail-quality-522224e",
+    "traffic_percent": 100,
+    "rollback": "chronos-executive-5c5f09c",
+    "ci_run": 41979410672,
+    "readiness": {
+      "status": "ready",
+      "mode": "public",
+      "database": "firestore",
+      "release": "522224e739ecfd5f9e85e43d0f1ef1469e097818"
+    },
+    "status": {
+      "readiness": "ready",
+      "release": "522224e739ecfd5f9e85e43d0f1ef1469e097818",
+      "telegram_webhook": "configured",
+      "learning_calendar": "configured",
+      "study": "configured",
+      "gmail": "configured"
+    },
+    "screening_enabled": true,
+    "runtime_preserved": true,
+    "gmail_calendar_read_verified": true,
+    "mailbox_processing_triggered": false,
+    "scheduler": {
+      "enabled": true,
+      "cron": "0 7 * * *",
+      "timezone": "Asia/Taipei"
+    }
+  },
+  "replacement": {
+    "source_sha": "522224e739ecfd5f9e85e43d0f1ef1469e097818",
+    "batch": "replay:2026-11-05:quality-v2",
+    "candidates": 24,
+    "tiers": {
+      "information": 23,
+      "important": 1
+    },
+    "skipped": {},
+    "digest_pages_sent": 4,
+    "effects": {
+      "validated_cache_used": 24,
+      "old_cards_already_absent": 29,
+      "old_cards_removed": 24
+    },
+    "daily_cursor_unchanged": true,
+    "tasks_created": 0,
+    "emails_sent": 0,
+    "calendar_writes": 0
+  },
+  "independent_verification": {
+    "source_sha": "522224e739ecfd5f9e85e43d0f1ef1469e097818",
+    "revision": "chronos-mail-quality-522224e",
+    "traffic_percent": 100,
+    "ready": true,
+    "batch_complete": true,
+    "tiers": {
+      "information": 23,
+      "important": 1
+    },
+    "individual_sent_receipts": 1,
+    "digest_sent_receipts": 4,
+    "old_cards_cleaned_or_absent": 53,
+    "old_cards_expected": 53,
+    "source_grounding_revalidated": 24,
+    "additional_gemini_requests_during_push": 0
+  }
+}

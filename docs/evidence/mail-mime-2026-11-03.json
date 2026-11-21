@@ -1,0 +1,18 @@
+{
+  "phase": "MIME alternate evidence and traversal bounds",
+  "base_commit": "b3083fbae7cbdf29926e6757d3b108af0c9fd9a3",
+  "date": "2026-11-03 Asia/Taipei",
+  "tests": {
+    "tests": 3544,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "seconds": 175.663,
+  "before": "HTML-only payment deadline was discarded from the evidence and promotional mail was classified disposable.",
+  "after": "Distinct renderings remain available to summary/task/draft context and block automatic cleanup. Bounded MIME traversal preserves incomplete mail.",
+  "wheel_sha256": "40c26138948078a3e32e682ac897904af62994358b2054ecf00996bbd1e11bd9",
+  "source_match": true,
+  "production_deployed": false,
+  "external_writes": "mocked only"
+}

@@ -1,0 +1,9 @@
+# Recovery prompt cleanup and scheduled receipt
+
+- Updated: 2026-10-26 (Asia/Taipei). Base 5428eb58a874ff162fbc3372d97047159701776d; codex/recovery-replies; isolated .worktrees/recovery-replies. Sync hook reported current; origin fetched. Parent unrelated edits preserved.
+- Scope: remove handled recovery force-reply prompts after successful response delivery, replace internal queue wording with a conversational next step, and display weekday without redundant duration on automatic scheduled receipts.
+- Decision: persist prompt ID in reply bindings and resolved ID in the update receipt; cleanup retries use the delivered receipt without resending the response. Retain unanswered prompts and never delete user replies. Existing historical bindings use the replied-to message ID.
+- Implementation: main.py, session_recovery.py, automatic_planning.py; regression tests and this handoff. Validation and publication pending. No live Telegram deletion or Calendar/task mutation requested for this release. Prior deployment authorization carried forward for these continuing bot reply refinements.
+- Next: focused and full tests, same-version static checks, PR CI, merge CI and guarded deployment.
+- Validation: all 2461 Python tests passed in 136.52s; 59 focused cases passed. Same-version Ruff 0.14.1 undefined-name checks passed; docs 98 links/125 Markdown files, zero missing; diff check passed. Existing Starlette deprecation warning only. Tests cover replied/plain answers, cleanup failure and update replay without repeated delivery, preservation of user messages/current decision cards, conversational recovery acknowledgement and exact weekday receipt.
+- Publication uses two atomic commits: recovery handling/wording and scheduled receipt presentation. No live Telegram cleanup or task/Calendar mutation performed during verification. PR/CI/deployment pending.

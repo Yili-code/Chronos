@@ -1,0 +1,19 @@
+{
+  "phase": "exact follow-up identity",
+  "date": "2026-11-03 Asia/Taipei",
+  "base_commit": "b409fa14eace7f342b144ef9daf60627854ccb19",
+  "tests": {
+    "tests": 3622,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "seconds": 178.052,
+  "before": "Multi-recipient outgoing mail created an unspecified wait and any opposite-side group reply could resolve it.",
+  "after": "One verified target per thread, explicit group selection, relevant full-history lookup and target-specific resolution, automatic reply handling and deadline changes.",
+  "wheel_sha256": "5237eae12e6e88fdf757cb83ea8506deff013d172aeca0b0b45db813c12f8143",
+  "source_match": true,
+  "production_deployed": false,
+  "external_writes": "mocked only",
+  "boundary": "Does not track all group participants simultaneously or infer aliases/cross-platform identity."
+}

@@ -1,0 +1,116 @@
+{
+  "updated_at": "2026-11-05T00:06:57.995776+08:00",
+  "scope": "Exploratory live Gemini with synthetic local mail/calendar; not a full original acceptance-corpus or Production case run",
+  "input_template": "Coordinate a meeting two days ahead at15:00 Asia/Taipei for1 hour, draft a short English proposal, and track in3 days",
+  "exact_input_recorded": false,
+  "first_run_note": "Primary/secondary key, model and API base matched production; timeout used the Settings default. Later runs copied all configured AI settings.",
+  "observations": [
+    {
+      "scope": "Live production-configured Gemini; synthetic SQLite mail and Calendar; all external writes mocked",
+      "passed": false,
+      "checks": {
+        "meeting_review": false,
+        "draft_review": false,
+        "time_matches_owner": false,
+        "minutes_match_owner": false,
+        "tracking_waits_for_owner": false,
+        "tracking_interval_matches_owner": false,
+        "draft_bound_to_candidate": false,
+        "no_native_draft": true,
+        "no_send": true,
+        "no_event_write": true
+      },
+      "structured_generation_stages": [
+        {
+          "schema": "MailPlan",
+          "questions_present": false
+        }
+      ],
+      "synthetic_workflow_seconds": 50.69,
+      "production_case_execution": false,
+      "real_recipient_messages": 0,
+      "real_calendar_mutations": 0,
+      "safe_synthetic_reply": "回覆草稿\n郵件流程：會面步驟未能準備，流程未套用。\n會面協調\n日期、時區或長度尚無法可靠確認；請提供明確資訊，沒有安排會面。\n整個流程未套用；請重新提供完整要求。"
+    },
+    {
+      "scope": "Live production-configured Gemini; synthetic SQLite mail and Calendar; all external writes mocked",
+      "passed": false,
+      "checks": {
+        "meeting_review": false,
+        "draft_review": false,
+        "time_matches_owner": false,
+        "minutes_match_owner": false,
+        "tracking_waits_for_owner": false,
+        "tracking_interval_matches_owner": false,
+        "draft_bound_to_candidate": false,
+        "no_native_draft": true,
+        "no_send": true,
+        "no_event_write": true
+      },
+      "structured_generation_stages": [
+        {
+          "schema": "MailPlan",
+          "questions_present": false
+        },
+        {
+          "schema": "Candidate",
+          "questions_present": false
+        },
+        {
+          "schema": "ReplyText",
+          "questions_present": true
+        }
+      ],
+      "synthetic_workflow_seconds": 42.69,
+      "production_case_execution": false,
+      "real_recipient_messages": 0,
+      "real_calendar_mutations": 0,
+      "safe_synthetic_reply": "回覆草稿\n郵件流程：草擬仍需資料，流程未套用。\nDoes November 6, 2026, at 3:00 PM Asia/Taipei work for you?"
+    },
+    {
+      "scope": "Live production-configured Gemini; synthetic SQLite mail and Calendar; all external writes mocked",
+      "passed": true,
+      "checks": {
+        "meeting_review": true,
+        "draft_review": true,
+        "time_matches_owner": true,
+        "minutes_match_owner": true,
+        "tracking_waits_for_owner": true,
+        "tracking_interval_matches_owner": true,
+        "draft_bound_to_candidate": true,
+        "no_native_draft": true,
+        "no_send": true,
+        "no_event_write": true
+      },
+      "structured_generation_stages": [
+        {
+          "schema": "MailPlan",
+          "questions_present": false
+        },
+        {
+          "schema": "Candidate",
+          "questions_present": false
+        },
+        {
+          "schema": "ReplyText",
+          "questions_present": false
+        }
+      ],
+      "synthetic_workflow_seconds": 62.41,
+      "production_case_execution": false,
+      "real_recipient_messages": 0,
+      "real_calendar_mutations": 0
+    }
+  ],
+  "tested_runtime_source_sha256": {
+    "chronos/mail_correspondence.py": "e941ca4811475b5250128276c5fdd661c6a935ce0e2a11149c453a1f0e048c2d",
+    "chronos/mail_natural_workflow.py": "4da99eac1acb2667ae1a7db0a219d2fff1259c489e03630ce07014c2fb79fcfb",
+    "chronos/meeting_coordination.py": "e1c6b2dd3f28716afefd0f769d838914868c5d4280e4a51ead92c16503a2ea8e",
+    "chronos/mail_meeting_context.py": "bd7747981b4fe3decd5b16ee580d2acda2900cf8558d22c2e58404525d3e9873"
+  },
+  "limits": [
+    "One post-fix successful synthetic example is not a model reliability benchmark",
+    "The62.41-second synthetic sample is not Production latency evidence",
+    "No real Gmail/Calendar write or recipient delivery was tested"
+  ]
+}

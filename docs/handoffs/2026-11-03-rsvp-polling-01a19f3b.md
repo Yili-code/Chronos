@@ -1,0 +1,11 @@
+# Durable RSVP polling and owner updates
+
+- Updated: 2026-11-04 Asia/Taipei. Branch codex/executive-assistant-audit; base 6d1b932ed1b7a50d17058437bd075d9caa2d76f7.
+- Implemented: bounded invitation index registered before external write; atomic send claim rechecks registration; scheduled read-only RSVP reconciliation before mail digest completion checks. Exact owned invitation evidence and revision checks protect concurrent updates.
+- Owner notifications: unchanged observations stay quiet; revision-bound atomic claims and delivery journals prevent replay after unknown delivery. Definite rejections remain retryable. Sent journals repair interrupted completion. Cancellation acknowledgements clear stale read-failure flags. No external chasing.
+- Reliability: 45-second provider wait budget, persistent rotating cursor, single Calendar owner verification per run. Earlier failed reads cannot overwrite a newer definitive cancellation. All mail deliveries now require a positive integer Telegram message ID; malformed success is uncertain rather than delivered.
+- Reproduced and fixed: missing durable invitation index, malformed Telegram acknowledgements accepted as delivery, cancellation acknowledgement retaining stale verification failure, and unfair/unbounded polling. Regression coverage includes concurrency, recovery, timeouts and daily already-complete paths.
+- Validation: full frozen-source regression 3,746 passed, zero failures/errors/skips, 142 existing warnings (182.95 seconds wall output). All 264 frozen source/config hashes unchanged after testing. Built wheel matches both changed runtime modules. Ruff undefined-name checks, documentation links and diff checks passed. Evidence: docs/evidence/meeting-rsvp-polling-2026-11-04.json.
+- All provider writes used mocks; no real attendee or calendar test writes. No migration. Existing invitation-phase CI 41663513723 passed all three jobs.
+- Commit/push: pending at this update; check Git history and PR 124 for subsequent publication and CI. Not merged or deployed.
+- Remaining: private-hold conversion, reviewed rescheduling, conference creation, broader natural intent routing and current 80-case product acceptance. Historical baseline counts are not current acceptance results. LINE/Instagram and additional Gmail accounts remain user-deferred.

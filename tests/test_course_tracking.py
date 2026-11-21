@@ -67,3 +67,11 @@ def test_cannot_reopen_answered_session_by_recording_reminder():
     answered = accept_reply(session, reply_to_message_id=101, reply_message_id=102, text="Chapter 4")
     with pytest.raises(ValueError, match="terminal"):
         record_reminder(answered, 1)
+
+
+def test_exam_attendance_is_not_new_study_progress():
+    from chronos.course_tracking import classify_progress, ProgressReportKind
+    for text in ('今天期中考', '今天期中考，期中考結束通常不用做事', '期末考結束了', 'Today was the midterm exam'):
+        assert classify_progress(text) is ProgressReportKind.NO_PROGRESS, text
+    for text in ('準備期中考', '期中考後複習第三章', '今天不是期中考', '期中考結束還要交作業', 'midterm preparation'):
+        assert classify_progress(text) is ProgressReportKind.PROGRESS, text

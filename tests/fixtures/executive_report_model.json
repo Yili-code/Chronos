@@ -1,0 +1,326 @@
+{
+  "brief-1": {
+    "input": "整理今天的會議和到期任務，標出還沒確定的時間。",
+    "outputs": [
+      {
+        "subject": "intent",
+        "output": {
+          "action": "briefing",
+          "task_ids": [],
+          "target_selection": "single",
+          "instruction": "",
+          "question": null,
+          "start": null,
+          "end": null,
+          "agenda_keywords": [],
+          "reference": null,
+          "page": 1,
+          "minutes": null,
+          "outcome": null,
+          "operation": null,
+          "day": null,
+          "end_day": null,
+          "title": null,
+          "content": null,
+          "event_category": null,
+          "reset_type": null,
+          "edit_field": null,
+          "preference_operation": null,
+          "preference_key": null,
+          "preference_value": null,
+          "assignment_course": null
+        }
+      }
+    ],
+    "reply": "<b>Daily briefing · 11/03 (Tue)</b>\n\nNo events scheduled.\nOverlapping event pairs: 0.\nTravel buffers are not inferred; confirm travel time for adjacent appointments.\n<b>Deadlines</b>\nNo deadlines in this range.\nOpen tasks: 11; uncertain timing: 0.\n<b>Open tasks</b>\n<b>Database systems Chapter 2</b>\n<b>#db</b>\n<b>Operating Systems lecture 3</b>\n<b>#os</b>\n<b>ISPM Chapter 1</b>\n<b>#ispm</b>\n<b>ISPM Chapter 2</b>\n<b>#ispm</b>\n<b>Competition programming past papers</b>\n<b>#cp</b>\n<b>Database systems Chapter 3</b>\n<b>#db</b>\n<b>Database systems Chapter 4</b>\n<b>#db</b>\n<b>Database systems Chapter 5</b>\n<b>#db</b>\n<b>Database systems midterm past papers</b>\n<b>#db</b>\n<b>Database report</b>\n<b>#db</b>\n<b>Register Orion and YC</b>",
+    "status": 200
+  },
+  "brief-2": {
+    "input": "Give me today’s combined calendar and deadline briefing.",
+    "outputs": [
+      {
+        "subject": "intent",
+        "output": {
+          "action": "briefing",
+          "task_ids": [],
+          "target_selection": "single",
+          "instruction": "Give me today’s combined calendar and deadline briefing.",
+          "question": null,
+          "start": null,
+          "end": null,
+          "agenda_keywords": [],
+          "reference": null,
+          "page": 1,
+          "minutes": null,
+          "outcome": null,
+          "operation": null,
+          "day": null,
+          "end_day": null,
+          "title": null,
+          "content": null,
+          "event_category": null,
+          "reset_type": null,
+          "edit_field": null,
+          "preference_operation": null,
+          "preference_key": null,
+          "preference_value": null,
+          "assignment_course": null
+        }
+      }
+    ],
+    "reply": "<b>Daily briefing · 10/29 (Thu)</b>\n\n13:00–14:07 · 67 minutes\nOperating Systems lecture 3\n\n14:15–15:45 · 90 minutes\nISPM Chapter 1\n\n15:45–16:30 · 45 minutes\nISPM Chapter 2\n\n18:30–21:30 · 180 minutes\nCompetition programming midterm\nOverlapping event pairs: 0.\nTravel buffers are not inferred; confirm travel time for adjacent appointments.\n<b>Deadlines</b>\nNo deadlines in this range.\nOpen tasks: 11; uncertain timing: 0.\n<b>Open tasks</b>\n<b>Database systems Chapter 2</b>\n<b>#db</b>\n<b>Operating Systems lecture 3</b>\n<b>#os</b>\n<b>ISPM Chapter 1</b>\n<b>#ispm</b>\n<b>ISPM Chapter 2</b>\n<b>#ispm</b>\n<b>Competition programming past papers</b>\n<b>#cp</b>\n<b>Database systems Chapter 3</b>\n<b>#db</b>\n<b>Database systems Chapter 4</b>\n<b>#db</b>\n<b>Database systems Chapter 5</b>\n<b>#db</b>\n<b>Database systems midterm past papers</b>\n<b>#db</b>\n<b>Database report</b>\n<b>#db</b>\n<b>Register Orion and YC</b>",
+    "status": 200
+  },
+  "brief-3": {
+    "input": "我想看今天行事曆加上截止事項的整合摘要，不要修改。",
+    "outputs": [
+      {
+        "subject": "intent",
+        "output": {
+          "action": "briefing",
+          "task_ids": [],
+          "target_selection": "single",
+          "instruction": "",
+          "question": null,
+          "start": null,
+          "end": null,
+          "agenda_keywords": [],
+          "reference": null,
+          "page": 1,
+          "minutes": null,
+          "outcome": null,
+          "operation": null,
+          "day": null,
+          "end_day": null,
+          "title": null,
+          "content": null,
+          "event_category": null,
+          "reset_type": null,
+          "edit_field": null,
+          "preference_operation": null,
+          "preference_key": null,
+          "preference_value": null,
+          "assignment_course": null
+        }
+      }
+    ],
+    "reply": "<b>Daily briefing · 10/29 (Thu)</b>\n\n13:00–14:07 · 67 minutes\nOperating Systems lecture 3\n\n14:15–15:45 · 90 minutes\nISPM Chapter 1\n\n15:45–16:30 · 45 minutes\nISPM Chapter 2\n\n18:30–21:30 · 180 minutes\nCompetition programming midterm\nOverlapping event pairs: 0.\nTravel buffers are not inferred; confirm travel time for adjacent appointments.\n<b>Deadlines</b>\nNo deadlines in this range.\nOpen tasks: 11; uncertain timing: 0.\n<b>Open tasks</b>\n<b>Database systems Chapter 2</b>\n<b>#db</b>\n<b>Operating Systems lecture 3</b>\n<b>#os</b>\n<b>ISPM Chapter 1</b>\n<b>#ispm</b>\n<b>ISPM Chapter 2</b>\n<b>#ispm</b>\n<b>Competition programming past papers</b>\n<b>#cp</b>\n<b>Database systems Chapter 3</b>\n<b>#db</b>\n<b>Database systems Chapter 4</b>\n<b>#db</b>\n<b>Database systems Chapter 5</b>\n<b>#db</b>\n<b>Database systems midterm past papers</b>\n<b>#db</b>\n<b>Database report</b>\n<b>#db</b>\n<b>Register Orion and YC</b>",
+    "status": 200
+  },
+  "week-1": {
+    "input": "給我下週一到週日的規劃建議，檢查過載，先別改行程。",
+    "outputs": [
+      {
+        "subject": "intent",
+        "output": {
+          "action": "weekly",
+          "task_ids": [],
+          "target_selection": "single",
+          "instruction": "給我下週一到週日的規劃建議，檢查過載，先別改行程。",
+          "question": null,
+          "start": null,
+          "end": null,
+          "agenda_keywords": [],
+          "reference": null,
+          "page": 1,
+          "minutes": null,
+          "outcome": null,
+          "operation": null,
+          "day": null,
+          "end_day": null,
+          "title": null,
+          "content": null,
+          "event_category": null,
+          "reset_type": null,
+          "edit_field": null,
+          "preference_operation": null,
+          "preference_key": null,
+          "preference_value": null,
+          "assignment_course": null
+        }
+      }
+    ],
+    "reply": "<b>Next week · 2026-11-02–2026-11-09 (exclusive end)</b>\n\nCalendar occupied time: 0 minutes.\nAvailable work blocks ≥30 minutes: 2940 minutes.\nOpen backlog estimate: 712 minutes; 0 tasks have no estimate.\nOverlapping event pairs: 0.\nProposed free blocks (no events changed):\n11/02 13:00–17:00\n11/02 18:00–21:00\n11/03 09:00–12:00\n11/03 16:00–17:00\n11/03 18:00–21:00\n11/04 16:00–17:00\n11/04 18:00–21:00\n11/05 13:00–17:00\n11/06 13:00–17:00\n11/06 18:00–21:00\n11/07 09:00–12:00\n11/07 13:00–17:00\n11/07 18:00–21:00\n11/08 09:00–12:00\nAdditional blocks omitted; narrow the date range for detail.\n<b>Week · 11/02 (Mon)</b>\n\nNo events scheduled.\n<b>Week · 11/03 (Tue)</b>\n\nNo events scheduled.\n<b>Week · 11/04 (Wed)</b>\n\nNo events scheduled.\n<b>Week · 11/05 (Thu)</b>\n\nNo events scheduled.\n<b>Week · 11/06 (Fri)</b>\n\nNo events scheduled.\n<b>Week · 11/07 (Sat)</b>\n\nNo events scheduled.\n<b>Week · 11/08 (Sun)</b>\n\nNo events scheduled.\n<b>Deadlines</b>\nNo deadlines in this range.\nOpen tasks: 11; uncertain timing: 0.",
+    "status": 200
+  },
+  "week-2": {
+    "input": "Plan next week on paper: show capacity and deadlines without moving anything.",
+    "outputs": [
+      {
+        "subject": "intent",
+        "output": {
+          "action": "weekly",
+          "task_ids": [],
+          "target_selection": "single",
+          "instruction": "Plan next week on paper: show capacity and deadlines without moving anything.",
+          "question": null,
+          "start": null,
+          "end": null,
+          "agenda_keywords": [],
+          "reference": null,
+          "page": 1,
+          "minutes": null,
+          "outcome": null,
+          "operation": null,
+          "day": null,
+          "end_day": null,
+          "title": null,
+          "content": null,
+          "event_category": null,
+          "reset_type": null,
+          "edit_field": null,
+          "preference_operation": null,
+          "preference_key": null,
+          "preference_value": null,
+          "assignment_course": null
+        }
+      }
+    ],
+    "reply": "<b>Next week · 2026-11-02–2026-11-09 (exclusive end)</b>\n\nCalendar occupied time: 0 minutes.\nAvailable work blocks ≥30 minutes: 2940 minutes.\nOpen backlog estimate: 712 minutes; 0 tasks have no estimate.\nOverlapping event pairs: 0.\nProposed free blocks (no events changed):\n11/02 13:00–17:00\n11/02 18:00–21:00\n11/03 09:00–12:00\n11/03 16:00–17:00\n11/03 18:00–21:00\n11/04 16:00–17:00\n11/04 18:00–21:00\n11/05 13:00–17:00\n11/06 13:00–17:00\n11/06 18:00–21:00\n11/07 09:00–12:00\n11/07 13:00–17:00\n11/07 18:00–21:00\n11/08 09:00–12:00\nAdditional blocks omitted; narrow the date range for detail.\n<b>Week · 11/02 (Mon)</b>\n\nNo events scheduled.\n<b>Week · 11/03 (Tue)</b>\n\nNo events scheduled.\n<b>Week · 11/04 (Wed)</b>\n\nNo events scheduled.\n<b>Week · 11/05 (Thu)</b>\n\nNo events scheduled.\n<b>Week · 11/06 (Fri)</b>\n\nNo events scheduled.\n<b>Week · 11/07 (Sat)</b>\n\nNo events scheduled.\n<b>Week · 11/08 (Sun)</b>\n\nNo events scheduled.\n<b>Deadlines</b>\nNo deadlines in this range.\nOpen tasks: 11; uncertain timing: 0.",
+    "status": 200
+  },
+  "week-3": {
+    "input": "下週工作怎麼安排比較好？請提供整週規劃報表，不要幫我排進去。",
+    "outputs": [
+      {
+        "subject": "intent",
+        "output": {
+          "action": "weekly",
+          "task_ids": [],
+          "target_selection": "single",
+          "instruction": "下週工作怎麼安排比較好？請提供整週規劃報表，不要幫我排進去。",
+          "question": null,
+          "start": null,
+          "end": null,
+          "agenda_keywords": [],
+          "reference": null,
+          "page": 1,
+          "minutes": null,
+          "outcome": null,
+          "operation": null,
+          "day": null,
+          "end_day": null,
+          "title": null,
+          "content": null,
+          "event_category": null,
+          "reset_type": null,
+          "edit_field": null,
+          "preference_operation": null,
+          "preference_key": null,
+          "preference_value": null,
+          "assignment_course": null
+        }
+      }
+    ],
+    "reply": "<b>Next week · 2026-11-02–2026-11-09 (exclusive end)</b>\n\nCalendar occupied time: 0 minutes.\nAvailable work blocks ≥30 minutes: 2940 minutes.\nOpen backlog estimate: 712 minutes; 0 tasks have no estimate.\nOverlapping event pairs: 0.\nProposed free blocks (no events changed):\n11/02 13:00–17:00\n11/02 18:00–21:00\n11/03 09:00–12:00\n11/03 16:00–17:00\n11/03 18:00–21:00\n11/04 16:00–17:00\n11/04 18:00–21:00\n11/05 13:00–17:00\n11/06 13:00–17:00\n11/06 18:00–21:00\n11/07 09:00–12:00\n11/07 13:00–17:00\n11/07 18:00–21:00\n11/08 09:00–12:00\nAdditional blocks omitted; narrow the date range for detail.\n<b>Week · 11/02 (Mon)</b>\n\nNo events scheduled.\n<b>Week · 11/03 (Tue)</b>\n\nNo events scheduled.\n<b>Week · 11/04 (Wed)</b>\n\nNo events scheduled.\n<b>Week · 11/05 (Thu)</b>\n\nNo events scheduled.\n<b>Week · 11/06 (Fri)</b>\n\nNo events scheduled.\n<b>Week · 11/07 (Sat)</b>\n\nNo events scheduled.\n<b>Week · 11/08 (Sun)</b>\n\nNo events scheduled.\n<b>Deadlines</b>\nNo deadlines in this range.\nOpen tasks: 11; uncertain timing: 0.",
+    "status": 200
+  },
+  "time-1": {
+    "input": "分析過去七個完整日的時間使用，不要把計畫當實際。",
+    "outputs": [
+      {
+        "subject": "intent",
+        "output": {
+          "action": "time_usage",
+          "task_ids": [],
+          "target_selection": "single",
+          "instruction": "",
+          "question": null,
+          "start": null,
+          "end": null,
+          "agenda_keywords": [],
+          "reference": null,
+          "page": 1,
+          "minutes": null,
+          "outcome": null,
+          "operation": null,
+          "day": null,
+          "end_day": null,
+          "title": null,
+          "content": null,
+          "event_category": null,
+          "reset_type": null,
+          "edit_field": null,
+          "preference_operation": null,
+          "preference_key": null,
+          "preference_value": null,
+          "assignment_course": null
+        }
+      }
+    ],
+    "reply": "<b>Time usage · 2026-10-22–2026-10-29 (exclusive end)</b>\n\nPlanned occupied time: 0 minutes (overlaps counted once).\nActual reported time: 0 minutes from 0 Calendar-linked samples.\nMissing or out-of-range reports: 0.\nActual time is self-reported; this is not complete time tracking. Unlinked work, category breakdowns and long-term trends are unknown. Record session duration after work to improve coverage.",
+    "status": 200
+  },
+  "time-2": {
+    "input": "Show my time usage for the previous seven complete local days, with measured versus planned time.",
+    "outputs": [
+      {
+        "subject": "intent",
+        "output": {
+          "action": "time_usage",
+          "task_ids": [],
+          "target_selection": "single",
+          "instruction": "",
+          "question": null,
+          "start": null,
+          "end": null,
+          "agenda_keywords": [],
+          "reference": null,
+          "page": 1,
+          "minutes": null,
+          "outcome": null,
+          "operation": null,
+          "day": null,
+          "end_day": null,
+          "title": null,
+          "content": null,
+          "event_category": null,
+          "reset_type": null,
+          "edit_field": null,
+          "preference_operation": null,
+          "preference_key": null,
+          "preference_value": null,
+          "assignment_course": null
+        }
+      }
+    ],
+    "reply": "<b>Time usage · 2026-10-22–2026-10-29 (exclusive end)</b>\n\nPlanned occupied time: 0 minutes (overlaps counted once).\nActual reported time: 0 minutes from 0 Calendar-linked samples.\nMissing or out-of-range reports: 0.\nActual time is self-reported; this is not complete time tracking. Unlinked work, category breakdowns and long-term trends are unknown. Record session duration after work to improve coverage.",
+    "status": 200
+  },
+  "time-3": {
+    "input": "我想看最近七個完整日的工時分析，缺紀錄就說不知道。",
+    "outputs": [
+      {
+        "subject": "intent",
+        "output": {
+          "action": "time_usage",
+          "task_ids": [],
+          "target_selection": "single",
+          "instruction": "",
+          "question": null,
+          "start": null,
+          "end": null,
+          "agenda_keywords": [],
+          "reference": null,
+          "page": 1,
+          "minutes": null,
+          "outcome": null,
+          "operation": null,
+          "day": null,
+          "end_day": null,
+          "title": null,
+          "content": null,
+          "event_category": null,
+          "reset_type": null,
+          "edit_field": null,
+          "preference_operation": null,
+          "preference_key": null,
+          "preference_value": null,
+          "assignment_course": null
+        }
+      }
+    ],
+    "reply": "<b>Time usage · 2026-10-22–2026-10-29 (exclusive end)</b>\n\nPlanned occupied time: 0 minutes (overlaps counted once).\nActual reported time: 0 minutes from 0 Calendar-linked samples.\nMissing or out-of-range reports: 0.\nActual time is self-reported; this is not complete time tracking. Unlinked work, category breakdowns and long-term trends are unknown. Record session duration after work to improve coverage.",
+    "status": 200
+  }
+}

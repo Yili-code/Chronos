@@ -1,18 +1,21 @@
 from __future__ import annotations
 
+
 import json
 import re
 from contextvars import ContextVar
 from datetime import datetime
 from dataclasses import replace
 from typing import Callable
+from zoneinfo import ZoneInfo
 
 from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
+from .course_tags import assignment_project
 from .reply_policy import is_no_change_reply
 from .course_tracking import ProgressReportKind, ProgressSession, accept_reply, mark_missed_at_day_end
-from .course_tracking_store import session_from_firestore, session_to_firestore
+from .course_tracking_store import course_progress_receipt, session_from_firestore, session_to_firestore
 from .assignments import Assignment, to_record, from_record, set_deadline, owner_deadline_edit
 from .task_timing import normalize_timing, task_sort_key
 from .task_actions import TaskActions, task_fields
@@ -23,9 +26,10 @@ from .assignment_bridge import TRACKED_COURSES
 class FirestoreDatabase(TaskActions):
     """Firestore-backed task and Telegram receipt repository for Cloud Run."""
 
-    def __init__(self, project_id: str | None, database_id: str, collection_prefix: str, *, credentials=None):
+    def __init__(self, project_id: str | None, database_id: str, collection_prefix: str, *, credentials=None, tz=None):
         if not re.fullmatch(r"[A-Za-z0-9_-]+", collection_prefix):
             raise ValueError("CHRONOS_FIRESTORE_COLLECTION_PREFIX may contain only letters, digits, underscores, and hyphens")
+        self.tz = tz or ZoneInfo('Asia/Taipei')
         options = {"credentials": credentials} if credentials is not None else {}
         self.client = firestore.Client(project=project_id, database=database_id, **options)
         self.tasks = self.client.collection(f"{collection_prefix}_tasks")
@@ -101,6 +105,23 @@ class FirestoreDatabase(TaskActions):
             transaction.set(reference, state)
             return state
         return self._run_transaction(mutate)
+
+    def compare_mail_states(self, expected, changes):
+        """Read all guards before writing any local workflow state."""
+        if not set(changes) <= set(expected):
+            raise ValueError("Mail changes require an expected state")
+        def apply(transaction):
+            current = {}
+            refs = {key: self.mail_state.document(key) for key in expected}
+            for key, ref in refs.items():
+                snapshot = ref.get(transaction=transaction)
+                current[key] = snapshot.to_dict() if snapshot.exists else None
+            if current != expected:
+                return False
+            for key, value in changes.items():
+                transaction.set(refs[key], value)
+            return True
+        return self._run_transaction(apply)
 
     def mutate_study_delivery(self, key: str, transition: Callable) -> dict:
         """Transaction callbacks must be pure: Firestore can replay them."""
@@ -199,7 +220,7 @@ class FirestoreDatabase(TaskActions):
         assignments = self.assignments.stream(transaction=active) if active is not None else self.assignments.stream()
         excluded = {data['task_id'] for snapshot in assignments
                     if (data := snapshot.to_dict())['record'].get('course_id') not in TRACKED_COURSES}
-        return sorted((task for task in result if task['id'] not in excluded), key=task_sort_key)
+        return sorted((task for task in result if task['id'] not in excluded), key=lambda task: task_sort_key(task, self.tz))
 
     def create_assignment(self, assignment: Assignment) -> dict:
         def create(transaction):
@@ -208,7 +229,7 @@ class FirestoreDatabase(TaskActions):
             if snapshot.exists:
                 data = snapshot.to_dict()
                 return {"task_id": data["task_id"], "assignment": from_record(data["record"])}
-            task = self.create_task(assignment.title, assignment.deadline, assignment.course_id, assignment.discovered_at)
+            task = self.create_task(assignment.title, assignment.deadline, assignment_project(assignment.course_id), assignment.discovered_at)
             transaction.create(ref, {"task_id": task["id"], "record": to_record(assignment)})
             return {"task_id": task["id"], "assignment": assignment}
         return self._run_transaction(create)
@@ -362,31 +383,37 @@ class FirestoreDatabase(TaskActions):
         return value
 
     def _update_open_task(self, task_id: int, values: dict) -> bool:
+        return self._update_open_tasks([task_id], values)
+
+    def _update_open_tasks(self, task_ids: list[int], values: dict) -> bool:
         def update(transaction):
-            reference = self.tasks.document(str(task_id))
-            snapshot = reference.get(transaction=transaction)
-            if not snapshot.exists or snapshot.get("status") != "open":
-                return False
-            linked = []
-            if "completed_at" in values or "due_at" in values:
-                linked = list(self.assignments.where(filter=FieldFilter("task_id", "==", task_id)).stream(transaction=transaction))
             updates = []
-            for assignment in linked:
-                data = assignment.to_dict()
-                if "completed_at" in values:
-                    data["record"]["completed_at"] = values["completed_at"]
-                if "due_at" in values:
-                    deadline = datetime.fromisoformat(values["due_at"]) if values["due_at"] else None
-                    data["record"] = to_record(owner_deadline_edit(from_record(data["record"]), deadline))
-                updates.append((assignment.reference, data))
-            task_values = dict(values)
-            if "due_at" in task_values and "timing" not in task_values:
-                timing = dict(snapshot.to_dict().get("timing") or {})
-                timing.pop("due_date", None)
-                task_values["timing"] = timing
-            transaction.update(reference, task_values)
-            for assignment_ref, data in updates:
-                transaction.update(assignment_ref, data)
+            for task_id in task_ids:
+                reference = self.tasks.document(str(task_id))
+                snapshot = reference.get(transaction=transaction)
+                if not snapshot.exists or snapshot.get("status") != "open":
+                    return False
+                task_values = dict(values)
+                if "due_at" in task_values and "timing" not in task_values:
+                    timing = dict(snapshot.to_dict().get("timing") or {})
+                    timing.pop("due_date", None)
+                    task_values["timing"] = timing
+                updates.append((reference, task_values))
+
+                if "completed_at" not in values and "due_at" not in values:
+                    continue
+                linked = self.assignments.where(filter=FieldFilter("task_id", "==", task_id))
+                for assignment in linked.stream(transaction=transaction):
+                    data = assignment.to_dict()
+                    if "completed_at" in values:
+                        data["record"]["completed_at"] = values["completed_at"]
+                    if "due_at" in values:
+                        deadline = datetime.fromisoformat(values["due_at"]) if values["due_at"] else None
+                        data["record"] = to_record(owner_deadline_edit(from_record(data["record"]), deadline))
+                    updates.append((assignment.reference, data))
+
+            for reference, data in updates:
+                transaction.update(reference, data)
             return True
 
         active = self._transaction.get()
@@ -394,6 +421,9 @@ class FirestoreDatabase(TaskActions):
 
     def complete_task(self, task_id: int, completed_at: datetime) -> bool:
         return self._update_open_task(task_id, {"status": "done", "completed_at": completed_at.isoformat()})
+
+    def complete_tasks(self, task_ids: list[int], completed_at: datetime) -> bool:
+        return self._update_open_tasks(task_ids, {"status": "done", "completed_at": completed_at.isoformat()})
 
     def confirm_assignment_deadline(self, task_id: int, deadline: datetime) -> bool:
         def confirm(transaction):
@@ -569,13 +599,16 @@ class FirestoreDatabase(TaskActions):
         snapshots = list(query.stream(transaction=active) if active is not None else query.stream())
         return session_from_firestore(snapshots[0].to_dict()) if len(snapshots) == 1 else None
 
-    def record_course_reply(self, prompt_id: int, message_id: int, text: str, *, local_date=None) -> str:
+    def record_course_reply(
+        self, prompt_id: int, message_id: int, text: str, *, local_date=None,
+        expire_prompt: bool = False,
+    ) -> str | dict:
         """Read state and write progress inside the webhook receipt transaction."""
         def record(transaction):
             query = self.course_sessions.where(filter=FieldFilter("prompt_message_id", "==", prompt_id))
             snapshots = list(query.stream(transaction=transaction))
             if len(snapshots) != 1:
-                return "這則回覆未對應到課後進度問題。請直接回覆原始訊息。"
+                return "這張卡片目前無法辨識。請用 /tasks 查看待辦，或用 /plan 查看最新規劃。"
             snapshot = snapshots[0]
             session = session_from_firestore(snapshot.to_dict())
             if is_no_change_reply(text):
@@ -602,14 +635,7 @@ class FirestoreDatabase(TaskActions):
                 if survey.exists and survey.get("status") == "open":
                     transaction.update(task_ref, {"status": "done", "completed_at": now.isoformat()})
             transaction.update(snapshot.reference, session_to_firestore(answered))
-            if answered.report_kind is ProgressReportKind.UNKNOWN_SCOPE:
-                return (f"已記錄 {session.course_name}（{session.class_date:%m/%d}）：範圍尚待確認。\n"
-                        "填寫進度代辦已完成，已新增確認上課範圍代辦。")
-            if answered.report_kind is ProgressReportKind.NO_PROGRESS:
-                return (f"已記錄 {session.course_name}（{session.class_date:%m/%d}）：今天無課或沒有進度。\n"
-                        "填寫進度代辦已完成，其他代辦保持不變。")
-            return (f"已記錄 {session.course_name}（{session.class_date:%m/%d}）的進度。\n"
-                    "填寫進度代辦已完成，其他代辦保持不變。")
+            return course_progress_receipt(answered, expire_prompt=expire_prompt)
 
         active = self._transaction.get()
         return record(active) if active is not None else self._run_transaction(record)

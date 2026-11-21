@@ -1,0 +1,30 @@
+{
+  "sha": "016fdecccd066eaed744729086168b13436c95ae",
+  "ci_run": 41569486322,
+  "revision": "chronos-executive-016fdec",
+  "traffic_percent": 100,
+  "rollback": "chronos-gmail-enable-1103",
+  "deployed_at": "2026-11-03T03:06:15.122746+00:00",
+  "runtime_settings_preserved": true,
+  "smoke": {
+    "readiness": "ready",
+    "calendar_read_verified": true,
+    "gmail_enabled": true,
+    "telegram_connected": true,
+    "reports": {
+      "brief": {
+        "parts": 2,
+        "read_only": true
+      },
+      "week": {
+        "parts": 8,
+        "read_only": true
+      },
+      "time": {
+        "parts": 1,
+        "read_only": true
+      }
+    }
+  },
+  "synthetic_production_writes": false
+}

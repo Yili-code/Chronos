@@ -1,0 +1,679 @@
+"""Owner-requested study rebuild with dependency planning and durable reconciliation."""
+from datetime import datetime, timedelta, time
+from hashlib import sha256
+from html import escape
+import re
+import time as clock
+from uuid import uuid4
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from .google_calendar import CalendarError
+from .ai import AIError
+from .study_reflow import bounds
+from .task_actions import task_fields
+from . import reset_replies as replies
+
+KEY = 'learning:study-reset'
+ACTIVE = {'planning', 'applying', 'partial'}
+COMMAND_HELP = ('/studyreset — 刪除舊 study 行程，依前置順序重建所有未完成學習任務。\n'
+                '/studyreset 包含過期未完成的行程\n/studyreset 只排未來\n'
+                '範圍不明確時會先追問；明確時直接執行。')
+
+
+def command_args(text):
+    match = re.fullmatch(r'\s*/studyreset(?:@[A-Za-z0-9_]+)?(?:\s+([\s\S]*\S))?\s*', text, re.I)
+    return (match[1] or '') if match else None
+
+
+async def command(planner, chat_id, text, update_id, now=None):
+    args = command_args(text)
+    if args is None or args.casefold() in {'help', '?', '說明', '说明'}:
+        return COMMAND_HELP
+    return await run(planner, chat_id,
+        'Rebuild all unfinished study sessions in prerequisite order, including unbooked study tasks.\n' + args,
+        update_id, now)
+
+
+class StudyChoice(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    task_id: int
+    is_study: bool
+    minutes: int = Field(ge=10, le=10080)
+
+
+class Dependency(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    before: int
+    after: int
+
+
+class ExamAnchor(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    task_id: int
+    event_id: str
+
+
+class ResetOutput(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    actionable: bool
+    include_past: bool | None = None
+    start: str | None = None
+    end: str | None = None
+    start_hour: int | None = Field(default=None, ge=0, le=23)
+    end_hour: int | None = Field(default=None, ge=1, le=24)
+    weekdays: list[int] = Field(default_factory=lambda: list(range(7)), max_length=7)
+    tasks: list[StudyChoice] = Field(default_factory=list, max_length=100)
+    dependencies: list[Dependency] = Field(default_factory=list, max_length=500)
+    exams: list[ExamAnchor] = Field(default_factory=list, max_length=100)
+    question: str | None = None
+
+
+def looks_reset(text):
+    """A narrow fast route; the model handles further paraphrases."""
+    study = re.search(r'\bstudy\b|\blearning\b|讀書|读书|學習|学习', text, re.I)
+    bulk = re.search(r'全部|所有|整份|整個|整批|\ball\b|\bevery\b', text, re.I)
+    rebuild = re.search(r'重排|重來|重来|重新|重建|打掉|\breset\b|\brebuild\b|\breschedul', text, re.I)
+    negative = (re.search(r'(?:不要|別|别|不需要|不用|do not|don.t|never)[^，,。;；]{0,35}'
+                         r'(?:重排|重來|重来|重新|重建|reset|rebuild|reschedul)', text, re.I)
+                or re.search(r'^\s*(?:如何|怎麼|怎么|how\b)|只.*(?:問|问)', text, re.I))
+    return bool(study and bulk and rebuild and not negative and not re.search(r'[「」『』"{}]', text))
+
+
+def answer(text):
+    return text.strip().rstrip('。.!！?？').strip().casefold()
+
+
+def past_choice(text):
+    value = answer(text)
+    if value in {'是', '要', '包含', '全部', '也要', '包括過期的', '包括过期的',
+                 'yes', 'include past'}:
+        return True
+    if value in {'no', '不要過去的', '不要过去的', '只排未來', '只排未来',
+                 '不含過去', '不含过去', 'future only'}:
+        return False
+    return None
+
+
+def pending_reply(state, text):
+    return bool(state and state.get('status') == 'question' and
+                (past_choice(text) is not None or answer(text) in {'取消', 'cancel', '/cancel'}))
+
+
+class ScopeExpired(ValueError):
+    """An expired clarification requires a fresh complete owner request."""
+
+
+def scope_output(prior, instruction, now, model):
+    """Resolve only the explicit historical question, retaining its parsed scope."""
+    choice = past_choice(instruction)
+    if not prior or prior.get('status') != 'question' or choice is None:
+        return None
+    # Legacy questions still use the model, with the explicit choice enforced below.
+    if not prior.get('pending_output'):
+        return None
+    updated = datetime.fromisoformat(prior['updated_at'])
+    if updated.tzinfo is None or now - updated > timedelta(hours=2):
+        raise ScopeExpired('這則重排要求已過期，請重新描述要重排的行程與期間。')
+    return model.model_validate({**prior['pending_output'], 'include_past': choice})
+
+
+def ordered(tasks, dependencies):
+    edges = {(e.before, e.after) for e in dependencies}
+    chapters = {}
+    for i, task in tasks.items():
+        m = re.search(r'^(?:study\s+|review\s+)?(.+?)\s*(?:chapter|ch\.?)\s*(\d+)\b', task['title'], re.I)
+        if m:
+            chapters.setdefault(m[1].strip().casefold(), []).append((int(m[2]), i))
+    for group in chapters.values():
+        group.sort()
+        edges.update((a[1], b[1]) for a in group for b in group if a[0] < b[0])
+    if any(a not in tasks or b not in tasks or a == b for a, b in edges):
+        raise ValueError('有一個前置單位對不上目前的學習任務，請確認要先讀哪個單位。')
+    result, remaining = [], set(tasks)
+    while remaining:
+        ready = [i for i in remaining if not any(b == i and a in remaining for a, b in edges)]
+        if not ready:
+            raise ValueError('目前的先後順序互相衝突，哪個單位應該先讀？')
+        # Earliest deadlines first among ready nodes; subjects may interleave.
+        i = min(ready, key=lambda i: (tasks[i].get('due_at') or
+            (tasks[i].get('timing') or {}).get('due_date') or '9999', i))
+        result.append(i)
+        remaining.remove(i)
+    return result, edges
+
+
+def deletable(event, cfg):
+    owner = cfg.calendar_account.casefold()
+    return (writable(event, cfg)
+        and event.get('creator', {}).get('email', '').casefold() == owner
+        and (event.get('organizer', {}).get('self') or event.get('organizer', {}).get('email', '').casefold() == owner)
+        and bool(event.get('etag')) and event.get('eventType', 'default') == 'default'
+        and not any(event.get(k) for k in ('attendees', 'attendeesOmitted', 'recurrence', 'recurringEventId'))
+        and bool(event.get('start', {}).get('dateTime')))
+
+
+def writable(event, cfg):
+    source = cfg.calendar_id.casefold()
+    aliases = {source}
+    if source in {'primary', cfg.calendar_account.casefold()}:
+        aliases.update({'primary', cfg.calendar_account.casefold()})
+    return event.get('_calendar_id', '').casefold() in aliases
+
+
+def constraints(planner):
+    from .preferences import read
+    cfg = planner.settings
+    return {'hours': [cfg.learning_start_hour, cfg.learning_end_hour],
+            'daily_minutes': cfg.learning_daily_minutes,
+            'preparation_minutes': cfg.learning_class_preparation_minutes,
+            'course_policy': planner.db.get_task_action_state('learning:course-calendar-policy'),
+            'preferences': read(planner.db, cfg.telegram_chat_id)}
+
+
+def schedule(planner, tasks, choices, edges, order, fixed, removed, start, stop, now, output):
+    from .learning_calendar import find_slot
+    from .backward_planning import reserved_windows
+    cfg, db = planner.settings, planner.db
+    begin_hour = max(cfg.learning_start_hour, output.start_hour if output.start_hour is not None else cfg.learning_start_hour)
+    end_hour = min(cfg.learning_end_hour, output.end_hour if output.end_hour is not None else cfg.learning_end_hour)
+    if begin_hour >= end_hour or not output.weekdays or any(day not in range(7) for day in output.weekdays):
+        raise ValueError('指定的讀書時間沒有空檔，可以放寬時段或改選其他天嗎？')
+    cfg = cfg.model_copy(update={'learning_start_hour': begin_hour, 'learning_end_hour': end_hour})
+    budgets = {}
+    day = start.date()
+    while day <= stop.date():
+        bucket = dict(db.get_task_action_state('learning:day:' + day.isoformat()) or {})
+        for event in removed:
+            bucket.pop(event.get('extendedProperties', {}).get('private', {}).get('chronosToken'), None)
+        budgets[day.isoformat()] = sum(bucket.values())
+        day += timedelta(days=1)
+    policy = db.get_task_action_state('learning:course-calendar-policy')
+    from .nightly_planning import class_blocks
+    reserved = reserved_windows(db)
+    fixed = [*fixed, *reserved]
+    for a, b in reserved:
+        if a.date().isoformat() in budgets:
+            budgets[a.date().isoformat()] += (b - a).total_seconds() / 60
+    day = start.date()
+    while day <= stop.date():
+        fixed.extend(class_blocks(day, cfg, policy))
+        day += timedelta(days=1)
+    selected = set(tasks)
+    for task in db.list_open_tasks():
+        state = planner.get(task['id']) or {}
+        if task['id'] not in selected and state.get('status') in {'queued', 'planning', 'proposed', 'editing', 'creating'}:
+            if state.get('start') and state.get('end'):
+                a, b = tuple(datetime.fromisoformat(state[k]) for k in ('start', 'end'))
+                fixed.append((a, b))
+                if a.date().isoformat() in budgets:
+                    budgets[a.date().isoformat()] += (b - a).total_seconds() / 60
+    for factor in (1, .75, .5, .25, .1, 0):
+        busy, load, ends, sessions = list(fixed), dict(budgets), {}, []
+        failed = False
+        for i in order:
+            cursor = max([start, *(ends[a] for a, b in edges if b == i)])
+            total = max(10, int(choices[i] * factor))
+            remaining = total
+            while remaining:
+                minutes = min(180, remaining)
+                if 0 < remaining - minutes < 10:
+                    minutes -= 10
+                slot, day = None, cursor.date()
+                while day <= stop.date():
+                    if day.weekday() not in output.weekdays:
+                        day += timedelta(days=1)
+                        continue
+                    a = max(cursor, datetime.combine(day, time(), cfg.tz))
+                    b = min(stop, datetime.combine(day + timedelta(days=1), time(), cfg.tz))
+                    if a < b:
+                        task = tasks[i]
+                        if not task.get('due_at') and not (task.get('timing') or {}).get('due_date'):
+                            task = {**task, 'due_at': stop.isoformat()}
+                        slot = find_slot(task, now, busy, [], cfg, minutes, load, policy, window=(a, b))
+                    if slot:
+                        break
+                    day += timedelta(days=1)
+                if not slot:
+                    failed = True
+                    break
+                sessions.append({'task_id': i, 'title': tasks[i]['title'], 'start': slot[0].isoformat(),
+                    'end': slot[1].isoformat(), 'minutes': minutes, 'original_minutes': choices[i]})
+                if len(sessions) > 200:
+                    failed = True
+                    break
+                busy.append(slot)
+                load[slot[0].date().isoformat()] += minutes
+                cursor = slot[1]
+                remaining -= minutes
+            if failed:
+                break
+            ends[i] = cursor
+        if not failed:
+            return sessions, factor
+    raise ValueError('即使縮短讀書時間，仍無法在期限前排完。可以調整哪個期限或每天的讀書上限？')
+
+
+def save(planner, state, state_key=KEY):
+    return planner.db.mutate_task_action_state(state_key, lambda old: state if old and old.get('token') == state['token'] else old)
+
+
+def result(state):
+    label = escape(replies.category(state.get('event_type', 'study')))
+    if state.get('status') == 'completed':
+        lines = ['已重新安排好你的' + label + '行程。',
+                 f"共安排 {len(state['sessions'])} 個時段，已依先後順序排好；其他行程沒有變動。"]
+        if state['factor'] < 1:
+            lines.append('為了趕上期限，部分讀書時間已縮短。下方列出調整後的時間與原估時長。')
+        day = None
+        for session in sorted(state['sessions'], key=lambda s: s['start']):
+            start, end = (datetime.fromisoformat(session[k]) for k in ('start', 'end'))
+            if start.date() != day:
+                day = start.date()
+                lines += ['', f'{start:%m/%d}（{"一二三四五六日"[start.weekday()]}）']
+            title = escape(session['title'][:200]) + ('…' if len(session['title']) > 200 else '')
+            finish = f'{end:%H:%M}' if end.date() == day else f'{end:%m/%d %H:%M}'
+            duration = f"{session['minutes']} 分鐘"
+            if session['minutes'] != session['original_minutes']:
+                duration += f"，原估 {session['original_minutes']} 分鐘"
+            lines.append(f'• {start:%H:%M}–{finish}  {title}（{duration}）')
+        from .sequence_replan import question_reply
+        reply = question_reply('\n'.join(lines))
+        if isinstance(reply,dict):
+            for message in reply['messages']:
+                message['event_reset_result'] = True
+        return reply
+    return replies.partial(state)
+
+
+async def run(planner, chat_id, instruction, update_id, now=None):
+    now = now or datetime.now(planner.settings.tz)
+    db, cfg = planner.db, planner.settings
+    from .calendar_replan import key as review_key
+    review = db.get_task_action_state(review_key(chat_id)) or {}
+    if review.get('status') == 'creating':
+        return '需要先完成上一項日曆變更的核對，才能重排讀書行程。這次還沒有改動行程。'
+    prior = db.get_task_action_state(KEY)
+    if prior and prior.get('status') in ACTIVE and prior.get('event_type', 'study') != 'study':
+        return '上一次的' + escape(replies.category(prior['event_type'])) + '重排還沒完成。請先傳送「重排所有 ' + escape(prior['event_type']) + ' 活動」，我會核對那次的進度。'
+    token = sha256(f'study-reset:{chat_id}:{update_id}'.encode()).hexdigest()[:32]
+    if prior and prior.get('chat_id') != chat_id and prior.get('status') in ACTIVE | {'question'}:
+        return '上一個讀書重排還沒完成，我需要先核對那次的進度。'
+    if prior and prior.get('status') == 'completed' and prior.get('token') == token:
+        return result(prior)
+    if prior and prior.get('status') == 'question' and answer(instruction) in {'cancel', '/cancel', '取消'}:
+        db.mutate_task_action_state(KEY, lambda old: {**old, 'status': 'cancelled'}
+            if old and old.get('token') == prior['token'] and old.get('status') == 'question' else old)
+        return '已取消，行程未變更。'
+    lease = uuid4().hex
+    deadline = clock.monotonic() + 540
+    tick = db.mutate_task_action_state('learning:tick', lambda old: {'claim': lease, 'reset_token': token,
+        'until': (now + timedelta(minutes=10)).isoformat()} if not old or old['until'] <= now.isoformat() else old)
+    if tick['claim'] != lease:
+        if tick.get('reset_token') == token or (prior and prior.get('token') == token and prior.get('status') in ACTIVE):
+            raise replies.ResetInProgress()
+        return replies.BUSY
+    try:
+        if prior and prior.get('status') in {'applying', 'partial'}:
+            state = prior
+        else:
+            state = {'status': 'planning', 'token': token, 'chat_id': chat_id, 'instruction': prior['instruction'] if prior and prior.get('pending_output') and pending_reply(prior, instruction) else instruction, 'event_type': 'study',
+                     'updated_at': now.isoformat()}
+            db.mutate_task_action_state(KEY, lambda old: state)
+            tasks = {t['id']: t for t in db.list_open_tasks()}
+            if len(tasks) > 100:
+                raise ValueError('未完成任務超過 100 項，請先指定課程或縮小重排範圍。')
+            await planner.calendar.verify_owner()
+            horizon = now + timedelta(days=30)
+            agenda = await planner.calendar.agenda(now, horizon)
+            context = prior if prior and prior.get('status') == 'question' and prior.get('event_type','study') == 'study' else None
+            output = scope_output(context, instruction, now, ResetOutput)
+            if output is None:
+                output = ResetOutput.model_validate(await planner.ai.parse_study_reset(instruction,
+                    [{'id': i, **task_fields(t), 'effort': {k: (planner.get(i) or {}).get(k)
+                        for k in ('minutes', 'requested_minutes', 'duration_estimate', 'progress_note')}} for i, t in tasks.items()],
+                    [{'id': e['id'], 'title': e.get('summary', ''), 'start': e.get('start'), 'end': e.get('end')}
+                        for e in agenda], {'clarification': context, 'constraints': constraints(planner)}, now))
+            if context and past_choice(instruction) is not None:
+                output.include_past = past_choice(instruction)
+            if not output.actionable or output.question:
+                raise ValueError(output.question or '要重新安排哪段期間的讀書行程？過去還沒完成的部分也要包含嗎？')
+            ids = [c.task_id for c in output.tasks]
+            if len(ids) != len(set(ids)) or set(ids) != set(tasks):
+                raise ValueError('我還無法確認哪些任務屬於讀書，請補充要重排的課程或任務。')
+            choices = {c.task_id: c.minutes for c in output.tasks if c.is_study}
+            for i in choices:
+                explicit = (tasks[i].get('timing') or {}).get('estimated_minutes')
+                if explicit is not None:
+                    choices[i] = max(10, explicit)
+            if any(i not in choices and re.search(r'^study\b|\b(?:chapter|ch\.?)\s*\d+|讀書|读书|複習|复习', t['title'], re.I)
+                   for i, t in tasks.items()):
+                raise ValueError('有一個你指定的單位沒被列入，請確認這次要重排哪些學習任務。')
+            tasks = {i: tasks[i] for i in choices}
+            if not tasks:
+                raise ValueError('沒有找到可重排的未完成學習任務。請提供課程或任務名稱。')
+            if len(tasks) > 30:
+                raise ValueError('一次最多能重排 30 項學習任務，請縮小期間或指定課程。')
+            start = datetime.fromisoformat(output.start) if output.start else now
+            stop = datetime.fromisoformat(output.end) if output.end else horizon
+            if start.tzinfo is None or stop.tzinfo is None or not now <= start < stop <= horizon:
+                raise ValueError('請指定未來 30 天內要安排讀書的期間。')
+            snapshots = {str(i): {'task': task_fields(t), 'state': planner.get(i)} for i, t in tasks.items()}
+            removed, historical = [], False
+            for i in tasks:
+                old = planner.get(i) or {}
+                if old.get('pending_reschedule') or old.get('status') in {'creating', 'backward_managed', 'reset_pending'} or str(old.get('delivery', '')).endswith(('_uncertain', '_sending')):
+                    raise ValueError('有一項任務的日曆變更尚未核對完成，需要先處理那次變更。')
+                events = await planner.calendar.task_events(i)
+                if old.get('event_id') and old.get('status') in {'scheduled', 'awaiting_feedback'} and old['event_id'] not in {e['id'] for e in events}:
+                    raise ValueError('有一個讀書時段的紀錄對不上日曆，需要先確認它目前的狀態。')
+                for event in events:
+                    props = event.get('extendedProperties', {}).get('private', {})
+                    if props.get('chronosTask') != str(i) or not props.get('chronosToken'):
+                        raise ValueError('我無法確認其中一個讀書行程是否由你擁有，暫時不能移動它。')
+                    a, b = bounds(event, cfg.tz)
+                    # Old completed sessions are history, not unfinished work.
+                    history = db.get_task_action_state('learning:history:' + props['chronosToken']) or {}
+                    if history.get('feedback', {}).get('outcome') == 'done':
+                        continue
+                    if a < now < b:
+                        raise ValueError('有一個讀書時段正在進行，請等它結束或先停止，再重新安排。')
+                    if b <= now:
+                        historical = True
+                        if output.include_past is False:
+                            continue
+                    if not deletable(event, cfg):
+                        raise ValueError('其中有共用、重複或非你擁有的讀書行程，請先確認這些行程要怎麼處理。')
+                    removed.append(event)
+                    if len(removed) > 100:
+                        raise ValueError('舊讀書行程超過 100 個，請指定課程或縮小重排範圍。')
+            if historical and output.include_past is None:
+                state['pending_output'] = output.model_dump(mode='json')
+                save(planner, state)
+                raise ValueError('過去的讀書時段也要一起重排嗎？它們還沒被確認為完成。\n\n請回答「包含」或「只排未來」。')
+            # Independently preserve obvious same-subject exam deadlines if the model omits an anchor.
+            for i, task in tasks.items():
+                subject = task.get('project') or re.sub(r'^(?:study|review|prepare|準備|复习|複習)\s*', '', task['title'], flags=re.I).split()[0]
+                exams = [e for e in agenda if re.search(r'\b(?:midterm|exam|final)\b|期中|期末|考試|考试', e.get('summary', ''), re.I)
+                         and re.search(r'(?<!\w)' + re.escape(subject) + r'(?!\w)', e.get('summary', ''), re.I)]
+                if not any(a.task_id == i for a in output.exams):
+                    if len(exams) > 1:
+                        raise ValueError('同一科目有多場考試；請確認各學習單位應在哪一場考試前完成。')
+                    if exams:
+                        output.exams.append(ExamAnchor(task_id=i, event_id=exams[0]['id']))
+            for anchor in output.exams:
+                matches = [e for e in agenda if e['id'] == anchor.event_id]
+                event = matches[0] if len(matches) == 1 else None
+                if anchor.task_id not in tasks or not event or event['id'] in {e['id'] for e in removed}:
+                    raise ValueError('我還無法確定這項準備對應哪場考試，請確認考試名稱或日期。')
+                cutoff = bounds(event, cfg.tz)[0]
+                task = dict(tasks[anchor.task_id])
+                due = task.get('due_at') or (task.get('timing') or {}).get('due_date')
+                if not due or due > cutoff.isoformat():
+                    task['due_at'] = cutoff.isoformat()
+                tasks[anchor.task_id] = task
+            order, edges = ordered(tasks, output.dependencies)
+            removed_ids = {e['id'] for e in removed}
+            if any(e['id'] not in removed_ids and not e.get('extendedProperties', {}).get('private', {}).get('chronosTask')
+                   and re.search(r'^study\b|讀書|读书|複習|复习', e.get('summary', ''), re.I) for e in agenda):
+                raise ValueError('有些讀書行程還沒對應到學習任務，請先確認它們分別是哪項任務。')
+            fixed = [bounds(e, cfg.tz) for e in agenda if e.get('transparency') != 'transparent' and
+                     not (e['id'] in removed_ids and writable(e, cfg))]
+            sessions, factor = schedule(planner, tasks, choices, edges, order, fixed, removed, start, stop, now, output)
+            for n, session in enumerate(sessions):
+                session['event_id'] = sha256(f"reset:{token}:{n}".encode()).hexdigest()
+                session['token'] = sha256(f"reset-token:{token}:{n}".encode()).hexdigest()[:32]
+            state = {**state, 'status': 'applying', 'snapshots': snapshots, 'removed': removed,
+                     'sessions': sessions, 'factor': factor, 'deleted': [], 'inserted': [],
+                     'constraints': constraints(planner),
+                     'exams': [e for e in agenda if e['id'] in {a.event_id for a in output.exams}]}
+            save(planner, state)
+        return await execute(planner, state, now, lease, deadline)
+    except (ValueError, AIError) as error:
+        state = db.get_task_action_state(KEY) or {}
+        if state.get('status') in {'applying', 'partial'}:
+            state = {**state, 'status': 'partial', 'error': str(error)}
+            save(planner, state)
+            return result(state)
+        if state.get('status') == 'planning':
+            save(planner, {**state, 'status': 'failed' if isinstance(error, ScopeExpired) else 'question', 'question': replies.question(error),
+                           'previous': prior.get('instruction') if prior else None})
+        return replies.unchanged(error)
+    except CalendarError as error:
+        state = db.get_task_action_state(KEY) or {}
+        if state.get('status') == 'planning':
+            save(planner, {**state, 'status': 'question', 'question': replies.question(error)})
+            return replies.unchanged(error)
+        state = {**state, 'status': 'partial', 'error': str(error)}
+        save(planner, state)
+        return result(state)
+    finally:
+        db.mutate_task_action_state('learning:tick', lambda old: {**old, 'until': now.isoformat()}
+            if old and old.get('claim') == lease else old)
+
+
+async def execute(planner, state, now, lease, deadline, *, state_key=KEY):
+    """Persist progress after readback; retry always checks deterministic identities."""
+    db, cfg = planner.db, planner.settings
+    await planner.calendar.verify_owner()
+
+    def current():
+        tick = db.get_task_action_state('learning:tick') or {}
+        if tick.get('claim') != lease or clock.monotonic() >= deadline:
+            raise CalendarError('The rebuild lease changed or expired; stop and reconcile.')
+        if constraints(planner) != state['constraints']:
+            raise CalendarError('Scheduling hours, capacity or preferences changed; inspect the saved rebuild.')
+        for i, original in state['snapshots'].items():
+            if original.get('event'):
+                booking = original.get('booking')
+                if booking and db.get_task_action_state('free:booking:' + booking['token']) != booking:
+                    raise CalendarError('Another operation changed an event booking; rebuilding paused.')
+                continue
+            task = db.get_task(int(i))
+            if not task or task.get('status') != 'open' or task_fields(task) != original['task']:
+                raise CalendarError('A selected task changed during rebuilding; inspect the saved plan.')
+            saved = planner.get(int(i))
+            if saved != original['state'] and not (saved and saved.get('reset_token') == state['token']):
+                raise CalendarError('Another operation changed a selected plan; rebuilding paused.')
+
+    current()
+    from .learning_calendar import overlaps
+    from .backward_planning import reserved_windows
+    # Refresh every replacement conflict before any deletion; old selected events are the only exclusions.
+    selected = {e['id'] for e in state['removed']}
+    sessions = state['sessions']
+    agenda_start = min([now, *(bounds(e, cfg.tz)[0] for e in state['exams'])])
+    agenda = await planner.calendar.agenda(agenda_start, max(datetime.fromisoformat(s['end']) for s in [*sessions,
+        *({'end': bounds(e, cfg.tz)[1].isoformat()} for e in state['exams'])]))
+    busy = [bounds(e, cfg.tz) for e in agenda if e.get('transparency') != 'transparent' and
+        not ((e['id'] in selected or e['id'] in state['inserted'] or
+              e['id'] in {s['event_id'] for s in sessions}) and
+             writable(e, cfg))]
+    busy += reserved_windows(db)
+    if any(overlaps(datetime.fromisoformat(s['start']), datetime.fromisoformat(s['end']), busy) for s in sessions):
+        raise CalendarError('A replacement slot became busy. Rebuilding paused before further changes.')
+    for exam in state['exams']:
+        actual = next((e for e in agenda if e['id'] == exam['id'] and
+            (e.get('_calendar_id') == exam.get('_calendar_id') or writable(e,cfg) and writable(exam,cfg))), None)
+        if not actual or {k:v for k,v in actual.items() if k!='_calendar_id'} != {k:v for k,v in exam.items() if k!='_calendar_id'}:
+            raise CalendarError('A fixed event changed. Inspect its timing before rebuilding.')
+    for session in sessions:
+        actual = await planner.calendar.event(session['event_id'])
+        if actual is None and session['event_id'] in state['inserted']:
+            raise CalendarError('A previously verified replacement event was removed. Inspect Calendar before continuing the saved rebuild.')
+        if actual is not None and not matches_session(actual, session, state, cfg):
+            raise CalendarError('A replacement event changed or has a conflicting identity. Rebuilding paused.')
+    from .learning_calendar import class_windows
+    days = {s['start'][:10] for s in sessions if not state['snapshots'][str(s['task_id'])].get('event')}
+    for day in days:
+        bucket = dict(db.get_task_action_state('learning:day:' + day) or {})
+        for event in state['removed']:
+            bucket.pop(event.get('extendedProperties', {}).get('private', {}).get('chronosToken'), None)
+        for s in sessions:
+            bucket.pop(s['token'], None)
+        load = sum(bucket.values()) + sum(s['minutes'] for s in sessions if s['start'][:10] == day
+            and not state['snapshots'][str(s['task_id'])].get('event'))
+        load += sum((b-a).total_seconds()/60 for a,b in class_windows(datetime.fromisoformat(day).date(), cfg.tz,
+            state['constraints']['course_policy']))
+        load += sum((b-a).total_seconds()/60 for a,b in reserved_windows(db) if a.date().isoformat() == day)
+        for task in db.list_open_tasks():
+            saved = planner.get(task['id']) or {}
+            if str(task['id']) not in state['snapshots'] and saved.get('status') in {'queued','planning','proposed','editing','creating'}:
+                if saved.get('start', '')[:10] == day and saved.get('end'):
+                    load += (datetime.fromisoformat(saved['end']) - datetime.fromisoformat(saved['start'])).total_seconds()/60
+        if load > cfg.learning_daily_minutes:
+            raise CalendarError('The daily task capacity changed. Rebuilding paused before further changes.')
+    # Check the complete old set before the first deletion, including versions.
+    for event in state['removed']:
+        actual = await planner.calendar.event(event['id'])
+        if actual and actual.get('status') != 'cancelled' and actual.get('etag') != event['etag']:
+            raise CalendarError('An old selected event changed. Deletion paused.')
+    for event in state['removed']:
+        if event['id'] in state['deleted']:
+            continue
+        current()
+        actual = await planner.calendar.event(event['id'])
+        if actual and actual.get('status') != 'cancelled':
+            if actual.get('etag') != event['etag']:
+                raise CalendarError('An old selected event changed. Deletion paused.')
+            await planner.calendar.delete_event(event['id'], event['etag'])
+            actual = await planner.calendar.event(event['id'])
+            if actual and actual.get('status') != 'cancelled':
+                raise CalendarError('Deletion was not confirmed; rebuilding paused.')
+        state['deleted'].append(event['id'])
+        save(planner, state, state_key)
+    for session in state['sessions']:
+        if session['event_id'] in state['inserted']:
+            continue
+        current()
+        actual = await planner.calendar.event(session['event_id'])
+        if actual is None:
+            a, b = (datetime.fromisoformat(session[k]) for k in ('start', 'end'))
+            if a <= now:
+                raise CalendarError('A replacement slot has passed. Inspect the saved rebuild before continuing.')
+            if overlaps(a, b, [*await planner.calendar.busy(a, b), *reserved_windows(db)]):
+                raise CalendarError('A replacement slot is now busy. Existing progress was retained.')
+            body = {'id': session['event_id'], 'summary': session['title'], 'colorId': '10',
+                'start': {'dateTime': session['start'], 'timeZone': cfg.timezone},
+                'end': {'dateTime': session['end'], 'timeZone': cfg.timezone},
+                'description': 'Chronos ' + state.get('event_type','study') + ' rebuild under owner authorization.',
+                'visibility': 'private', 'transparency': 'opaque',
+                'extendedProperties': {'private': {'chronosTask': str(session['task_id']),
+                    'chronosToken': session['token'], 'chronosReset': state['token']}}}
+            original = state['snapshots'][str(session['task_id'])]
+            if original.get('event') or session.get('template'):
+                source = original.get('event') or session['template']
+                body = {**{k: source[k] for k in ('summary','description','location','colorId','visibility','transparency','reminders','extendedProperties') if k in source},
+                        **{k: body[k] for k in ('id','start','end')}}
+                body['summary'] = session['title']
+                props = dict(source.get('extendedProperties', {}).get('private', {}))
+                props.update(chronosReset=state['token'], chronosEventCategory=state['event_type'])
+                if not original.get('event'):
+                    props.update(chronosTask=str(session['task_id']),chronosToken=session['token'])
+                body['extendedProperties'] = {**source.get('extendedProperties', {}), 'private': props}
+            elif state.get('event_type', 'study') != 'study':
+                from .free_booking import EVENT_COLORS
+                body['colorId'] = EVENT_COLORS.get(state['event_type'],'8')
+                body['extendedProperties']['private']['chronosEventCategory'] = state['event_type']
+            await planner.calendar.insert(body)
+            actual = await planner.calendar.event(session['event_id'])
+        if not matches_session(actual, session, state, cfg):
+            raise CalendarError('A replacement event could not be verified; rebuilding paused.')
+        state['inserted'].append(session['event_id'])
+        save(planner, state, state_key)
+    def finish():
+        current()
+        buckets = {}
+        replacements = {}
+        def bucket(day):
+            if day not in buckets:
+                buckets[day] = dict(db.get_task_action_state('learning:day:' + day) or {})
+            return buckets[day]
+        for event in state['removed']:
+            bucket(bounds(event, cfg.tz)[0].date().isoformat()).pop(
+                event.get('extendedProperties', {}).get('private', {}).get('chronosToken'), None)
+        queue = db.get_task_action_state('learning:proposal-queue') or {}
+        booking_updates = {}
+        for i, original in state['snapshots'].items():
+            sessions = [s for s in state['sessions'] if str(s['task_id']) == i]
+            first, *later = sessions
+            if original.get('event'):
+                booking = original.get('booking')
+                if booking:
+                    booking_updates[booking['token']] = {**booking, 'event_id': first['event_id'],
+                        'start': first['start'], 'end': first['end'], 'reset_token': state['token']}
+                continue
+            old = original['state'] or {}
+            replacement = {**first, 'status': 'scheduled', 'snapshot': original['task'],
+                'reset_token': state['token'], 'reset_remaining_sessions': later,
+                'history': old.get('history', []), 'auto_accepted': True}
+            if state.get('unplanned_minutes'):
+                replacement['unplanned_minutes'] = state['unplanned_minutes']
+            replacements[i] = replacement
+            for session in sessions:
+                bucket(session['start'][:10])[session['token']] = session['minutes']
+            queue['retire_message_ids'] = list(dict.fromkeys([*queue.get('retire_message_ids', []),
+                *(old[k] for k in ('message_id', 'edit_message_id') if old.get(k))]))
+        selected = {int(i) for i in state['snapshots']}
+        if queue.get('active_task_id') in selected:
+            queue['active_task_id'] = None
+        queue['requested_task_ids'] = [i for i in queue.get('requested_task_ids', []) if i not in selected]
+        # Read all records before writes for the strict Firestore transaction contract.
+        for i, replacement in replacements.items():
+            db._save_task_action_state('study-reset:history:' + state['token'] + ':' + i, state['snapshots'][i])
+            db._save_task_action_state('learning:task:' + i, replacement)
+        for i, original in state['snapshots'].items():
+            if original.get('event'):
+                db._save_task_action_state('event-reset:history:' + state['token'] + ':' + i, original)
+        for token, booking in booking_updates.items():
+            db._save_task_action_state('free:booking:' + token, booking)
+        for day, values in buckets.items():
+            db._save_task_action_state('learning:day:' + day, values)
+        db._save_task_action_state('learning:proposal-queue', queue)
+        db._save_task_action_state(state_key, {**state, 'status': 'completed'})
+    db._run_task_action(finish)
+    return result({**state, 'status': 'completed'})
+
+
+def matches_session(actual, session, state, cfg):
+    props = (actual or {}).get('extendedProperties', {}).get('private', {})
+    original = state.get('snapshots', {}).get(str(session['task_id']), {})
+    if original.get('event') or session.get('template'):
+        source = original.get('event') or session['template']
+        kept = {k: source[k] for k in ('description','location','colorId','visibility','transparency','reminders') if k in source}
+        expected = dict(source.get('extendedProperties',{}).get('private',{}))
+        expected.update(chronosReset=state['token'],chronosEventCategory=state['event_type'])
+        if not original.get('event'):
+            expected.update(chronosTask=str(session['task_id']),chronosToken=session['token'])
+        return bool(actual and actual.get('status') != 'cancelled' and props.get('chronosReset') == state['token']
+            and props.get('chronosEventCategory') == state['event_type'] and actual.get('summary') == session['title']
+            and all(actual.get(k) == v for k,v in kept.items())
+            and all(props.get(k) == v for k,v in expected.items())
+            and actual.get('extendedProperties',{}).get('shared') == source.get('extendedProperties',{}).get('shared')
+            and tuple(v.isoformat() for v in bounds(actual, cfg.tz)) == (session['start'], session['end']))
+    return bool(actual and actual.get('status') != 'cancelled' and props.get('chronosReset') == state['token']
+        and props.get('chronosTask') == str(session['task_id']) and props.get('chronosToken') == session['token']
+        and actual.get('summary') == session['title']
+        and tuple(v.isoformat() for v in bounds(actual, cfg.tz)) == (session['start'], session['end']))
+
+
+async def advance_sessions(planner, task, state, now):
+    """Advance booked segments without inferring progress or completion from elapsed time."""
+    later = state.get('reset_remaining_sessions', [])
+    if not later or state.get('status') != 'scheduled' or state['end'] > now.isoformat():
+        return state
+    event = await planner.calendar.event(state['event_id'])
+    operation = {'token': state['reset_token']}
+    if task_fields(task) != state['snapshot'] or not matches_session(event, state, operation, planner.settings):
+        raise CalendarError('A rebuilt study segment changed; inspect the plan before advancing.')
+    first, *remaining = later
+    next_event = await planner.calendar.event(first['event_id'])
+    if not matches_session(next_event, first, operation, planner.settings):
+        raise CalendarError('The next rebuilt study segment changed; inspect the plan before advancing.')
+    def move(old):
+        if old != state:
+            return old
+        return {**old, **first, 'reset_remaining_sessions': remaining,
+                'elapsed_segments': [*old.get('elapsed_segments', []),
+                    {k: old[k] for k in ('event_id', 'token', 'start', 'end', 'minutes')} ]}
+    return planner.update(task['id'], move)

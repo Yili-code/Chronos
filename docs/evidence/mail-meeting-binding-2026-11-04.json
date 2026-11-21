@@ -1,0 +1,31 @@
+{
+  "phase": "meeting-bound correspondence freshness",
+  "date": "2026-11-04 Asia/Taipei",
+  "base_commit": "d953f7aae97e39f0cd7f57f8e446c9858a7f77c4",
+  "tests": {
+    "tests": 3854,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "seconds": 190.74,
+  "focused_cases": 28,
+  "reproductions": {
+    "original_cancellation_after_preview_failed": 2,
+    "late_calendar_change_during_native_read_failed": 2
+  },
+  "wheel_sha256": "09e42ad783373f32fd389ba758e3fc4608f92ab957ea7017f01c564e6a3eb9dd",
+  "source_match": true,
+  "matched_modules": [
+    "chronos/mail_correspondence.py",
+    "chronos/mail_send.py",
+    "chronos/mail_meeting_context.py"
+  ],
+  "external_writes": "mocked only",
+  "production_deployed": false,
+  "boundaries": [
+    "same bound mail card only; no inferred cross-thread relation",
+    "point-in-time verification, not a cross-provider transaction",
+    "stale native drafts preserved for manual inspection"
+  ]
+}

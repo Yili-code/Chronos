@@ -44,7 +44,7 @@ def test_exam_commands_are_no_longer_owner_facing(db, monkeypatch):
     for command in ('/exam 作業系統期中考', '/exams', '/exams 2',
                     '/deadline 1 2026-10-20 12:00', '/assignment 1', '/assignment 1 2'):
         action = asyncio.run(main.prepare_message(command))
-        assert action() == 'Unknown command. Use /info to see available commands.'
+        assert action() == 'I could not recognise that request, Sir. Please use /info for the available options.'
     assert db.list_exams() == []
 
 

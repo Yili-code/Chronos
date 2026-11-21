@@ -4,8 +4,10 @@ from datetime import datetime, time, timedelta
 from html import escape
 from zoneinfo import ZoneInfo
 
+from .course_tags import COURSE_ID_TAGS
 from .repository import TaskRepository
-from .task_timing import normalize_timing, timing_details, urgent_deadline
+from .mail_links import source_url
+from .task_timing import display_time, normalize_timing, timing_details, urgent_deadline
 
 
 @dataclass
@@ -53,10 +55,15 @@ class TaskService:
             state = self.db.get_task_action_state(f"learning:task:{task['id']}")
             if state and state.get("status") == "postponed":
                 task["planning_status"] = "postponed"
+            if state and state.get("status") in {"scheduled", "awaiting_feedback"} and state.get("start") and state.get("end"):
+                task["scheduled_slot"] = {"start": state["start"], "end": state["end"]}
         return tasks
 
     def complete(self, task_id: int) -> bool:
         return self.db.complete_task(task_id, datetime.now(self.tz))
+
+    def complete_many(self, task_ids: list[int]) -> bool:
+        return self.db.complete_tasks(task_ids, datetime.now(self.tz))
 
     def postpone(self, task_id: int, due_at: datetime) -> bool:
         return self.db.postpone_task(task_id, due_at)
@@ -271,10 +278,10 @@ def canonical_project(value: str) -> str:
 
 def format_tasks(tasks: list[dict], tz, project_aliases: dict[str, str] | None = None, *, now: datetime | None = None) -> str:
     if not tasks:
-        return "No open tasks. All clear."
-    sections = [("Tasks", []), ("Course scope", [])]
+        return "No open tasks, Sir. A welcome state of affairs."
+    sections = [("Scheduled", []), ("Unscheduled", [])]
     for position, task in enumerate(tasks, start=1):
-        section = sections[1 if is_course_scope_task(task) else 0][1]
+        section = sections[0 if task.get("scheduled_slot") or (task.get("timing") or {}).get("scheduled") else 1][1]
         section.append((position, task))
     lines = []
     for title, entries in sections:
@@ -325,13 +332,24 @@ def format_task_block(
     alert = "🚨 " if urgent_deadline(task, tz, now=now) else ""
     title, *scope = task_title_lines(task['title'])
     lines = [f"{prefix}{alert}<b>{escape(title)}</b>", *(escape(line) for line in scope)]
+    slot = task.get("scheduled_slot")
+    if slot:
+        start = datetime.fromisoformat(slot["start"]).astimezone(tz)
+        end = datetime.fromisoformat(slot["end"]).astimezone(tz)
+        end_text = end.strftime("%H:%M") if start.date() == end.date() else display_time(slot["end"], tz)
+        lines.append(f"<b>Scheduled</b> {escape(display_time(slot['start'], tz))}–{escape(end_text)}")
     for label, value in timing_details(task, tz):
+        if slot and label == "Scheduled":
+            continue
         lines.append(f"<b>{label}</b> {escape(value)}")
     if task.get("planning_status") == "postponed":
         lines.append("<b>Status</b> Waiting for external conditions")
     if task.get("project"):
         project = project_display_name(str(task["project"]), project_aliases)
         lines.append(f"<b>#{escape(project)}</b>")
+    url = source_url(task)
+    if url:
+        lines.append(f'<a href="{escape(url, quote=True)}">開啟郵件</a>')
     return lines
 
 
@@ -346,8 +364,12 @@ def format_task(task: dict, tz, *, html: bool = False, now: datetime | None = No
     if task.get("planning_status") == "postponed":
         parts.append("Waiting for external conditions")
     if task.get("project"):
-        project = escape(str(task["project"])) if html else str(task["project"])
+        project = project_display_name(str(task["project"]))
+        project = escape(project) if html else project
         parts.append(f"#{project}")
+    url = source_url(task)
+    if url:
+        parts.append(f'<a href="{escape(url, quote=True)}">開啟郵件</a>' if html else "郵件 " + url)
     return " ".join(parts)
 
 
@@ -356,6 +378,8 @@ def project_display_name(project: str, aliases: dict[str, str] | None = None) ->
     configured = (aliases or {}).get(canonical)
     if configured:
         return configured
+    if project in COURSE_ID_TAGS:
+        return COURSE_ID_TAGS[project]
     if project == "資訊安全實務與管理":
         return "ISPM"
     if len(project) <= 16:
@@ -395,7 +419,8 @@ def _short_date(value: str) -> str:
 
 
 def display_task_title(title: str) -> str:
-    """Display valid ISO dates as MM/DD without editing stored task text."""
+    """Display dates and legacy mail labels without editing stored task text."""
+    title = re.sub(r"^Read email:\s*", "郵件閱讀｜", title, flags=re.IGNORECASE)
     def shorten(match):
         try:
             datetime.strptime(match[0], "%Y-%m-%d")

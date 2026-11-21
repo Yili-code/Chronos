@@ -1,0 +1,28 @@
+{
+  "classify_intent": {
+    "action": "clarify",
+    "task_ids": [
+      2
+    ],
+    "target_selection": "single",
+    "instruction": "往後挪一點",
+    "question": "請告訴我您希望將這項工作往後挪多久，或是移到哪個具體的時間點？",
+    "start": null,
+    "end": null,
+    "reference": null,
+    "page": 1,
+    "minutes": null,
+    "outcome": null,
+    "operation": null,
+    "day": null,
+    "end_day": null,
+    "title": null,
+    "content": null,
+    "event_category": null,
+    "edit_field": null,
+    "preference_operation": null,
+    "preference_key": null,
+    "preference_value": null,
+    "assignment_course": null
+  }
+}

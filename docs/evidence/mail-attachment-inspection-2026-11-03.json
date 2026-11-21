@@ -1,0 +1,24 @@
+{
+  "phase": "explicit bound incoming attachment inspection",
+  "date": "2026-11-03 Asia/Taipei",
+  "base_commit": "131c0efcfc907d93e4295cdc10cc6b8e5ed53023",
+  "tests": {
+    "tests": 3578,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "seconds": 188.683,
+  "focused_tests": 22,
+  "wheel_sha256": "31b9c3065b7fd475fcb3199d33b18f6023a985004ffb425a23618ed4b9b3c4a1",
+  "source_match": true,
+  "external_writes": "mocked only",
+  "production_deployed": false,
+  "supported": "Paginated incoming attachment inventory and explicit bounded UTF-8 plain text, CSV and JSON preview",
+  "unsupported": [
+    "PDF/image/Office extraction",
+    "Encrypted formats",
+    "Outgoing attachments",
+    "Automatic whole-thread comprehension"
+  ]
+}

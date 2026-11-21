@@ -11,6 +11,16 @@ Calendar only after YiLi presses **Confirm schedule**, and ask for the outcome a
 event ends. The five-minute deadline scheduler also drives this workflow, so a
 missed webhook tick recovers without leaving the computer on.
 
+You can request several existing tasks together, for example:
+`將 task 3, 4, 5 先排到 calendar 中，每個預估一個半小時`.
+Chronos resolves current list positions to permanent task IDs and queues all three
+in the requested order, with 90 minutes per task. Batches support up to 20 tasks;
+an explicit work-block duration must be 15–180 minutes. Each block is proposed
+and confirmed separately, with fresh Calendar conflict checks before booking.
+Ambiguous matches still ask which task you mean. If any selected task is closed,
+already booked, awaiting feedback or managed by a backward plan, the batch is
+not queued; existing plans are preserved.
+
 ## Owner rules
 
 - Work blocks start at or after 09:00 and end at or before 21:00, Asia/Taipei.
@@ -117,6 +127,14 @@ preserved. Manual edit context and old buttons are invalidated transactionally;
 Defer cannot alter an already approved Calendar event.
 
 ## Adjusting an execution plan
+
+The adjustment menu also offers tomorrow and the following two dates in the configured
+local timezone. A date appears only when a continuous block of the current planned
+duration fits before the deadline, within working hours and the daily workload limit,
+without conflicting with classes, Calendar events or reserved work. Selecting a date
+rechecks availability and creates a new preview; **Confirm schedule** is still required.
+The “Updated. Review the new execution plan…” acknowledgement is deleted after seven
+seconds. Telegram deletion failures leave the saved plan intact.
 
 Press **Adjust plan** to see concrete duration options plus **Earlier**, **Later**,
 **Find another slot**, **Set manually**, and **Defer**. Duration buttons show only
@@ -360,3 +378,31 @@ Accept **Confirm schedule** to book each block, or adjust/defer it. No task
 deadline changes and no Calendar writes occur merely from the nightly job.
 This cloud job requires deployment and Calendar activation before it can run while
 the computer is off. Local tests do not prove cloud scheduling or Telegram delivery.
+
+
+### Owner-requested batches during quiet hours
+
+An explicit scheduling request covers the entire selected batch. After confirming,
+deferring or rejecting one member, the next requested task receives its own approval
+preview even during quiet hours. The durable batch selection also survives worker
+restarts and delivery retries. Only the active requested member can continue this way;
+unrelated automatic proposals remain paused. Every Calendar booking still requires
+its own confirmation, with the same work-hour, deadline, conflict and workload checks.
+
+
+### Recovering an invalid nightly allocation
+
+A nightly allocation is a preview of current capacity. If it expires or conflicts
+with a new Calendar booking, class preparation, another pending plan, the deadline
+or the daily workload limit, Chronos searches again over the next seven days (or
+until an earlier deadline). The replacement preserves the allocated session duration
+and estimated remaining effort, respects other pending allocations, and requires
+fresh confirmation. The obsolete batch overview is removed from the revised card.
+If availability changes again when confirming, no event is inserted and a fresh
+preview is queued. An obsolete confirmation cannot approve the replacement.
+
+A no-capacity card states the searched duration and horizon; it mentions a deadline
+only when one actually bounds that search. Original-allocation failure reasons are
+shown separately. Existing allocation-only no-slot cards are recovered once; a
+completed unsuccessful search is not repeatedly regenerated on every worker tick.
+Calendar read failures remain service errors, never evidence of exhausted capacity.

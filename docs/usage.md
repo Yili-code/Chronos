@@ -11,10 +11,13 @@
 | 撤銷修改 | 撤銷剛剛的修改 |
 | 查行程 | 我明天下午有什麼安排？ |
 | 安排工作 | 幫我安排資料庫報告的時間 |
+| 重建指定類型行程 | 重排所有讀書行程／重排所有會議，只排未來 |
 | 空出時段 | 幫我空出今晚 |
 | 拆解目標 | 幫我拆解下週五要交的報告，每天最多90分鐘 |
 | 一次性提醒 | 明天下午三點提醒我打電話，不用追蹤完成 |
 | 課程與公告 | 明天軟體工程不上課／查看已保存公告 |
+| 查詢作業 | TronClass 沒有新作業？／資安課還有作業嗎？ |
+| 重新檢查作業 | 現在幫我檢查 TronClass |
 
 回覆任務卡說「延到明天」或「完成了」，就會使用該任務。多個名稱相近的任務會先詢問目標；可回答名稱、固定 ID，或追問清單中的第幾項。追問保留十分鐘，過期後請重新描述。
 
@@ -24,15 +27,37 @@
 
 「不需要記錄」「不用更新 task list」或單純確認收到時，只回覆「收到」，不保存為課程進度、不完成代辦，也不附任務清單。課程填寫進度的代辦仍保持原狀；「今天沒上課」和「不知道上到哪裡」仍是有意義的課程回報。
 
+## 記住偏好
+
+可以說「記住我比較喜歡晚上讀書」「以後叫我 YiLi」「我有哪些已保存的偏好」「忘記我的讀書時間偏好」。偏好持久保存於目前使用者的對話範圍，最多 20 項；同一主題可更新，不需要建立待辦。
+
+後續 AI 任務解析與規劃會讀取目前的偏好，作為可行選項之間的軟性建議。當次明確要求、既有產品規則與可用時段優先；例如偏好晚上但只有上午可用，不能擅自排到晚上的忙碌時段。忘記後的下一次請求不再提供該偏好。固定卡片文字、排程設定與既有活動不因保存偏好自動重寫，行程寫入仍須確認。
+
 ## 快捷入口
 
-`/task` 任務、`/plan` 計畫、`/today` 今天、`/tomorrow` 明天、`/free` 空檔、`/info` 簡短說明。選單只列不需參數的入口。完成任務可直接說名稱，或手動輸入 `/done 1` 完成目前清單第 1 項。
+`/task` 任務、`/plan` 計畫、`/today` 今天剩餘行程（現在至午夜，含進行中與全天行程）、`/tomorrow` 明天、`/free` 空檔、`/info` 簡短說明。選單只列不需參數的入口。完成任務可直接說名稱，或輸入 `/done 1` 完成目前清單第 1 項。`/done 7 8 9 10` 可一次完成多項，所有順位都以同一份清單為準。重複的順位只處理一次，任一順位不存在時整批保留。
+
+`/today` 與 `/tomorrow` 都以時間、名稱分兩行顯示；`/today` 若行程連結到帶有 hashtag 的 Chronos 任務，會以 `時間 · #hashtag` 顯示，沒有 hashtag 時只顯示時間。
+
+`/start` 直接顯示目前任務清單，與 `/tasks` 相同；操作說明仍可用 `/info` 查看。
+
+直接回覆新產生的 `/today` 清單，可用完整任務名稱或「第一個」等順位完成、調整已連結的任務。順位依被回覆的那則行程訊息，與 `/done 1` 的全域任務順位不同。缺少目標或時間會追問；跨日或任務已變更時需重新 `/today`。目前一次操作一項，未連結任務的 Calendar 活動需到 Calendar 修改或取消。舊訊息不會補建回覆綁定。
+
+自然語言查行程可指定活動名稱，例如「九點過後是否有 AtCoder competition？」會保留時段與名稱條件，僅列出標題相符的活動。沒有相符結果時會明確說明；Calendar 讀取失敗不會被當成沒有活動。這是查詢行事曆，並非查詢外部賽事網站。
 
 原有 `/tasks`、`/edit`、`/undo` 等指令仍可使用，但不再列入選單。AI 無法理解或暫時不可用時，不會把訊息當成新任務；快捷查詢與明確指令仍可使用。
 
+## TronClass 作業查詢與手動檢查
+
+「TronClass 沒有新作業？」只讀取已保存資料，顯示上次成功檢查時間、上次掃描新增數與已追蹤且未結案的作業。資料超過一小時、從未成功檢查或最近失敗時會明確標示；沒有新增不代表原有作業已完成，也不會把舊資料說成即時結果。可用課程名稱查詢，或 `/assignments [課程代號] [頁碼]` 每頁查看五項，例如 `/assignments security`、`/assignments database-systems 2`。
+
+「現在幫我檢查 TronClass」、`/refreshassignments` 或查詢卡的 **立即檢查並同步新作業**，會先確認收到要求，再啟動既有雲端掃描器，完成後回覆本次結果；查到的新作業沿用原流程加入任務及發送首次發現卡。手動掃描涵蓋已設定的全部課程；課程限定要求先顯示該課程資料及全範圍檢查按鈕，不默默擴大掃描。重複要求會合併，同一已完成要求五分鐘內不再次啟動；進行中要求保留三十分鐘。啟動結果不明時不盲目重試，逾時會標示無法確認結果。
+
+手動檢查失敗會直接回覆這次要求；排程背景掃描仍沿用連續相同失敗才主動警示的規則。掃描日期停用時回覆暫停，不會當作零筆新作業。手動功能需另行啟用，未設定雲端 Job 時仍可查已保存資料。設定與部署順序見 [TronClass scanner](tronclass-scanner.md)。
+
 ## 任務用詞與課程標籤
 
-任務清單的 **Review wording & course tags** 或 `/reviewtasks` 可產生既有任務的建議。每次最多檢查前 20 項；預覽顯示原標題、建議標題、可能對應的課程與標籤理由。按 **Apply** 才更新該任務，按 **Keep unchanged** 保留原狀。每張卡片十分鐘內有效，且綁定固定任務 ID、內容快照與原訊息；任務已被修改或完成時不套用舊建議。確認後可撤銷最近一次編輯。
+任務清單的 **Review wording & course tags** 或 `/reviewtasks` 可產生既有任務的建議。每次最多檢查前 20 項；預覽顯示原標題、建議標題、可能對應的課程與標籤理由。按 **Apply** 才更新該任務，按 **Keep unchanged** 保留原狀。每張卡片十分鐘內有效，且綁定固定任務 ID、內容快照與原訊息；任務已被修改或完成時不套用舊建議。更新成功或保留原狀的結果訊息會在顯示 15 秒後自動刪除；更新成功卡片上的 Undo 按鈕在這 15 秒內可用。
 
 新任務沒有明確標籤，且主題明確對應目前課程時，另附課程標籤建議卡；確認前保持未分類。批次新增也逐項建議；只說「附上 hashtag」時，推測的課程標籤仍需確認，明確提供 `#os` 等值則直接沿用。推測不覆寫既有標籤。預設短標籤為資安 `#ispm`、計算機結構 `#ca`、軟體工程 `#se`、圖論 `#ga`、資料庫 `#db`、程式競賽課 `#cp`、作業系統 `#os`；已有同課程的標籤或顯示別名時優先沿用。AtCoder 等獨立比賽不因涉及程式設計就自動建議課程標籤。
 
@@ -47,3 +72,91 @@
 設定見 [本機啟動](getting-started.md)，排程細節見 [Google Calendar](learning-calendar.md) 與 [期限拆解](backward-planning.md)。
 
 維護者可執行 `python -m chronos.telegram_menu`，將 owner 選單替換為上述六項並讀回驗證。程式修改、Git 推送與正式部署是不同步驟。
+
+
+TronClass 匯入的作業使用可讀的課程英文簡稱：`#DB`（Database Systems）、`#CA`（Computer Architecture）、`#ISPM`（Information Security Practice and Management）、`#OS`（Operating Systems）、`#GA`（Graph Algorithms）、`#SE`（Software Engineering）、`#CP`（Introduction to Competitive Programming）。課程 ID 僅作來源識別；既有數字課程標籤在任務卡與清單顯示時轉成同一簡稱，不改寫既有資料或使用者設定的別名。未登錄的課程不產生數字標籤。新增追蹤課程時必須一併登錄簡稱，測試會檢查課表與映射是否完整對應。
+
+## 課後任務偏好
+
+程式競賽技巧導論預設在課後五分鐘提出「學習本週上課內容」與「完成至少六題程式設計題目」兩項建議。每項可獨立接受或略過；只有接受後才新增待辦，不推定截止時間、不直接建立 Calendar 活動。建議保留七天；重複點擊不會重複新增。停課與考試期間沿用原有課程日政策。
+
+其他課程維持詢問進度。回覆該課原始訊息「通常都是 1. 第一項 2. 第二項」，可明確記住該課兩項偏好，供之後課後建議使用。也可用自然句子、中文編號、條列或英文描述固定習慣；例如「每次下課後都先複習本週內容，再完成至少六題程式題」。可說「以後第二項改成十題，第一項不變」或「以後不要再固定提出課後任務」。一般進度及明確表示不用記住的單次回報不會改寫偏好。
+
+「以後照這樣做」只有在回覆的卡片明確列出兩項建議時才能沿用；缺少上下文就會追問。語意解析使用已設定的 Gemini，輸入與該課已有偏好／原卡片兩項內容會傳給模型；失敗或格式不合格時不修改偏好或進度。一般進度沿用原流程，不新增 AI 呼叫。保存前再次核對偏好，避免覆蓋解析期間的新設定。十項合成案例及限制見 [辨識驗證](audits/course-habit-intents.md)。
+
+使用 `/coursehabit competitive-programming` 查看偏好；`/coursehabit competitive-programming | 複習本週內容 | 完成十題` 修改；`/coursehabit competitive-programming | off` 停用。修改只影響之後建議，已送出的卡片保留原內容。只輸入 `/coursehabit` 可查看所有課程代碼。偏好保存在目前資料庫；不跨獨立部署共用。
+
+
+新增指定時段的考試會建立 Calendar 確認卡片，分類為 `exam`；準備或複習考試仍是待辦，競賽則使用 `contest`。卡片保留英文標題、日期、起訖時間、時長、分類與額外備註，不重複附上原始輸入。確認後，Calendar 描述仍保留原始輸入供追溯；按下 Allow 前不會寫入日曆。
+
+
+活動成功新增且確認訊息送達後，會刪除確認卡片與使用者原始請求，保留新增成功的訊息。取消、衝突、寫入或確認訊息投遞失敗時，原始請求會保留。舊卡片未記錄原始訊息 ID，無法安全追溯刪除。考試使用紫色，與既有考試配色一致；不自動改寫既有日曆事件的顏色。
+
+
+### 計畫概覽
+
+`/plan` 顯示待安排、已延後與已安排的數量，最多提供兩個待安排任務按鈕；按鈕順序沿用既有清單，不代表優先順序。點選任務只請求提案，仍須確認後才寫入行事曆。
+
+「View all plans」展開所有計畫狀態，每頁最多六件；「Scheduled tasks」只看已安排任務。導覽只讀取資料，不會生成提案或改動排程。完整指令仍可從 `/help` 查閱。
+
+### Task list scheduling groups
+
+The task list groups open tasks into **Scheduled** and **Unscheduled**. Confirmed Calendar bookings show their local start and end times alongside any deadline. Pending proposals are not confirmed bookings. Existing planned times also appear in Scheduled. Empty groups are hidden. Numbers retain their original command positions across groups, so `/done N` and `/edit N` still select the displayed task.
+
+
+### Conversational replies
+
+Greetings, thanks, identity questions and explicit no-change acknowledgements receive concise replies without an AI request or task mutation. Chronos identifies itself as an AI assistant when asked. Whole-message matching keeps mixed requests such as “Thanks, remind me tomorrow” in normal intent routing. Social turns preserve pending task clarification; explicit creation still allows a greeting as a task title.
+
+
+### Follow up on a scheduled work session
+
+After a verified work block ends, Chronos asks what happened. No reply means the outcome is unknown, not that the task was skipped or completed. One additional check-in is allowed after 24 hours during working hours; uncertain delivery is not automatically retried.
+
+Choose **Did not start** to record zero work. Chronos asks what prevented the start, shows the unchanged deadline and repeated non-start count, then offers another time, a shorter session when possible, deferral, or stopping further planning. A new work session uses the existing Calendar conflict, deadline and capacity checks. Routine sessions are scheduled automatically by default; exceptions require a decision. Shorter means a shorter first session, not a claim that the entire task needs less work.
+
+Stopping planning requires explicit confirmation and retains the open task, deadline and past Calendar event. Deferral also retains the task. Neither means completed. Use `/plan` → **View all plans** → **Review next step** to resume an unresolved decision, or `/plan ID` to explicitly request a fresh proposal.
+
+
+### Automatic planning
+
+Routine task work sessions now use default acceptance: Chronos checks current task data, availability, deadline, working hours and daily workload, books the session, then sends **Scheduled** with an **Adjust time** button. There is no routine proposal card or Accept step. Nightly planning and recovery after a reported non-start use the same booking path. Scheduled-task details also provide **Adjust time**.
+
+A proposal remains necessary when arranging the session would move another event or exceed normal working hours. No available slot produces an explanation and adjustment options. Deadlines are not changed automatically. Planning can be restored to explicit approval with `CHRONOS_LEARNING_AUTO_ACCEPT=false`; automatic planning is the default while the existing learning-calendar activation/authorization requirements remain.
+
+If Calendar creation succeeds but its response is lost, Chronos reconciles the deterministic event before notifying. A rejected notification can be retried; uncertain notification delivery is shown for review instead of automatically resending or creating another booking.
+
+
+### Natural-language changes to booked work sessions
+
+Name the task and ask for an exact time, a relative shift, a changed duration, or an available morning/afternoon window. Today-only earliest availability stays within today. Explicit starts such as 14:10 are preserved rather than rounded to quarter-hour boundaries. Ambiguous targets/times ask for clarification; occupied or policy-incompatible times leave the original event unchanged. See the [ten-case synthetic audit](audits/natural-schedule-edits-10.md) for examples and verification limits.
+
+
+## Revising a study agenda
+
+A correction such as `ISPM needs at least 120 min per chapter and I did not finish ch1, ch2. Replan` revises the study plan rather than freeing a Calendar window. Chronos uses the successfully delivered tomorrow agenda to resolve an omitted date, or asks for the date when that context is unavailable. Named unfinished chapters must match existing open tasks; missing or ambiguous chapters need clarification.
+
+The review retains other tracked sessions on that day and their durations, extends affected chapters to at least the requested minimum, and checks deadlines, classes, meal breaks, daily limits and Calendar conflicts. A minimum never shortens an existing longer session. If the whole plan cannot fit, the original plan stays intact and Chronos asks which task may move to another day. It does not silently omit work or infer completion.
+
+Calendar moves require Allow on the review card. New sessions for unfinished tasks then enter the existing booking workflow, which checks availability again and follows the configured booking approval policy. Cancel and expired reviews preserve the original plan. Calendar versions and task snapshots are checked again before writes; uncertain moves use the existing recovery process.
+## Ordered rescheduling of existing study events
+
+Say `Reschedule ISPM chapters 1–5 in order.` or use another subject and range, such as `Reschedule Python lectures 2–4 in order.` No date or duration is needed when the existing events and configured limits provide sufficient information. The planner searches the writable Calendar, verifies exact subject/unit numbers, preserves event IDs, original duration and content, and keeps confirmed completed items unchanged. An elapsed event with unknown progress is not treated as completed.
+
+A complete new ordered request starts fresh rather than inheriting an earlier group's questions or choices, even if Telegram history was cleared without clearing backend state. Explicit subject/unit/range requests use deterministic extraction when no saved preferences require interpretation; requests with time constraints or saved preferences retain AI extraction. Event ambiguity is determined only after current Calendar discovery, with readable candidate times, never by an extraction-only model claiming it found duplicates. All paths retain the same full review and Allow requirement.
+
+An unconfirmed feedback-message delivery does not imply an uncertain Calendar booking. An awaiting-feedback session with a verified current event can be reviewed for rescheduling without retrying that message or assuming completion. Active message senders, in-progress booking changes and uncertain booking receipts remain blocked; task snapshots and event versions are checked again before Allow applies anything.
+
+The whole group is planned in dependency order using the earliest suitable working periods, up to a bounded thirty-day horizon, respecting known task deadlines, classes, meal breaks, daily capacity, pending reservations, other calendars and saved preferences. Slots released by other selected chapters can be reused by earlier chapters. The plan does not move unrelated events. Missing, ambiguous or non-movable events and impossible deadlines are reported together, without partial application.
+
+Ambiguous candidates are listed with readable local dates/times; references appear only when times cannot distinguish events. Replies such as `10/29 那個` or `use the later one` retain the group and constraints until resolved, replaced or cancelled, including replies after ten minutes. These identify the event to move, not a date to keep. Each reply refreshes Calendar/task evidence and creates a new approval review; retained clarification never extends approval or trusts cached availability. Date/reference selections are resolved without another model call. Older task bookings are excluded when current alternatives exist; an explicitly selected older booking is explained with the current alternatives, never silently substituted. The system cannot select a duplicate solely on a model guess. Full-text event search is bounded to 1,000 results and asks for a narrower subject when exceeded.
+
+Review shows before/after times and a short reason for every active item. Only Allow writes; auto-accept does not bypass this group review. Existing events are patched with version checks, never inserted or deleted. If some updates fail or results are unknown, the response lists verified, pending and unverified items separately. Allow reads recovery markers before retrying remaining writes. Edit can start a fresh group review after a verified partial outcome, retaining the prior batch evidence; unknown outcomes require verification first. Original task completion/history evidence is retained.
+
+Verification uses isolated SQLite/Firestore-contract tests and Calendar transport substitutes. Readiness or read-only production discovery does not establish a real Telegram-to-Calendar-write end-to-end result.
+
+Original times are retained when they already match the earliest suitable placement. This is a bounded forward scheduling policy, not a claim of exhaustive global optimization.
+
+Cancel removes that review's Telegram preview, including all pages of a split review, while retaining a brief cancellation acknowledgement. Calendar events stay unchanged. Cleanup retries target only the cancelled review; stale buttons and unresolved in-progress changes do not delete an active review.
+
+Allow also removes all preview pages once the review reaches its completed state, retaining the execution result. Partial, uncertain and in-progress results keep the preview for inspection and recovery. Message deletion retries use saved targets and never reapply Calendar changes or remove a newer review. Reopening Allow on a still-current completed legacy card reports the existing result and cleans up that card without reapplying changes.

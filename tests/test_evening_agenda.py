@@ -165,24 +165,30 @@ def test_tomorrow_command_reports_calendar_failure_without_false_empty_day(syste
 def test_today_command(system, monkeypatch):
     from chronos import main
     from datetime import datetime
+    _, tasks, _, _ = system
+    linked = tasks.create("Study graphs", project="資訊安全實務與管理")
     calendar = AsyncMock()
     calendar.agenda.return_value = [
-        {**event(), "extendedProperties": {"private": {"chronosTask": "123"}}},
+        {**event(), "extendedProperties": {"private": {"chronosTask": str(linked["id"])}}},
         {**event("Personal event"), "id": "personal"},
         {**event("Invalid task reference"), "id": "invalid",
          "extendedProperties": {"private": {"chronosTask": "<invalid>"}}},
     ]
     monkeypatch.setattr(main, "google_calendar", calendar)
+    before = datetime.now(main.settings.tz)
     output = asyncio.run(main.prepare_message("/TODAY@ChronosBot"))()
-    assert "Today" in output["messages"][0]["text"]
+    after = datetime.now(main.settings.tz)
+    assert output["messages"][0]["text"].startswith("<b>Today · ")
     text = output["messages"][0]["text"]
-    assert "90 minutes(123)\nStudy graphs" in text
-    assert "90 minutes\nPersonal event" in text
-    assert "90 minutes\nInvalid task reference" in text
+    assert "10/20 17:00–10/20 18:30 · #ISPM\nStudy graphs" in text
+    assert "10/20 17:00–10/20 18:30\nPersonal event" in text
+    assert "10/20 17:00–10/20 18:30\nInvalid task reference" in text
     assert "<invalid>" not in text
+    assert "minutes" not in text and f"({linked['id']})" not in text
     start, end = calendar.agenda.await_args.args
     assert start.date() == datetime.now(main.settings.tz).date()
-    assert start.hour == 0 and end-start == timedelta(days=1)
+    assert before <= start <= after
+    assert end == datetime.combine(start.date() + timedelta(days=1), datetime.min.time(), main.settings.tz)
     main.ai.parse.assert_not_awaited()
 
 
@@ -195,7 +201,7 @@ def test_agenda_progress_markers(outcome, marker):
     now = NOW + timedelta(days=2)
     text = "\n".join(render_agenda([item], now.date(), NOW.tzinfo, db=db, now=now))
     assert "Study graphs\n" + marker in text
-    db.get_task_action_state.assert_called_once_with("learning:history:old-session")
+    assert [c.args[0] for c in db.get_task_action_state.call_args_list]==["planning:holds","learning:history:old-session"]
 
 
 def test_future_and_untracked_events_have_no_awaiting_marker():
@@ -241,3 +247,96 @@ def test_completed_task_preserves_prior_session_outcome_and_token_boundary(store
         lambda old: {'feedback': {'outcome': 'partial', 'actual_minutes': 135}})
     text = '\n'.join(render_agenda([item], now.date(), NOW.tzinfo, db=store, now=now))
     assert 'Incomplete' in text and 'Finished' not in text
+
+
+@pytest.mark.parametrize("clock", ["2026-10-24T14:30:00+08:00", "2026-10-24T15:59:59+00:00", "2026-10-23T16:00:00+00:00"])
+def test_today_reads_only_remaining_local_day(clock):
+    from chronos.evening_agenda import tomorrow_agenda
+
+    config = Settings(_env_file=None)
+    now = datetime.fromisoformat(clock)
+    local_now = now.astimezone(config.tz)
+    calendar = GoogleCalendar(config)
+    calendar.verify_owner = AsyncMock()
+    calendar.request = AsyncMock(return_value={"items": [
+        {"id": "ongoing", "summary": "Ongoing", "start": {"dateTime": (local_now - timedelta(hours=1)).isoformat()},
+         "end": {"dateTime": (local_now + timedelta(minutes=1)).isoformat()}},
+        {"id": "all-day", "summary": "All-day item", "start": {"date": local_now.date().isoformat()},
+         "end": {"date": (local_now.date() + timedelta(days=1)).isoformat()}},
+    ]})
+    text = "\n".join(asyncio.run(tomorrow_agenda(calendar, config, now, day_offset=0)))
+    params = calendar.request.await_args.kwargs["params"]
+    assert params["timeMin"] == local_now.isoformat()
+    midnight = datetime.combine(local_now.date() + timedelta(days=1), datetime.min.time(), config.tz)
+    assert params["timeMax"] == midnight.isoformat()
+    assert "Ongoing" in text and "All day · All-day item" in text
+    calendar.verify_owner.assert_awaited_once()
+
+
+def test_today_remaining_day_can_be_empty():
+    from chronos.evening_agenda import tomorrow_agenda
+
+    config = Settings(_env_file=None)
+    calendar = AsyncMock()
+    calendar.agenda.return_value = []
+    text = "\n".join(asyncio.run(tomorrow_agenda(calendar, config, NOW, day_offset=0)))
+    assert "Today" in text and "No events scheduled." in text
+    assert calendar.agenda.await_args.args == (NOW, NOW.replace(hour=0) + timedelta(days=1))
+
+
+def test_today_two_line_format_shows_only_available_hashtags(store):
+    from chronos.evening_agenda import tomorrow_agenda
+
+    config = Settings(_env_file=None)
+    tagged = store.create_task("Study ISPM Chapter 2", None, "database", NOW)
+    untagged = store.create_task("Codeforces Round 1129", None, None, NOW)
+    store.save_tag_alias("database", "DB & Core")
+    calendar = AsyncMock()
+    calendar.agenda.return_value = [
+        {"summary": "Codeforces Round 1129", "start": {"dateTime": "2026-10-24T19:05:00+08:00"},
+         "end": {"dateTime": "2026-10-24T21:05:00+08:00"},
+         "extendedProperties": {"private": {"chronosTask": str(untagged["id"])}}},
+        {"summary": "Study ISPM Chapter 2", "start": {"dateTime": "2026-10-24T18:00:00+08:00"},
+         "end": {"dateTime": "2026-10-24T19:00:00+08:00"},
+         "extendedProperties": {"private": {"chronosTask": str(tagged["id"])}}},
+    ]
+    parts = asyncio.run(tomorrow_agenda(calendar, config, datetime.fromisoformat("2026-10-24T17:33:00+08:00"),
+                                        day_offset=0, db=store))
+    assert parts == ["<b>Today · 10/24 (Sat)</b>\n\n"
+                     "18:00–19:00 · #DB &amp; Core\nStudy ISPM Chapter 2\n\n"
+                     "19:05–21:05\nCodeforces Round 1129"]
+
+
+def test_compact_agenda_escapes_titles_and_keeps_continuations_compact():
+    item = event("<Graphs>\nsecond line " + "x" * 450)
+    parts = render_agenda([item] * 20, NOW.date() + timedelta(days=1), NOW.tzinfo, compact=True)
+    assert len(parts) > 1 and all(len(part) < 4096 for part in parts)
+    assert all("&lt;Graphs&gt; second line" in part and "minutes" not in part for part in parts)
+    assert all("\n\n17:00" in part and "\n17:00" in part for part in parts)
+
+
+def test_window_agenda_matches_today_two_line_layout(store):
+    from chronos.evening_agenda import render_window_agenda
+
+    task = store.create_task("Graphs & trees", None, "algorithms", NOW)
+    store.save_tag_alias("algorithms", "Algo & DS")
+    item = event("Graphs & trees")
+    item["extendedProperties"] = {"private": {"chronosTask": str(task["id"]), "chronosToken": "window-token"}}
+    store.mutate_task_action_state("learning:history:window-token", lambda old: {"feedback": {"outcome": "done"}})
+    begin = datetime.fromisoformat("2026-10-20T12:00:00+08:00")
+    end = begin.replace(hour=19)
+    assert render_window_agenda([item], begin, end, NOW.tzinfo, store) == [
+        "<b>10/20 12:00–10/20 19:00</b>\n\n17:00–18:30 · #Algo &amp; DS\nGraphs &amp; trees\n✓ Finished"]
+    assert render_window_agenda([], begin, end, NOW.tzinfo) == [
+        "<b>10/20 12:00–10/20 19:00</b>\n\nNo events scheduled."]
+
+
+def test_window_agenda_untagged_events_keep_spacing_and_continuations():
+    from chronos.evening_agenda import render_window_agenda
+
+    begin = datetime.fromisoformat("2026-10-20T12:00:00+08:00")
+    parts = render_window_agenda([event("<Graphs> " + "x" * 450)] * 20, begin, begin.replace(hour=19), NOW.tzinfo)
+    assert len(parts) > 1
+    assert all(part.startswith("<b>10/20 12:00–10/20 19:00</b>") for part in parts)
+    assert all("17:00–18:30\n&lt;Graphs&gt;" in part and "minutes" not in part for part in parts)
+    assert all(len(part) < 4096 for part in parts)

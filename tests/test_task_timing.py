@@ -138,7 +138,7 @@ def test_ai_keeps_date_precision_and_time_role(monkeypatch, timing):
 
 def test_ai_patch_preserves_unmentioned_fields(monkeypatch):
     operations = {name: {"op": "keep", "value": None} for name in
-                  ("title", "due_at", "project", "due_date", "scheduled", "event", "uncertain")}
+                  ("title", "content", "due_at", "project", "due_date", "scheduled", "event", "uncertain")}
     operations.update(due_at={"op": "clear", "value": None},
                       event={"op": "set", "value": "2026-10-10"})
     mock_provider(monkeypatch, lambda request: httpx.Response(200, json={"candidates": [
@@ -157,7 +157,7 @@ def test_ai_patch_preserves_unmentioned_fields(monkeypatch):
                                       {"op": "clear", "value": None}])
 def test_invalid_title_operations_fail_without_silent_changes(monkeypatch, invalid):
     operations = {name: {"op": "keep", "value": None} for name in
-                  ("title", "due_at", "project", "due_date", "scheduled", "event", "uncertain")}
+                  ("title", "content", "due_at", "project", "due_date", "scheduled", "event", "uncertain")}
     operations["title"] = invalid
     mock_provider(monkeypatch, lambda request: httpx.Response(200, json={"candidates": [
         {"content": {"parts": [{"text": json.dumps(operations)}]}}]}))
@@ -204,3 +204,35 @@ def test_display_dates_omit_year_without_changing_task():
     assert task["title"] == "Confirm coverage for 2026-10-05"
     assert task["due_at"].startswith("2026-")
     assert display_task_title("Version 2026-99-99") == "Version 2026-99-99"
+
+
+def test_effort_is_persisted_but_not_rendered(service):
+    task = service.create("Study graph algorithms", timing={"estimated_minutes": 120, "content": "Past exams"})
+    stored = service.get_open_by_id(task["id"])
+    assert stored["timing"]["estimated_minutes"] == 120
+    text = format_tasks([stored], TZ)
+    assert "Past exams" in text
+    assert "120" not in text and "estimated_minutes" not in text
+
+
+@pytest.mark.parametrize("value", [0, -1, True, "120", 1.5, 10081])
+def test_effort_rejects_invalid_values(value):
+    with pytest.raises(ValueError):
+        normalize_timing({"estimated_minutes": value})
+
+
+@pytest.mark.parametrize("status", ["scheduled", "awaiting_feedback", "proposed", "creating", "cancelled"])
+def test_calendar_booking_is_visible_without_mutating_storage(service, status):
+    task = service.create("Booked work")
+    service.db.mutate_task_action_state(f"learning:task:{task['id']}", lambda old: {
+        "status": status, "start": "2026-10-24T10:30:00+08:00", "end": "2026-10-24T12:00:00+08:00"})
+    before = service.db.get_task_action_state(f"learning:task:{task['id']}")
+    rendered = format_tasks(service.list_open(), TZ)
+    if status in {"scheduled", "awaiting_feedback"}:
+        assert rendered.startswith("<b>Scheduled</b>")
+        assert "10/24 (Sat) 10:30–12:00" in rendered
+    else:
+        assert rendered.startswith("<b>Unscheduled</b>")
+        assert "10:30" not in rendered
+    assert service.db.get_task_action_state(f"learning:task:{task['id']}") == before
+    assert "scheduled_slot" not in service.db.list_open_tasks()[0]

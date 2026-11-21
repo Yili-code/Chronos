@@ -72,7 +72,7 @@ async def tick_calendar(db, telegram, chat_id, now, *, sync_result=None):
         if claim is None:
             continue
         try:
-            response = await telegram.send_message(chat_id, text, parse_mode="HTML")
+            response = await telegram.send_message(chat_id, text, parse_mode="HTML", requires_response=False)
         except TelegramError:
             ledger.finish(key, claim, now)
             continue

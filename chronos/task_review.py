@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from .ai import AIError, TaskReviewOutput
 from .course_tracking import COURSE_SCHEDULE
+from .message_lifecycle import SECONDS
 from .task_actions import task_fields
 from .tasks import is_course_scope_task, project_display_name
 
@@ -63,7 +64,7 @@ def proposal(task, title, course, project, reason, chat_id, now):
 def card(state, aliases):
     before = state['before']
     old_title = before['title'][:180] + ('…' if len(before['title']) > 180 else '')
-    lines = ['<b>Suggested task update</b>']
+    lines = ['<b>A suggestion for your approval, Sir.</b>']
     if state['title'] != before['title']:
         lines += ['', '<b>Title</b>', '<b>Before</b> ' + escape(old_title), '<b>After</b> ' + escape(state['title'])]
     else:
@@ -75,6 +76,35 @@ def card(state, aliases):
     return {'text': '\n'.join(lines), 'parse_mode': 'HTML', 'task_review': state['token'],
         'reply_markup': {'inline_keyboard': [[{'text': 'Apply', 'callback_data': 'taskreview:apply:' + state['token']},
                                              {'text': 'Keep unchanged', 'callback_data': 'taskreview:cancel:' + state['token']}]]}}
+
+
+def wording_request(text):
+    """A global wording review needs an explicit task presentation/tag request."""
+    from .task_references import nonoperative
+    if nonoperative(text) or re.search(r'[?？「」『』"]|不要|不需要|不用|別|别|\b(?:not|never)\b', text, re.I):
+        return False
+    fields = re.search(r'用詞|措辭|措辞|標題|标题|標籤|标签|命名|名稱|名称|'
+                       r'\b(?:wording|titles?|tags?|naming|names?)\b', text, re.I)
+    scope = re.search(r'任務|任务|待辦|待办|\b(?:tasks?|to-?dos?)\b', text, re.I)
+    course_tags = re.search(r'課程|课程', text) and re.search(r'標籤|标签', text)
+    return bool(fields and scope or course_tags)
+
+
+def standalone_work(text):
+    """Narrow imperative work items; questions, references and field edits stay out."""
+    from .task_references import nonoperative, literal_ids
+    if (nonoperative(text) or literal_ids(text, []) is not None
+            or re.search(r'[?？「」『』"\n]|如何|怎麼|怎么|不要|不需要|不用|別|别|\b(?:not|never)\b', text, re.I)
+            or wording_request(text)):
+        return False
+    match = re.fullmatch(
+        r'\s*(?:(?:請|请|幫我|帮我)\s*)?'
+        r'(?:(?:優化|优化|改善|改進|改进|重構|重构|維護|维护|修復|修复|開發|开发|測試|测试)\s*|'
+        r'(?:optimi[sz]e|improve|refactor|maintain|fix|develop|test)\s+)'
+        r'(.{1,160}?)[。.!！\s]*', text, re.I)
+    return bool(match and match[1].strip().casefold() not in {
+        '任務', '任务', '待辦', '待办', '我的任務', '我的任务', '任務清單', '待辦清單',
+        '所有任務', '全部任務', 'tasks', 'my tasks', 'all tasks', 'todos'})
 
 
 def new_task_suggestion(db, task, all_tasks, aliases, chat_id, now):
@@ -151,7 +181,7 @@ def respond(db, tasks, settings, chat_id, message_id, token, action, now=None):
             return '建議已過期，請重新產生。沒有變更。'
         if action == 'cancel':
             db._save_task_action_state(KEY + token, {**state, 'status': 'cancelled'})
-            return '已保留原本的任務與標籤。'
+            return {'messages': [{'text': '已保留原本的任務與標籤。', 'delete_after_seconds': SECONDS}]}
         current = tasks.get_open_by_id(state['task_id'])
         if not current or task_fields(current) != state['before']:
             return '這項任務已被修改或結束，請重新確認。沒有套用舊建議。'
@@ -161,7 +191,7 @@ def respond(db, tasks, settings, chat_id, message_id, token, action, now=None):
         if not updated:
             return '這項任務已結束，沒有變更。'
         db._save_task_action_state(KEY + token, {**state, 'status': 'applied'})
-        return {'messages': [{'text': '<b>Task updated</b>\n' + escape(updated['title']) +
+        return {'messages': [{'delete_after_seconds': SECONDS, 'text': '<b>Task updated</b>\n' + escape(updated['title']) +
             ('\n#' + escape(project_display_name(updated['project'], aliases)) if updated.get('project') else ''), 'parse_mode': 'HTML',
             'reply_markup': {'inline_keyboard': [[{'text': 'Undo this edit',
                 'callback_data': 'task:undo:' + updated['undo_token']}]]}}]}

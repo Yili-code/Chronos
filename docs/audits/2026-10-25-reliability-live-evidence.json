@@ -1,0 +1,294 @@
+{
+  "scope": "Finite synthetic-input verification; real model and Telegram transport; no real Calendar mutations",
+  "model_execution": {
+    "scope": "Live model; disposable SQLite; mocked Calendar/Telegram; no service writes",
+    "reference_now": "2026-10-25T10:00:00+08:00",
+    "results": [
+      {
+        "id": "weekday-conflict",
+        "input": "明天（星期二）下午兩點，做一小時",
+        "expected": "clarify",
+        "parsed": {
+          "actionable": true,
+          "minutes": 60,
+          "timing": "exact",
+          "window_end": null,
+          "start": "2026-10-27T14:00:00+08:00",
+          "progress_note": ""
+        },
+        "passed": true,
+        "reply": "「明天」是 2026-10-26（星期一），與「星期二」不一致。要依日期還是星期？",
+        "writes": 0,
+        "actual_start": "2026-10-26T10:00:00+08:00"
+      },
+      {
+        "id": "meridiem",
+        "input": "明天 5:00 PM 改成三十分鐘",
+        "expected": "blocked-meal",
+        "parsed": {
+          "actionable": true,
+          "minutes": 30,
+          "timing": "exact",
+          "window_end": null,
+          "start": "2026-10-26T17:00:00+08:00",
+          "progress_note": ""
+        },
+        "passed": true,
+        "reply": "That time conflicts with your calendar, deadline or study limits. The booking is unchanged.",
+        "writes": 0,
+        "actual_start": "2026-10-26T10:00:00+08:00"
+      },
+      {
+        "id": "month-zone",
+        "input": "10/31 23:30 UTC 開始，做三十分鐘",
+        "expected": "2026-11-01T07:30:00+08:00",
+        "parsed": {
+          "actionable": true,
+          "minutes": 30,
+          "timing": "exact",
+          "window_end": null,
+          "start": "2026-10-31T23:30:00Z",
+          "progress_note": ""
+        },
+        "passed": true,
+        "reply": "Work block updated\n2026-11-01T07:30:00+08:00 · 30 minutes",
+        "writes": 1,
+        "actual_start": "2026-11-01T07:30:00+08:00"
+      },
+      {
+        "id": "self-correction",
+        "input": "明天下午兩點，算了不要改開始時間，只改成三十分鐘",
+        "expected": "2026-10-26T10:00:00+08:00",
+        "parsed": {
+          "actionable": true,
+          "minutes": 30,
+          "timing": "keep",
+          "window_end": null,
+          "start": null,
+          "progress_note": ""
+        },
+        "passed": true,
+        "reply": "Work block updated\n2026-10-26T10:00:00+08:00 · 30 minutes",
+        "writes": 1,
+        "actual_start": "2026-10-26T10:00:00+08:00"
+      },
+      {
+        "id": "typo-relative",
+        "input": "資料庫那個報高，延後半個小時，長度跟其他事情不動",
+        "expected": "2026-10-26T10:30:00+08:00",
+        "parsed": {
+          "actionable": true,
+          "minutes": 60,
+          "timing": "exact",
+          "window_end": null,
+          "start": "2026-10-26T10:30:00+08:00",
+          "progress_note": ""
+        },
+        "passed": true,
+        "reply": "Work block updated\n2026-10-26T10:30:00+08:00 · 60 minutes",
+        "writes": 1,
+        "actual_start": "2026-10-26T10:30:00+08:00"
+      },
+      {
+        "id": "missing-reference",
+        "input": "照剛才的",
+        "expected": "clarify",
+        "parsed": {
+          "actionable": false,
+          "minutes": null,
+          "timing": "keep",
+          "window_end": null,
+          "start": null,
+          "progress_note": ""
+        },
+        "passed": true,
+        "reply": "Please specify a time, a clear time window or a duration. The booking is unchanged.",
+        "writes": 0,
+        "actual_start": "2026-10-26T10:00:00+08:00"
+      },
+      {
+        "id": "dst-fold",
+        "input": "改到 2026-11-01 01:30 America/New_York，三十分鐘，沒有指定 UTC offset",
+        "expected": "clarify",
+        "parsed": {
+          "actionable": false,
+          "minutes": 30,
+          "timing": "exact",
+          "window_end": null,
+          "start": "2026-11-01T01:30:00-04:00",
+          "progress_note": ""
+        },
+        "passed": true,
+        "reply": "Please specify a time, a clear time window or a duration. The booking is unchanged.",
+        "writes": 0,
+        "actual_start": "2026-10-26T10:00:00+08:00"
+      }
+    ],
+    "git_head_at_execution": "46d28a9404f5dfc2953024a18c16c03d69bc8ed9"
+  },
+  "recorded_model_output_replay_after_ownership_hardening": {
+    "scope": "Recorded real-model outputs replayed through current local service; no live requests or service writes",
+    "reference_now": "2026-10-25T10:00:00+08:00",
+    "results": [
+      {
+        "id": "weekday-conflict",
+        "input": "明天（星期二）下午兩點，做一小時",
+        "expected": "clarify",
+        "parsed": {
+          "actionable": true,
+          "minutes": 60,
+          "timing": "exact",
+          "window_end": null,
+          "start": "2026-10-27T14:00:00+08:00",
+          "progress_note": ""
+        },
+        "passed": true,
+        "reply": "「明天」是 2026-10-26（星期一），與「星期二」不一致。要依日期還是星期？",
+        "writes": 0,
+        "actual_start": "2026-10-26T10:00:00+08:00"
+      },
+      {
+        "id": "meridiem",
+        "input": "明天 5:00 PM 改成三十分鐘",
+        "expected": "blocked-meal",
+        "parsed": {
+          "actionable": true,
+          "minutes": 30,
+          "timing": "exact",
+          "window_end": null,
+          "start": "2026-10-26T17:00:00+08:00",
+          "progress_note": ""
+        },
+        "passed": true,
+        "reply": "That time conflicts with your calendar, deadline or study limits. The booking is unchanged.",
+        "writes": 0,
+        "actual_start": "2026-10-26T10:00:00+08:00"
+      },
+      {
+        "id": "month-zone",
+        "input": "10/31 23:30 UTC 開始，做三十分鐘",
+        "expected": "2026-11-01T07:30:00+08:00",
+        "parsed": {
+          "actionable": true,
+          "minutes": 30,
+          "timing": "exact",
+          "window_end": null,
+          "start": "2026-10-31T23:30:00Z",
+          "progress_note": ""
+        },
+        "passed": true,
+        "reply": "Work block updated\n2026-11-01T07:30:00+08:00 · 30 minutes",
+        "writes": 1,
+        "actual_start": "2026-11-01T07:30:00+08:00"
+      },
+      {
+        "id": "self-correction",
+        "input": "明天下午兩點，算了不要改開始時間，只改成三十分鐘",
+        "expected": "2026-10-26T10:00:00+08:00",
+        "parsed": {
+          "actionable": true,
+          "minutes": 30,
+          "timing": "keep",
+          "window_end": null,
+          "start": null,
+          "progress_note": ""
+        },
+        "passed": true,
+        "reply": "Work block updated\n2026-10-26T10:00:00+08:00 · 30 minutes",
+        "writes": 1,
+        "actual_start": "2026-10-26T10:00:00+08:00"
+      },
+      {
+        "id": "typo-relative",
+        "input": "資料庫那個報高，延後半個小時，長度跟其他事情不動",
+        "expected": "2026-10-26T10:30:00+08:00",
+        "parsed": {
+          "actionable": true,
+          "minutes": 60,
+          "timing": "exact",
+          "window_end": null,
+          "start": "2026-10-26T10:30:00+08:00",
+          "progress_note": ""
+        },
+        "passed": true,
+        "reply": "Work block updated\n2026-10-26T10:30:00+08:00 · 60 minutes",
+        "writes": 1,
+        "actual_start": "2026-10-26T10:30:00+08:00"
+      },
+      {
+        "id": "missing-reference",
+        "input": "照剛才的",
+        "expected": "clarify",
+        "parsed": {
+          "actionable": false,
+          "minutes": null,
+          "timing": "keep",
+          "window_end": null,
+          "start": null,
+          "progress_note": ""
+        },
+        "passed": true,
+        "reply": "Please specify a time, a clear time window or a duration. The booking is unchanged.",
+        "writes": 0,
+        "actual_start": "2026-10-26T10:00:00+08:00"
+      },
+      {
+        "id": "dst-fold",
+        "input": "改到 2026-11-01 01:30 America/New_York，三十分鐘，沒有指定 UTC offset",
+        "expected": "clarify",
+        "parsed": {
+          "actionable": false,
+          "minutes": 30,
+          "timing": "exact",
+          "window_end": null,
+          "start": "2026-11-01T01:30:00-04:00",
+          "progress_note": ""
+        },
+        "passed": true,
+        "reply": "Please specify a time, a clear time window or a duration. The booking is unchanged.",
+        "writes": 0,
+        "actual_start": "2026-10-26T10:00:00+08:00"
+      }
+    ],
+    "git_head_at_execution": "46d28a9404f5dfc2953024a18c16c03d69bc8ed9"
+  },
+  "multi_turn_model_cases": {
+    "initial_first_four_cases": "passed on SQLite and strict Firestore fake",
+    "initial_remaining_six": "unverified due to HTTP 429, not counted as passes",
+    "paced_remaining_six_sqlite": "6 passed",
+    "post_main_integration_representatives": "2 passed"
+  },
+  "telegram_service": {
+    "private_chat_verified": true,
+    "sent": true,
+    "edited": true,
+    "deleted": true
+  },
+  "calendar_service": {
+    "dedicated_test_calendar_found": false,
+    "local_oauth": "rejected refresh token",
+    "event_writes_attempted": 0,
+    "production_credential_read": "auto-review rejected before execution; no workaround"
+  },
+  "cleanup": {
+    "telegram_probe_deleted": true,
+    "owned_scratch_database_files_removed": 7,
+    "calendar_test_events_created": 0
+  },
+  "limits": [
+    "The date/weekday model output may still be actionable; independent application validation blocks it.",
+    "Calendar and Firestore write E2E remain unverified.",
+    "No exactly-once cross-service or Telegram delivery guarantee."
+  ],
+  "provenance_note": "Git heads identify execution-time base revisions; some probes ran on a dirty worktree. Final local tests and PR CI verify the delivered source; captured real outputs are distinguished from later offline replay.",
+  "final_application_commit": "351f409a5fc965b85ac8e256116694e81caf4283",
+  "final_local_validation": {
+    "python_passed": 2320,
+    "duration_seconds": 158.17,
+    "warnings": "one existing Starlette deprecation",
+    "extension_passed": 21,
+    "ruff_undefined_names": "passed",
+    "compilation": "passed",
+    "documentation": "98 local links in 117 Markdown files; no missing targets"
+  }
+}

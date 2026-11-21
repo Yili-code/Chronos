@@ -7,12 +7,15 @@ from hashlib import sha256
 from html import escape
 from uuid import uuid4
 
+from .study_feedback import PROMPT as FEEDBACK_PROMPT, extract as extract_feedback
 from .ai import AIError
 from .course_tracking import COURSE_SCHEDULE
 from .google_calendar import CalendarError
 from .task_actions import task_fields
 from .task_timing import display_time
 from .tasks import is_course_scope_task, task_title_lines
+
+PROGRESS_COMPLETED_ACK = '已記下這次完成的進度。'
 
 COURSE_SCOPE_MINUTES = 10
 
@@ -85,8 +88,11 @@ def class_windows(day, tz, policy=None):
             for slot in COURSE_SCHEDULE if slot.weekday == day.weekday()]
 
 
-def find_slot(task, now, busy, reservations, config, minutes, booked_minutes=None, course_policy=None, randomize=False, window=None):
-    """Search 15-minute boundaries; class plus study load never exceeds the cap."""
+def find_slot(task, now, busy, reservations, config, minutes, booked_minutes=None, course_policy=None, randomize=False, window=None, align_minutes=True, lead_minutes=10, overlap_class=None):
+    """Search 15-minute boundaries by default; class plus study load never exceeds the cap."""
+    now = now.astimezone(config.tz)
+    if window:
+        window = tuple(value.astimezone(config.tz) for value in window)
     due = task.get("due_at") or (task.get("timing") or {}).get("due_date")
     deadline = (datetime.fromisoformat(due).astimezone(config.tz) if due and len(due) > 10 else
                 datetime.combine(datetime.fromisoformat(due).date(), time.max, config.tz) if due else
@@ -96,26 +102,39 @@ def find_slot(task, now, busy, reservations, config, minutes, booked_minutes=Non
     for offset in range(8):
         day = (max(now, window[0]) if window else now).date() + timedelta(days=offset)
         classes = class_windows(day, config.tz, course_policy)
+        blocked_classes = [interval for interval in classes if interval != overlap_class]
         load = sum((end - start).total_seconds() / 60 for start, end in classes)
         load += (booked_minutes or {}).get(day.isoformat(), 0)
         load += sum((end - start).total_seconds() / 60 for start, end in reservations if start.date() == day)
         if load + minutes > config.learning_daily_minutes:
             continue
-        start = max(now + timedelta(minutes=10), datetime.combine(day, time(config.learning_start_hour), config.tz))
+        start = max(now + timedelta(minutes=lead_minutes), datetime.combine(day, time(config.learning_start_hour), config.tz))
         if window:
             start = max(start, window[0])
-        start = start.replace(second=0, microsecond=0)
-        start += timedelta(minutes=(-start.minute) % 15)
+        if align_minutes:
+            if start.second or start.microsecond:
+                start += timedelta(minutes=1)
+            start = start.replace(second=0, microsecond=0)
+            start += timedelta(minutes=(-start.minute) % 15)
         stop = min(horizon, datetime.combine(day, time(config.learning_end_hour % 24), config.tz)
                    + (timedelta(days=1) if config.learning_end_hour == 24 else timedelta()))
         while start + timedelta(minutes=minutes) <= stop:
             end = start + timedelta(minutes=minutes)
-            if not overlaps(start, end, [*busy, *classes, *reservations, *short_task_windows(day, config.tz, minutes)]):
+            if not overlaps(start, end, [*busy, *blocked_classes, *reservations, *short_task_windows(day, config.tz, minutes)]):
                 if not randomize:
                     return start, end
                 candidates.append((start, end))
-            start += timedelta(minutes=15)
+            start += timedelta(minutes=15 if align_minutes else 1)
     return choice(candidates) if candidates else None
+
+
+def is_completion_reply(text):
+    return bool(re.fullmatch(
+        r"(?:已完成|已經完成|已经完成|完成了|全部完成|done|already done|completed"
+        r"|(?:我\s*)?(?:已經|已经|已)\s*完成\s*(?:這個|这个|這項|这项|此)?\s*(?:任務|任务)\s*了?)"
+        r"[。.!！\s]*",
+        text.strip(), re.IGNORECASE,
+    ))
 
 
 class LearningCalendar:
@@ -125,6 +144,19 @@ class LearningCalendar:
 
     def get(self, task_id):
         return self.db.get_task_action_state(f"learning:task:{task_id}")
+
+    def active_proposal_reply(self, message_id, text):
+        queue = self.db.get_task_action_state("learning:proposal-queue") or {}
+        task_id = queue.get("active_task_id")
+        state = self.get(task_id) if task_id is not None else None
+        if (not state or state.get("message_id") != message_id
+                or state.get("status") not in {"proposed", "editing", "no_slot"}):
+            return None
+        if not is_completion_reply(text):
+            return lambda: "這是工作時段規劃卡。請用卡片按鈕調整安排，或回覆「已完成」結束這項任務。"
+        return lambda: self.complete_unbooked(
+            {"id": task_id, "title": state["snapshot"]["title"]}, state, datetime.now(self.settings.tz)
+        )
 
     def update(self, task_id, transition):
         return self.db.mutate_task_action_state(f"learning:task:{task_id}", transition)
@@ -141,7 +173,10 @@ class LearningCalendar:
             if creating:
                 active = creating[0]
             elif not states.get(active) or states[active]["status"] not in phases | {"queued"}:
-                active = next((key for key, state in states.items() if state and state["status"] == "editing"), None)
+                active = next((key for key in queue.get("requested_task_ids", [])
+                    if states.get(key) and states[key]["status"] in phases | {"queued"}), None)
+                if active is None:
+                    active = next((key for key, state in states.items() if state and state["status"] == "editing"), None)
                 if active is None:
                     active = next((key for key, state in states.items() if state and state["status"] in phases), None)
             retired = list(queue.get("retire_message_ids", []))
@@ -183,21 +218,42 @@ class LearningCalendar:
 
     def request_proposal(self, task_id, *, immediate=False):
         """Atomically give an explicit owner request the next approval turn."""
+        return self.request_proposals([task_id], immediate=immediate)[0]
+
+    def request_proposals(self, task_ids, *, minutes=None, immediate=False, window=None):
+        """Queue an explicit batch atomically; each Calendar write still needs approval."""
+        task_ids = list(dict.fromkeys(task_ids))
+        if not 1 <= len(task_ids) <= 20 or any(type(i) is not int or i < 1 for i in task_ids):
+            raise ValueError("Select between 1 and 20 task IDs")
+        if minutes is not None and (type(minutes) is not int or not 15 <= minutes <= 180):
+            raise ValueError("Work blocks must be between 15 and 180 minutes")
+        if window is not None:
+            begin, stop = window
+            now = datetime.now(self.settings.tz)
+            if (begin.utcoffset() is None or stop.utcoffset() is None or
+                    not now < stop or not begin < stop or stop > now + timedelta(days=7)):
+                raise ValueError("請指定未來七天內的有效安排範圍。")
         def request():
-            state = self.get(task_id) or {}
-            if state.get('status') == 'backward_managed':
-                return f'This task belongs to a backward plan. Use /backward progress {task_id} to review progress.'
+            tasks = self.db.list_open_tasks()
+            states = {i: self.get(i) or {} for i in dict.fromkeys([*(task['id'] for task in tasks), *task_ids])}
+            for task_id in task_ids:
+                if states[task_id].get('status') == 'backward_managed':
+                    return f'This task belongs to a backward plan. Use /backward progress {task_id} to review progress.', False
+            if not set(task_ids) <= {task['id'] for task in tasks}:
+                return "A selected task is no longer open. Nothing was queued.", False
             queue = self.db.get_task_action_state("learning:proposal-queue") or {}
             active = queue.get("active_task_id")
-            active_state = self.get(active) if active is not None else None
-            if state.get("status") in {"creating", "scheduled", "awaiting_feedback"}:
-                return "A work block is already scheduled or awaiting an outcome. Use the existing card first."
+            active_state = states.get(active)
+            for task_id in task_ids:
+                state = states[task_id]
+                if state.get("status") in {"creating", "scheduled", "awaiting_feedback"}:
+                    return "A work block is already scheduled or awaiting an outcome. Use the existing card first.", False
             if active_state and active_state.get("status") == "creating":
-                return f"Calendar confirmation for task #{active} is in progress. Try /plan {task_id} after it finishes."
+                return f"Calendar confirmation for task #{active} is in progress. Try again after it finishes.", False
             retired = list(queue.get("retire_message_ids", []))
             updates = {}
-            for task in self.db.list_open_tasks():
-                old = self.get(task["id"])
+            for task in tasks:
+                old = states[task['id']]
                 if not old or old.get("status") not in {"queued", "planning", "proposed", "editing", "no_slot"}:
                     continue
                 retired.extend(old[key] for key in ("message_id", "edit_message_id") if old.get(key))
@@ -206,22 +262,37 @@ class LearningCalendar:
                 for key in ("start", "end", "message_id", "edit_message_id"):
                     replacement.pop(key, None)
                 updates[task["id"]] = replacement
-            current = updates.get(task_id, state)
-            if current.get('duration_source') == 'nightly_ai':
-                current = dict(current)
-                for key in ('nightly_slot', 'nightly_batch', 'nightly_overview', 'nightly_reason',
-                            'duration_source', 'duration_estimate', 'requested_minutes'):
-                    current.pop(key, None)
+            for task_id in task_ids:
+                current = dict(updates.get(task_id, states[task_id]))
+                if current.get('duration_source') == 'nightly_ai':
+                    for key in ('nightly_slot', 'nightly_batch', 'nightly_overview', 'nightly_reason',
+                                'duration_source', 'duration_estimate', 'requested_minutes'):
+                        current.pop(key, None)
+                if minutes is not None:
+                    current.update(requested_minutes=minutes, duration_source='owner')
+                    current.pop('duration_estimate', None)
+                current.pop('requested_window', None)
+                current.pop('owner_window',None)
+                current.pop('protected_breaks',None)
+                if window is not None:
+                    current['requested_window'] = dict(zip(('start', 'end'), (v.isoformat() for v in window)))
+                updates[task_id] = {**current, "status": "queued", "token": uuid4().hex}
             for key, replacement in updates.items():
                 self.db._save_task_action_state(f"learning:task:{key}", replacement)
-            self.db._save_task_action_state(f"learning:task:{task_id}",
-                {**current, "status": "queued", "token": uuid4().hex})
             self.db._save_task_action_state("learning:proposal-queue", {**queue,
-                "active_task_id": task_id, "retire_message_ids": list(dict.fromkeys(retired))})
+                "active_task_id": task_ids[0], "requested_task_ids": task_ids,
+                "retire_message_ids": list(dict.fromkeys(retired))})
             hour = datetime.now(self.settings.tz).hour
             timing = ("Preparing its execution plan" if immediate or self.settings.learning_start_hour <= hour < self.settings.learning_end_hour
                 else f"Execution planning resumes at {self.settings.learning_start_hour:02d}:00 after quiet hours")
-            return f"Task #{task_id} is next. {timing}; Calendar writing requires confirmation."
+            if self.settings.learning_auto_accept:
+                duration = f" · {minutes} minutes each" if minutes is not None else ""
+                return (f"Queued {len(task_ids)} task(s){duration}. I’ll arrange available work sessions and report the result; exceptions will need your decision.", True)
+            if len(task_ids) == 1:
+                return f"Task #{task_ids[0]} is next. {timing}; Calendar writing requires confirmation.", True
+            duration = f" ({minutes} minutes each)" if minutes is not None else ""
+            return (f"Queued {len(task_ids)} tasks{duration}: " + ", ".join(f"#{i}" for i in task_ids)
+                + f". {timing}; each Calendar block requires confirmation."), True
         return self.db._run_task_action(request)
 
     async def nightly_proposals(self, now=None):
@@ -240,7 +311,7 @@ class LearningCalendar:
             return
         try:
             result = await self.telegram.send_message(self.settings.telegram_chat_id, text,
-                parse_mode="HTML", reply_markup={"inline_keyboard": [buttons[i:i+2] for i in range(0, len(buttons), 2)] if kind == "proposal" else [buttons]})
+                parse_mode="HTML", requires_response=kind != "scheduled", reply_markup={"inline_keyboard": [buttons[i:i+2] for i in range(0, len(buttons), 2)] if kind in {"proposal", "recovery"} else [buttons]})
         except Exception:
             self.update(task_id, lambda old: {**old, "delivery": kind + "_uncertain"})
             raise CalendarError("Planning message delivery is uncertain. Inspect /plan before retrying.") from None
@@ -274,10 +345,14 @@ class LearningCalendar:
                 "nightly_batch": (old or {}).get("nightly_batch"),
                 **{k: old[k] for k in ('nightly_slot', 'nightly_overview', 'nightly_reason') if old and k in old},
                 "requested_minutes": (old or {}).get("requested_minutes"),
+                "requested_window": (old or {}).get("requested_window"),
+                "owner_window": (old or {}).get("owner_window"),
+                "protected_breaks": (old or {}).get("protected_breaks",[]),
                 "duration_source": (old or {}).get("duration_source"),
                 "duration_estimate": (old or {}).get("duration_estimate"),
                 "progress_note": (old or {}).get("progress_note", ""),
                 "progress": (old or {}).get("progress"),
+                "recovery": (old or {}).get("recovery", {}),
                 "retire_on_send": [*((old or {}).get("retire_on_send", [])),
                     *((old or {}).get(key) for key in ("message_id", "edit_message_id") if (old or {}).get(key))]}
             self.db._save_task_action_state(f"learning:task:{task_id}", state)
@@ -288,7 +363,7 @@ class LearningCalendar:
             return
         try:
             await self.calendar.verify_owner()
-            window = state.get('nightly_slot') if state.get('duration_source') == 'nightly_ai' else None
+            window = state.get('nightly_slot') if state.get('duration_source') == 'nightly_ai' else state.get('requested_window')
             if window:
                 begin, stop = (datetime.fromisoformat(window[k]) for k in ('start', 'end'))
                 busy = await self.calendar.busy(begin, stop)
@@ -301,6 +376,9 @@ class LearningCalendar:
                        if evidence.get("samples", 0) >= 3 else self.settings.learning_minutes)
             minutes = state.get("requested_minutes") or minutes
             source = state.get("duration_source") or ("profile" if evidence.get("samples", 0) >= 3 else "default")
+            owner_effort = (task.get("timing") or {}).get("estimated_minutes")
+            if owner_effort and source not in {"owner", "nightly_ai"}:
+                minutes, source = min(180, owner_effort), "owner"
             if is_course_scope_task(task) and source not in {"owner", "nightly_ai"}:
                 minutes, source = COURSE_SCOPE_MINUTES, "course_scope_rule"
             elif source not in {"owner", "nightly_ai"} and self.ai is not None:
@@ -322,10 +400,28 @@ class LearningCalendar:
                                if evidence.get("samples", 0) >= 3 else self.settings.learning_minutes)
             policy = self.db.get_task_action_state("learning:course-calendar-policy")
             if source == 'nightly_ai':
-                from .nightly_planning import slot_allowed
-                slot = slot_allowed(self, task, state, now, [*busy, *reservations], booked_minutes)
+                from .nightly_planning import check_slot, replacement_slot
+                slot, reasons = check_slot(self, task, state, now, [*busy, *reservations], booked_minutes)
+                if not slot and state.get('owner_window'):state['nightly_invalid_reasons']=reasons
+                if not slot and not state.get('owner_window'):
+                    state['nightly_invalid_reasons'] = reasons
+                    state['nightly_overview'] = ''
+                    busy = await self.calendar.busy(now, now + timedelta(days=7))
+                    slot = replacement_slot(self, task, state, now, [*busy, *reservations], booked_minutes)
+                    if slot:
+                        state['nightly_replanned_from'] = state['nightly_slot']
+                        state['nightly_slot'] = dict(zip(('start', 'end'), (v.isoformat() for v in slot)))
+                        state['nightly_reason'] = 'Replacement session checked against current availability; confirmation is required.'
             else:
-                slot = find_slot(task, now, busy, reservations, self.settings, minutes, booked_minutes, policy)
+                slot = find_slot(task, now, busy, reservations, self.settings, minutes, booked_minutes, policy,
+                    window=(begin, stop) if window else None)
+            from .nightly_planning import deadline as task_deadline
+            due = task_deadline(task, self.settings)
+            horizon = min(now + timedelta(days=7), due) if due else now + timedelta(days=7)
+            state['availability_search'] = {'start': begin.isoformat() if state.get('requested_window') and source != 'nightly_ai' else now.isoformat(),
+                'end': stop.isoformat() if state.get('requested_window') and source != 'nightly_ai' else horizon.isoformat(),
+                'scope': 'requested_window' if state.get('requested_window') and source != 'nightly_ai' else 'deadline' if due and due <= now + timedelta(days=7) else 'seven_days'}
+            if state.get('owner_window'):state['availability_search']={**state['owner_window'],'scope':'requested_window'}
             plan = {**state, "status": "proposed" if slot else "no_slot", "minutes": minutes,
                     "duration_source": source, "delivery": "proposal_pending", "estimate_samples": evidence.get("samples", 0)}
             if slot:
@@ -341,7 +437,7 @@ class LearningCalendar:
                         if len(due) > 10 else
                         datetime.combine(datetime.fromisoformat(due).date(), time.max, self.settings.tz))
                     horizon = min(horizon, deadline)
-                if horizon > now and source != 'nightly_ai':
+                if horizon > now and source != 'nightly_ai' and not window:
                     from .study_reflow import preview
                     reflow = await preview(self, task, {**plan, "start": horizon.isoformat()}, now)
                     if reflow:
@@ -355,18 +451,31 @@ class LearningCalendar:
 
     def proposal_content(self, task, state):
         if state["status"] == "no_slot":
-            text = (f"<b>No viable execution window</b>\n{escape(task['title'])}\n"
-                    "No viable work block fits before the deadline within your fixed commitments and workload limits. "
-                    "Change the deadline or duration, then use /plan again.")
+            search = state.get('availability_search')
+            if search:
+                scope = (f"within {display_time(search['start'], self.settings.tz)}–{display_time(search['end'], self.settings.tz)}"
+                    if search['scope'] == 'requested_window' else
+                    'before the task deadline' if search['scope'] == 'deadline' else 'in the next 7 days')
+                detail = (f"No continuous {state['minutes']}-minute block fits {scope} within your working hours, "
+                    "current commitments and daily workload limit. Try another duration or planning window.")
+            else:
+                detail = 'This saved allocation has no valid time. Use Replan to search current availability.'
+            text = (f"<b>I could not find a suitable work session, Sir.</b>\n{escape(task['title'])}\n" + detail)
+            if state.get('nightly_invalid_reasons'):
+                text += '\n' + self.allocation_explanation(state)
             buttons = self.buttons(task["id"], state, [("retry", "Replan"), ("postpone", "Defer")])
+            if search and state["minutes"] >= 30:
+                buttons = self.buttons(task["id"], state, [("split", "分次完成")]) + buttons
         else:
             end = datetime.fromisoformat(state["end"]).astimezone(self.settings.tz)
-            text = (f"<b>Execution plan</b>\n{escape(task['title'])}\n"
+            text = (f"<b>Your proposed work session, Sir.</b>\n{escape(task['title'])}\n"
                     f"{display_time(state['start'], self.settings.tz)}–{end:%H:%M}")
             if state.get('duration_source') == 'nightly_ai':
                 estimate = state.get('duration_estimate', {}).get('estimated_minutes')
                 text += f"\n{state['minutes']} min planned · estimated remaining work {estimate} min"
                 text += '\n' + escape(state.get('nightly_reason', ''))
+                if state.get('nightly_invalid_reasons'):
+                    text += '\n' + self.allocation_explanation(state)
                 if state.get('nightly_overview'):
                     text = state['nightly_overview'] + '\n\n' + text
             if state.get("progress_note"):
@@ -380,6 +489,16 @@ class LearningCalendar:
             buttons = self.buttons(task["id"], state, [
                 ("approve", "Confirm schedule"), ("edit", "Adjust plan"), ("postpone", "Defer")])
         return text, buttons
+
+    @staticmethod
+    def allocation_explanation(state):
+        labels = {'calendar_conflict': 'a Calendar event or reserved block overlaps it',
+            'pending_plan': 'another pending plan overlaps it', 'daily_limit': 'the daily workload limit would be exceeded',
+            'elapsed': 'its start time has passed', 'deadline': 'it ends after the task deadline',
+            'working_hours': 'it falls outside working hours', 'duration_changed': 'its duration no longer matches',
+            'fixed_commitment': 'it conflicts with a class or protected break'}
+        reasons = [labels[value] for value in state['nightly_invalid_reasons'] if value in labels]
+        return 'The original allocation no longer fits: ' + '; '.join(reasons) + '.'
 
     async def deliver_proposal(self, task, state):
         text, buttons = self.proposal_content(task, state)
@@ -405,31 +524,72 @@ class LearningCalendar:
             "reply_markup": {"inline_keyboard": [[button] for button in options]},
             "learning_menu": {"task_id": task_id, "token": state["token"]}}]}
 
+    async def dated_edit_menu(self, task_id, state, now=None):
+        now = now or datetime.now(self.settings.tz)
+        menu = self.edit_menu(task_id, state)
+        task = next((t for t in self.db.list_open_tasks() if t['id'] == task_id), None)
+        if task is None:
+            return menu
+        begin = datetime.combine(now.date() + timedelta(days=1), time(), self.settings.tz)
+        stop = begin + timedelta(days=3)
+        await self.calendar.verify_owner()
+        busy = await self.calendar.busy(begin, stop)
+        from .backward_planning import reserved_windows
+        busy = [*busy, *reserved_windows(self.db)]
+        hard = [(datetime.fromisoformat(other['start']), datetime.fromisoformat(other['end']))
+                for item in self.db.list_open_tasks() if item['id'] != task_id
+                for other in [self.get(item['id'])]
+                if other and other.get('start') and other['status'] == 'creating']
+        policy = self.db.get_task_action_state('learning:course-calendar-policy')
+        dates = []
+        for offset in range(3):
+            day = begin + timedelta(days=offset)
+            booked = {day.date().isoformat(): sum((self.db.get_task_action_state(
+                'learning:day:' + day.date().isoformat()) or {}).values())}
+            slot = find_slot(task, now, busy, hard, self.settings, state['minutes'], booked, policy,
+                             window=(day, day + timedelta(days=1)))
+            if slot:
+                dates.extend(self.buttons(task_id, state, [('day' + day.strftime('%Y%m%d'),
+                    day.strftime('%m/%d (%a)'))]))
+        rows = menu['messages'][0]['reply_markup']['inline_keyboard']
+        rows[0:0] = [[button] for button in dates]
+        return menu
+
     async def book(self, task, state, now):
         """Reconcile a deterministic event ID before retrying a calendar insertion."""
+        failure_status = "needs_replan" if state.get("exact_slot") or state.get("owner_window") else "queued"
         event_id = sha256(f"chronos:{task['id']}:{state['token']}".encode()).hexdigest()
         await self.calendar.verify_owner()
         event = await self.calendar.event(event_id)
         if event is None:
+            reviewed = state.get("recovery_booking")
+            if reviewed:
+                from .recovery_schedule import still_valid
+                start, end = (datetime.fromisoformat(state[key]) for key in ("start", "end"))
+                if not await still_valid(self, task, state, now, start, end):
+                    from .recovery_schedule import reopen
+                    reopen(self, task, state)
+                    return "時間或衝突有變動，請重新查看指定時段。"
             if task_fields(task) != state["snapshot"] or datetime.fromisoformat(state["start"]) <= now:
-                self.update(task["id"], lambda old: {**old, "status": "queued"})
+                self.update(task["id"], lambda old: {**old, "status": failure_status})
                 return "The task or proposed time changed. A fresh execution plan will require approval."
             start, end = (datetime.fromisoformat(state[key]) for key in ("start", "end"))
             if state.get('duration_source') == 'nightly_ai':
                 from .nightly_planning import slot_allowed
                 current_busy = await self.calendar.busy(start, end)
                 if slot_allowed(self, task, state, now, current_busy) is None:
-                    self.update(task['id'], lambda old: {**old, 'status': 'needs_replan'})
-                    return 'Tomorrow’s allocation no longer fits. No event was created; request a fresh plan.'
+                    self.update(task['id'], lambda old: {**old, 'status': failure_status})
+                    return 'That planned time is no longer available. No event was created. A fresh proposal will be prepared and requires confirmation.'
             if overlaps(start, end, short_task_windows(start.astimezone(self.settings.tz).date(), self.settings.tz,
                                                       (end - start).total_seconds() / 60)):
-                self.update(task["id"], lambda old: {**old, "status": "queued"})
+                self.update(task["id"], lambda old: {**old, "status": failure_status})
                 return "12:00–13:00 and 17:00–18:00 allow only tasks of at most 10 minutes. A new execution plan will require approval."
             cutoff = datetime.combine(start.astimezone(self.settings.tz).date(), time(self.settings.learning_end_hour % 24), self.settings.tz)
             if self.settings.learning_end_hour == 24:
                 cutoff += timedelta(days=1)
-            if end > cutoff and state.get("late_window") != {"start": state["start"], "end": state["end"]}:
-                self.update(task["id"], lambda old: {**old, "status": "queued"})
+            from .study_constraints import approved_window
+            if end > cutoff and not approved_window(state,start,end) and state.get("late_window") != {"start": state["start"], "end": state["end"]}:
+                self.update(task["id"], lambda old: {**old, "status": failure_status})
                 return "A late work block needs confirmation. A fresh plan will require approval."
             if state.get("calendar_moves"):
                 from .study_reflow import apply as apply_reflow
@@ -442,18 +602,23 @@ class LearningCalendar:
                     return ("Calendar rearrangement paused. No new work block was created. "
                         "Some reviewed moves may already have succeeded; they are retained for reconciliation. "
                         f"Use /plan {task['id']} to prepare a fresh execution plan. " + str(error))
-            busy = current_busy if state.get('duration_source') == 'nightly_ai' else await self.calendar.busy(start, end)
+            busy = [] if reviewed else current_busy if state.get('duration_source') == 'nightly_ai' else await self.calendar.busy(start, end)
             from .backward_planning import reserved_windows
             busy = [*busy, *reserved_windows(self.db)]
             if overlaps(start, end, busy):
-                self.update(task["id"], lambda old: {**old, "status": "queued"})
+                self.update(task["id"], lambda old: {**old, "status": failure_status})
                 return "That time is now busy. A new execution plan will require approval."
             event = await self.calendar.insert({"id": event_id, "summary": task["title"], "colorId": "10",
-                "description": "Chronos execution block. Confirmed by YiLi. Task #" + str(task["id"]),
+                "description": ("Chronos execution block. Scheduled under standing owner authorization. Task #" if state.get("auto_accepted") else "Chronos execution block. Confirmed by YiLi. Task #") + str(task["id"]),
                 "start": {"dateTime": state["start"], "timeZone": self.settings.timezone},
                 "end": {"dateTime": state["end"], "timeZone": self.settings.timezone},
                 "visibility": "private", "transparency": "opaque",
+                **({"location": reviewed["location"]} if reviewed and reviewed["location"] else {}),
                 "extendedProperties": {"private": {"chronosTask": str(task["id"]), "chronosToken": state["token"]}}})
+        if (state.get("exact_slot") or state.get("recovery_booking")) and any(
+                datetime.fromisoformat(event.get(k, {}).get("dateTime", "").replace("Z", "+00:00"))
+                != datetime.fromisoformat(state[k]) for k in ("start", "end")):
+            raise CalendarError("The exact work block changed. Recovery needs review.")
         props = event.get("extendedProperties", {}).get("private", {})
         if props.get("chronosToken") != state["token"] or props.get("chronosTask") != str(task["id"]):
             raise CalendarError("Calendar event ownership could not be verified.")
@@ -466,8 +631,11 @@ class LearningCalendar:
             budget = self.db.get_task_action_state(day_key) or {}
             queue = self.db.get_task_action_state("learning:proposal-queue") or {}
             self.db._save_task_action_state(day_key, {**budget, state["token"]: state["minutes"]})
-            self.db._save_task_action_state(f"learning:task:{task['id']}", {**current,
-                "status": "scheduled", "event_id": event_id, "event_url": event.get("htmlLink", "")})
+            self.db._save_task_action_state(f"learning:task:{task['id']}", {
+                **{key: value for key, value in current.items() if key not in {"recovery_booking", "recovery_claim"}},
+                "status": "scheduled", "event_id": event_id, "event_url": event.get("htmlLink", ""),
+                **({"delivery": "scheduled_sent" if state.get('exact_slot') else "scheduled_pending"}
+                   if state.get("auto_accepted") or state.get("recovery_booking") else {})})
             self.db._save_task_action_state("learning:proposal-queue", {**queue,
                 "active_task_id": None if queue.get("active_task_id") == task["id"] else queue.get("active_task_id"),
                 "retire_message_ids": list(dict.fromkeys([*queue.get("retire_message_ids", []),
@@ -476,6 +644,12 @@ class LearningCalendar:
         return f"Time block scheduled\n{display_time(state['start'], self.settings.tz)}–{datetime.fromisoformat(state['end']):%H:%M}"
 
     async def callback(self, action, task_id, token, message_id):
+        if action == 'refreshfeedback':
+            from .learning_reply import refresh
+            return refresh(self, task_id, token)
+        if action == 'completecancel':
+            from .task_completion import cancel_future
+            return await cancel_future(self, task_id, token)
         active = self.sync_queue()
         state = self.get(task_id)
         task = next((t for t in self.db.list_open_tasks() if t["id"] == task_id), None)
@@ -489,10 +663,12 @@ class LearningCalendar:
             return f"This task is waiting for external conditions. Use /plan {task_id} when ready."
         if state["status"] in {"queued", "planning", "proposed", "editing", "no_slot", "rejected"} and task_id != active:
             return self.waiting_turn(active)
-        menu_action = action in {"more", "lots", "shuffle", "manual"}
+        menu_action = action in {"more", "lots", "shuffle", "manual"} or bool(re.fullmatch(r"day\d{8}", action))
         expected_message = state.get("edit_message_id", state.get("message_id")) if menu_action else state.get("message_id")
         valid_message = (message_id in {state.get("message_id"), state.get("edit_message_id")}
                          if action in {"postpone", "earlier", "later", "longer", "shorter"} else expected_message == message_id)
+        if action in {"recover", "adjustbooked"}:
+            valid_message = True  # Read-only view; mutation buttons bind to its delivered card.
         if state.get("token") != token or not valid_message:
             # Old buttons may request a fresh view, but can never approve or
             # apply an obsolete duration/time choice to a replacement proposal.
@@ -501,7 +677,7 @@ class LearningCalendar:
                     changed = self.update(task_id, lambda old: {**old, "status": "editing"}
                         if old.get("token") == state["token"] and old["status"] in {"proposed", "editing"} else old)
                     if changed.get("token") == state["token"] and changed["status"] == "editing":
-                        return self.edit_menu(task_id, changed)
+                        return await self.dated_edit_menu(task_id, changed)
                     return "The execution plan changed. Open Adjust plan on the latest card."
                 text, buttons = self.proposal_content(task, state)
                 return {"messages": [{"text": "This execution plan was updated. Review the latest version below.\n\n" + text,
@@ -509,6 +685,21 @@ class LearningCalendar:
                     "learning_proposal": {"task_id": task_id, "token": state["token"]}}]}
             return "This execution plan has already been handled. Check /plan for its current status."
         now = datetime.now(self.settings.tz)
+        if action in {"split", "splitconfirm"}:
+            from . import split_work
+            if action == "split":
+                return await split_work.preview(self, task, state, now)
+            return await split_work.confirm(self, task, state, now)
+        from . import session_recovery
+        if action in {"rwindow", "rbook"}:
+            from . import recovery_schedule
+            if state["status"] != "awaiting_resolution" or task_fields(task) != state["snapshot"]:
+                return "任務或安排已變更，請查看 /plan。"
+            if action == "rwindow":
+                return await recovery_schedule.preview(self, task, state, now)
+            return recovery_schedule.confirm(self, task, state, now)
+        if action in session_recovery.ACTIONS:
+            return session_recovery.respond(self, task, token, action, now)
         if action == "postpone":
             def postpone():
                 current = self.get(task_id)
@@ -537,12 +728,26 @@ class LearningCalendar:
                     f"Use /plan {task_id} when ready. The next task will be planned.")
         if action in {"earlier", "later", "longer", "shorter"}:
             return await self.revise(task_id, token, "more" if action == "longer" else action, now)
+        if action == 'adjustbooked' and state['status'] == 'scheduled':
+            return {'messages': [{'text': 'When would you prefer this work session? Reply with a date/time and optional duration. /cancel keeps the current booking.',
+                'reply_markup': {'force_reply': True},
+                'learning_edit': {'task_id': task_id, 'token': token, 'mode': 'booked'}}]}
         if action == "edit":
             changed = self.update(task_id, lambda old: {**old, "status": "editing"}
                 if old.get("token") == token and old["status"] == "proposed" else old)
             if changed["status"] != "editing":
                 return "This execution plan has already been handled. Use /plan."
-            return self.edit_menu(task_id, state)
+            return await self.dated_edit_menu(task_id, state)
+        if re.fullmatch(r'day\d{8}', action):
+            if state['status'] != 'editing':
+                return 'This adjustment menu is no longer active. Use Adjust plan on the latest execution plan.'
+            try:
+                day = datetime.strptime(action[3:], '%Y%m%d').replace(tzinfo=self.settings.tz)
+            except ValueError:
+                return 'Invalid planning date. Open Adjust plan again.'
+            if not 1 <= (day.date() - now.date()).days <= 3:
+                return 'This date option expired. Open Adjust plan again.'
+            return await self.revise(task_id, token, day.strftime('%Y-%m-%d'), now)
         if action in {"more", "lots", "shuffle", "manual"}:
             if state["status"] != "editing":
                 return "This adjustment menu is no longer active. Use Adjust plan on the latest execution plan."
@@ -555,15 +760,16 @@ class LearningCalendar:
                 "• Sunday morning — keep the current duration\n"
                 "• <code>10/20 15:00 60</code> — 60 minutes\n\n"
                 "Send your reply here. /cancel returns to the edit menu.\n\n"
-                "Review the revised execution plan, then tap <b>Confirm schedule</b> to book.",
+                + ("Routine changes will be scheduled automatically; exceptions need your decision." if self.settings.learning_auto_accept
+                   else "Review the revised execution plan, then tap <b>Confirm schedule</b> to book."),
                 "parse_mode": "HTML",
                 "reply_markup": {"force_reply": True}, "learning_edit": {"task_id": task_id, "token": token}}]}
         if action == "partial" and state["status"] == "awaiting_feedback":
-            return {"messages": [{"text": "Report focused minutes | completed pages/total pages | next page.\nExample: 135 | 20/48 | 21\nExclude breaks and phone time. /cancel keeps the session open.",
+            return {"messages": [{"text": FEEDBACK_PROMPT,
                 "reply_markup": {"force_reply": True},
                 "learning_edit": {"task_id": task_id, "token": token, "mode": "feedback"}}]}
         if action in {"done", "partial", "skipped"}:
-            return self.feedback(task, token, action, state["minutes"] if action == "done" else 0 if action == "skipped" else None)
+            return self.feedback(task, token, action, 0 if action == "skipped" else None)
         if action in {"reject", "retry"}:
             permitted = state["status"] in {"proposed", "no_slot", "rejected"}
             if not permitted:
@@ -581,11 +787,13 @@ class LearningCalendar:
             return await self.book(task, approved, now)
         return "Unknown planning action."
 
-    async def revise(self, task_id, token, instruction, now=None):
+    async def revise(self, task_id, token, instruction, now=None, *, update_id=None, review_id=None):
         if not self.settings.enable_learning_calendar:
             return "Task planning is unavailable."
         state = self.get(task_id)
         booked_edit = state and state.get("status") == "scheduled" and state.get("token") == token
+        if review_id and not booked_edit:
+            return "這項確認已失效。請重新提出時間調整。"
         active = self.sync_queue()
         if active != task_id and not booked_edit:
             return self.waiting_turn(active)
@@ -599,7 +807,7 @@ class LearningCalendar:
         try:
             if booked_edit:
                 from .study_reschedule import reschedule
-                return await reschedule(self, task_id, token, instruction, now)
+                return await reschedule(self, task_id, token, instruction, now, update_id=update_id, review_id=review_id)
             return await self._revise(task_id, token, instruction, now)
         finally:
             self.db.mutate_task_action_state("learning:tick", lambda old: {**old, "until": now.isoformat()}
@@ -612,7 +820,7 @@ class LearningCalendar:
         task = next((t for t in self.db.list_open_tasks() if t["id"] == task_id), None)
         if not task:
             return "This task is no longer open."
-        if re.fullmatch(r"(?:已完成|已經完成|已经完成|完成了|全部完成|done|already done|completed)[。.!！\s]*", instruction.strip(), re.IGNORECASE):
+        if is_completion_reply(instruction):
             return self.complete_unbooked(task, state, now)
         pending = state.get("pending_late")
         answer = instruction.strip().casefold()
@@ -735,6 +943,8 @@ class LearningCalendar:
             return True
         if not self.db._run_task_action(save):
             return "Another execution plan or booking changed while editing. Choose the adjustment again."
+        if self.settings.learning_auto_accept:
+            return "Updated. I’ll arrange the work session and report the result; exceptions will need your decision."
         return ("Updated. Review the new execution plan and press Confirm schedule to book it."
                 + (f" {len(displaced)} unapproved plans will be rearranged; they still need confirmation." if displaced else ""))
 
@@ -747,7 +957,8 @@ class LearningCalendar:
             pending = self.db.get_task_action_state(pending_key)
             live = self.db._load_task_action(task["id"])
             if (not current or current.get("token") != state["token"]
-                    or current.get("status") not in {"proposed", "editing"}
+                    or current.get("status") not in {"proposed", "editing", "no_slot"}
+                    or current.get("message_id") != state.get("message_id")
                     or queue.get("active_task_id") != task["id"]
                     or not live or live["task"] != state["snapshot"]):
                 return False
@@ -894,22 +1105,73 @@ class LearningCalendar:
         return await self._revise(task["id"], state["token"], instruction(slot[0]), now)
 
     def partial_reply(self, task_id, token, instruction):
-        match = re.fullmatch(r"\s*(\d+)\s*\|\s*(\d+)\s*/\s*(\d+)\s*\|\s*(\d+)\s*", instruction)
         task = next((t for t in self.db.list_open_tasks() if t["id"] == task_id), None)
         if not task:
-            return "This task is no longer open."
-        if not match:
-            return "Use focused minutes | completed pages/total pages | next page. Example: 135 | 20/48 | 21"
-        minutes, completed, total, next_page = map(int, match.groups())
-        if not 0 < minutes <= 720 or not 0 < completed < total or next_page != completed + 1:
-            return "Check minutes and page counts; next page should follow completed pages."
+            return '這項任務已經結束，請查看目前的學習安排。'
         state = self.get(task_id) or {}
-        previous = (state.get("progress") or {}).get("completed_pages", 0)
-        if state.get("status") == "awaiting_feedback" and completed <= previous:
-            return "Completed pages must increase from the previous report."
-        return self.feedback(task, token, "partial", minutes,
-            f"Completed {completed}/{total} pages. Continue from page {next_page}.",
-            {"completed_pages": completed, "total_pages": total, "next_page": next_page, "session_pages": max(1, completed - previous)})
+        if state.get('token') != token or state.get('status') != 'awaiting_feedback':
+            return '這次回報已經結束，請使用最新的進度訊息。'
+        if task_fields(task) != state.get('snapshot'):
+            from .learning_reply import stale
+            return stale(self,task,state)
+        prior_progress = state.get('progress') or {}
+        draft = state.get('partial_draft', {})
+        unit = draft.get('unit') or prior_progress.get('unit')
+        if not unit and re.search(r'(?:[0-9零一二兩三四五六七八九十百]+\s*[題题]|[解習考练練][題题]|題目|questions?|problems?)', task['title'], re.I):
+            unit = 'questions'
+        extracted = extract_feedback(instruction, unit=unit or 'items')
+        if extracted.get('unit') and extracted['unit'] != (draft.get('unit') or 'pages'):
+            draft = {key: value for key, value in draft.items() if key == 'minutes'}
+        values = {**draft, **extracted}
+        if unit == 'questions':
+            values.setdefault('unit', unit)
+        for key, value in values.items():
+            if key == 'unit':
+                continue
+            if value != int(value) or value < 1 or (key == 'minutes' and value > 720):
+                return '請確認投入時間與完成進度；時間可以用分鐘或小時說明。這次進度還沒記錄。'
+            values[key] = int(value)
+        if values.get('unit') in {'questions', 'items'}:
+            suffix = values['unit']
+            label = '題' if suffix == 'questions' else '項'
+            previous = prior_progress.get('completed_' + suffix, 0)
+            total = values.get('total') or prior_progress.get('total_' + suffix)
+            completed = values.get('completed')
+            if completed is not None and (completed <= previous or total is not None and completed >= total):
+                return '請確認完成數量；應比上次增加，若全部完成可以選「已完成」。'
+            if not values.get('minutes') or completed is None:
+                self.update(task_id, lambda old: {**old, 'partial_draft': values}
+                    if old and old.get('token') == token and old.get('status') == 'awaiting_feedback' else old)
+                return (f'已記下投入 {values["minutes"]} 分鐘。這次完成幾{label}了？' if values.get('minutes')
+                        else f'已完成 {completed} {label}。這次投入多久？' if completed is not None
+                        else f'這次投入多久、完成幾{label}？')
+            detail = f'已完成 {completed}/{total} {label}，剩下 {total - completed} {label}。' if total else f'已完成 {completed} {label}。'
+            return self.feedback(task, token, 'partial', values['minutes'], detail,
+                {'unit': suffix, 'completed_' + suffix: completed, 'total_' + suffix: total,
+                 'session_' + suffix: completed - previous})
+        previous = (state.get('progress') or {}).get('completed_pages', 0)
+        total = values.get('total') or (state.get('progress') or {}).get('total_pages')
+        completed = values.get('completed')
+        if completed is not None and (completed <= previous or (total is not None and completed >= total)):
+            return '請確認目前讀到哪一頁；頁碼需要比上次往前，若全部讀完可以選「已完成」。'
+        if completed is not None and values.get('next_page', completed + 1) != completed + 1:
+            return f'你讀到第 {completed} 頁，下次是從第 {completed + 1} 頁開始嗎？請再確認頁碼。'
+        if not values.get('minutes') or completed is None:
+            self.update(task_id, lambda old: {**old, 'partial_draft': values}
+                if old and old.get('token') == token and old.get('status') == 'awaiting_feedback' else old)
+            if values.get('minutes'):
+                return f'專心讀了 {values["minutes"]} 分鐘。這次讀到第幾頁了？'
+            if completed is not None:
+                return f'讀到第 {completed} 頁了。這次大概專心讀了多久？'
+            return '這次大概專心讀了多久、讀到第幾頁？直接用平常說話的方式回答就好。'
+        minutes = values['minutes']
+        next_page = completed + 1
+        detail = f'讀到第 {completed} 頁，下次從第 {next_page} 頁開始。'
+        if total:
+            detail = f'已讀 {completed}/{total} 頁，下次從第 {next_page} 頁開始。'
+        return self.feedback(task, token, 'partial', minutes, detail,
+            {'completed_pages': completed, 'total_pages': total, 'next_page': next_page,
+             'session_pages': completed - previous})
 
     async def prepare_feedback(self, task, outcome, minutes, reason=""):
         state = self.get(task['id'])
@@ -925,14 +1187,16 @@ class LearningCalendar:
             if end.tzinfo is None:
                 raise ValueError('Missing timezone')
         except (CalendarError, KeyError, ValueError, TypeError):
-            return lambda: 'Unable to verify this booking right now. Please try /taskupdate again shortly.'
+            return lambda: '目前無法核對這個預約時段，請稍後再試。任務若已完成，也可以直接回報任務完成。'
         if end > datetime.now(self.settings.tz):
-            return lambda: 'This work session has not ended yet. Report after ' + display_time(end.isoformat(), self.settings.tz) + '.'
+            return lambda: '這個預約時段還沒結束。若任務已提前完成，直接告訴我「這項任務完成了」，不必等到預約時間。'
         return lambda: self.feedback(task, state['token'], outcome, minutes, reason, verified_booking=state)
 
     def feedback(self, task, token, outcome, actual_minutes, reason="", progress=None, *, verified_booking=None):
         if outcome not in {"done", "partial", "skipped"} or (actual_minutes is not None and not 0 <= actual_minutes <= 720):
             return "Use /taskupdate <task-id> <minutes> done|partial|skipped [reason]."
+        if outcome == "skipped" and actual_minutes != 0:
+            return "For a session you did not start, report 0 minutes. Use partial if some work was done."
         def record():
             state = self.get(task["id"])
             if not state or state.get("token") != token:
@@ -947,6 +1211,9 @@ class LearningCalendar:
             live = next((item for item in self.db.list_open_tasks() if item["id"] == task["id"]), None)
             if not live or task_fields(live) != state["snapshot"]:
                 return "The task changed after booking. Use /plan to review before marking it complete."
+            unplanned = state.get('unplanned_minutes', 0)
+            if outcome == "partial" and unplanned and state.get('reset_remaining_sessions'):
+                return "這項任務還有已安排的時段。請在最後一段結束後回報進度，剩餘時間會保留待排。"
             profile = self.db.get_task_action_state("learning:profile") or {}
             if outcome == "done" and actual_minutes is not None and actual_minutes > 0:
                 subject = task.get("project") or "general"
@@ -958,32 +1225,54 @@ class LearningCalendar:
             if outcome == "done":
                 self.db.complete_task(task["id"], datetime.now(self.settings.tz))
             recorded = {**state,
-                "status": "finished" if outcome == "done" else "queued" if outcome == "partial" else "needs_replan",
+                "status": "finished" if outcome == "done" else "queued" if outcome == "partial" else "awaiting_resolution",
                 "feedback": {"outcome": outcome, "actual_minutes": actual_minutes,
                     "reason": reason[:1000], "recorded_at": datetime.now(self.settings.tz).isoformat()}}
+            continuation = None
             if outcome == "partial":
                 recorded["progress_note"] = reason[:1000]
                 recorded["duration_estimate"] = None
                 if progress:
                     recorded["progress"] = progress
-                    remaining = actual_minutes * (progress["total_pages"] - progress["completed_pages"]) / progress["session_pages"]
-                    recorded["requested_minutes"] = max(15, min(180, math.ceil(remaining / 15) * 15))
-                    recorded["duration_source"] = "owner"
+                    suffix = progress.get('unit', 'pages')
+                    if progress.get('total_' + suffix):
+                        remaining = actual_minutes * (progress['total_' + suffix] - progress['completed_' + suffix]) / progress['session_' + suffix]
+                        recorded["requested_minutes"] = max(15, min(180, math.ceil(remaining / 15) * 15))
+                        recorded["duration_source"] = "owner"
+                    else:
+                        recorded.pop('requested_minutes', None)
+                        recorded.pop('duration_source', None)
                 title = re.sub(r" · Continue.*$", "", task['title'])
-                title += (f" · Continue pages {progress['next_page']}–{progress['total_pages']}"
-                          if progress else f" · Continue: {reason[:200]}" if reason else " · Continue remaining work")
-                successor = self.db.continue_task(task, title, datetime.now(self.settings.tz))
-                recorded['status'] = 'finished'
-                recorded['successor_task_id'] = successor['id']
+                title += (f" · Continue: {progress['total_' + suffix] - progress['completed_' + suffix]} {suffix} remaining"
+                          if progress and suffix in {'questions', 'items'} and progress.get('total_' + suffix) else f" · Continue pages {progress['next_page']}–{progress['total_pages']}"
+                          if progress and progress.get('total_pages') else f" · Continue: {reason[:200]}" if reason else " · Continue remaining work")
                 continuation = {key: recorded[key] for key in
                                 ('progress', 'progress_note', 'requested_minutes', 'duration_source') if key in recorded}
-                continuation.update(status='queued', predecessor_task_id=task['id'])
-                self.db._save_task_action_state(f"learning:task:{successor['id']}", continuation)
+                continuation['status'] = 'queued'
+                if unplanned:
+                    continuation.update(requested_minutes=max(unplanned, continuation.get('requested_minutes') or 0),
+                                        duration_source='owner')
+                else:
+                    successor = self.db.continue_task(task, title, datetime.now(self.settings.tz))
+                    recorded['status'] = 'finished'
+                    recorded['successor_task_id'] = successor['id']
+                    continuation['predecessor_task_id'] = task['id']
+                    self.db._save_task_action_state(f"learning:task:{successor['id']}", continuation)
+                    continuation = None
+            if outcome == "skipped":
+                previous = state.get('recovery') or {}
+                recorded['recovery'] = {'stage': 'decision' if reason.strip() else 'reason',
+                    'reason': reason[:1000], 'missed_count': previous.get('missed_count', 0) + 1,
+                    'reported_at': datetime.now(self.settings.tz).isoformat()}
             self.db._save_task_action_state("learning:profile", profile)
             self.db._save_task_action_state("learning:history:" + token, recorded)
-            self.db._save_task_action_state(f"learning:task:{task['id']}", recorded)
-            return ("Completed and recorded. Future plans will use your reported time." if outcome == "done"
-                    else f"Recorded. Task #{task['id']} completed; remaining work saved as #{successor['id']}." if outcome == "partial"
+            self.db._save_task_action_state(f"learning:task:{task['id']}", continuation or recorded)
+            if outcome == 'skipped':
+                from .session_recovery import card
+                return card(self, live, recorded, datetime.now(self.settings.tz))
+            return (PROGRESS_COMPLETED_ACK if outcome == 'done'
+                    else (f"已記下這次投入 {actual_minutes} 分鐘，{reason}" if progress and progress.get('unit') in {'questions', 'items'}
+                          else f"已記下這次投入 {actual_minutes} 分鐘，下次從第 {progress['next_page']} 頁繼續。" if progress else '已記下這次進度，剩下的部分會接著安排。') if outcome == "partial"
                     else "Recorded. Use /plan to request another execution plan; writing still requires approval.")
         return self.db._run_task_action(record)
 
@@ -1000,21 +1289,41 @@ class LearningCalendar:
         if datetime.fromisoformat(end.replace("Z", "+00:00")) > now:
             return
         state = self.update(task["id"], lambda old: {**old, "status": "awaiting_feedback",
-            "delivery": "feedback_pending"} if old["status"] == "scheduled" else old)
+            "delivery": "feedback_pending", "feedback_requested_at": now.isoformat(),
+            "superseded_schedule_id": old.get("message_id")} if old["status"] == "scheduled" else old)
         await self.deliver_feedback(task, state)
 
     def feedback_content(self, task, state):
-        text = (f"<b>Execution check-in</b>\n\n{escape(task['title'])}\n"
-                f"{display_time(state['start'], self.settings.tz)} · {state['minutes']} minutes planned\n\n"
-                "What is the outcome? Choose below.\n\n"
-                "Different duration? For 15 minutes completed, send\n"
-                f"<code>/taskupdate {task['id']} 15 done</code>")
-        return text, self.buttons(task["id"], state,
-            [("done", "Completed"), ("partial", "Partially completed"), ("skipped", "Skipped")])
+        from .mail_links import task_caption, source_url
+        start = datetime.fromisoformat(state['start']).astimezone(self.settings.tz)
+        end = (datetime.fromisoformat(state['end']).astimezone(self.settings.tz) if state.get('end')
+               else start + timedelta(minutes=state['minutes']))
+        end_text = end.strftime('%H:%M') if end.date() == start.date() else display_time(end.isoformat(), self.settings.tz)
+        text = (f"<b>這次任務進度</b>\n\n{escape(task_caption(task))}\n"
+                f"原訂 {display_time(state['start'], self.settings.tz)}–{end_text}\n\n"
+                '目前進度到哪裡了？')
+        url = source_url(task)
+        if url:
+            text += f'\n<a href="{escape(url, quote=True)}">開啟郵件</a>'
+        if state.get('outcome_reminder_count'):
+            text = '還沒收到這次的進度，有空再告訴我就好。\n\n' + text
+        return text, self.buttons(task['id'], state,
+            [('done', '已完成'), ('partial', '完成一部分'), ('skipped', '還沒開始')])
 
     async def deliver_feedback(self, task, state):
         text, buttons = self.feedback_content(task, state)
         await self.send(task["id"], state, text, buttons, "feedback")
+        current = self.get(task["id"]) or {}
+        previous = current.get("superseded_schedule_id")
+        if current.get("delivery") == "feedback_sent" and previous and previous != current.get("message_id"):
+            try:
+                result = await self.telegram.request("deleteMessage", {"chat_id": self.settings.telegram_chat_id,
+                    "message_id": previous})
+            except RuntimeError:
+                return
+            if result.get("ok") or (result.get("error_code") == 400 and "not found" in result.get("description", "").lower()):
+                self.update(task["id"], lambda old: {**old, "superseded_schedule_id": None}
+                    if old and old.get("superseded_schedule_id") == previous else old)
 
     async def tick(self, now=None, *, force_proposal=False):
         if not self.settings.enable_learning_calendar:
@@ -1023,6 +1332,8 @@ class LearningCalendar:
             return {"enabled": True, "waiting_for": "calendar authorization and activation"}
         now = now or datetime.now(self.settings.tz)
         now = now.astimezone(self.settings.tz)
+        from .reset_conversation import retire_unstarted
+        retire_unstarted(self.db,now)
         claim = uuid4().hex
         lease = self.db.mutate_task_action_state("learning:tick", lambda old: {
             "claim": claim, "until": (now + timedelta(minutes=10)).isoformat()}
@@ -1040,27 +1351,64 @@ class LearningCalendar:
             if health["failures"] >= 2 and not health["notified"]:
                 self.db.mutate_task_action_state("learning:health", lambda old: {**old, "notified": True})
                 await self.telegram.send_message(self.settings.telegram_chat_id,
-                    "Planning assistant needs attention. " + str(error) + " Tasks are saved. Check /plan.")
+                    "Planning assistant needs attention. " + str(error) + " Tasks are saved. Check /plan.", requires_response=True)
             raise
         finally:
             self.db.mutate_task_action_state("learning:tick", lambda old: {**old, "until": now.isoformat()}
                 if old["claim"] == claim else old)
 
     async def _tick(self, now, *, force_proposal=False):
+        from .study_reset import KEY, ACTIVE
+        rebuild = self.db.get_task_action_state(KEY) or {}
+        if rebuild.get('status') in ACTIVE:
+            return {'waiting_for': 'study rebuild reconciliation'}
         self.sync_queue()
         await self.retire_cards()
+        from .automatic_planning import expire_mail_receipts
+        await expire_mail_receipts(self)
         tasks = self.db.list_open_tasks()
         # Check-ins continue independently of the one-at-a-time approval queue.
         for task in tasks:
             state = self.get(task["id"])
             if not state:
                 continue
+            if state.get('pending_reschedule'):
+                # Preserve the scheduled recovery entry point until the owner
+                # reconciles the uncertain Calendar mutation explicitly.
+                continue
+            if state.get('reset_remaining_sessions'):
+                from .study_reset import advance_sessions
+                while state.get('reset_remaining_sessions') and state.get('status') == 'scheduled' and state['end'] <= now.isoformat():
+                    revised = await advance_sessions(self, task, state, now)
+                    if revised == state:
+                        break
+                    state = revised
             if state["status"] == "creating":
+                if state.get('exact_slot') or state.get('split_operation'):
+                    continue  # The reviewed operation owns its booking and recovery lease.
                 await self.book(task, state, now)
+                from .automatic_planning import receipt
+                current = self.get(task["id"])
+                await receipt(self, task, current)
+                if current and current.get("delivery") == "recovery_pending":
+                    from .recovery_schedule import deliver_changed
+                    await deliver_changed(self, task, current, now)
+            elif state["status"] == "awaiting_resolution" and state.get("delivery") == "recovery_pending":
+                from .recovery_schedule import deliver_changed
+                await deliver_changed(self, task, state, now)
+            elif (state["status"] == "scheduled" and state.get("delivery") == "scheduled_pending"
+                    and datetime.fromisoformat(state["end"]) > now):
+                from .automatic_planning import receipt
+                await receipt(self, task, state)
             elif state["status"] == "scheduled" and datetime.fromisoformat(state["end"]) <= now:
                 await self.follow_up(task, state, now)
             elif state["status"] == "awaiting_feedback" and state.get("delivery") == "feedback_pending":
                 await self.deliver_feedback(task, state)
+            elif state["status"] == "awaiting_feedback":
+                if state.get("superseded_schedule_id"):
+                    await self.deliver_feedback(task, state)
+                from .session_recovery import unanswered
+                await unanswered(self, task, state, now)
         # The nightly batch may prepare tomorrow's blocks during quiet hours.
         # Approval, Calendar conflict checks and work-hour limits remain unchanged.
         active = self.sync_queue()
@@ -1069,9 +1417,16 @@ class LearningCalendar:
                    {"queued", "planning", "proposed", "editing", "no_slot"}]
         quiet = not self.settings.learning_start_hour <= now.hour < self.settings.learning_end_hour
         if quiet and not force_proposal:
-            if not nightly or (active is not None and active not in {task["id"] for task in nightly}):
+            queue = self.db.get_task_action_state("learning:proposal-queue") or {}
+            if active is not None and active in queue.get("requested_task_ids", []):
+                # Owner intent belongs to the durable batch, not just its first
+                # request. Continue this turn after callbacks or worker retries;
+                # unrelated automatic backlog still respects quiet hours.
+                tasks = [task for task in tasks if task["id"] == active]
+            elif not nightly or (active is not None and active not in {task["id"] for task in nightly}):
                 return {"enabled": True, "quiet_hours": True, "proposals_checked": 0}
-            tasks = nightly
+            else:
+                tasks = nightly
         # Retain the active turn, then consume selected oldest tasks before other work.
         nightly_ids = {task["id"] for task in nightly}
         tasks = sorted(tasks, key=lambda task: (task["id"] not in nightly_ids,
@@ -1090,17 +1445,32 @@ class LearningCalendar:
             state = self.get(task["id"])
             if not state and datetime.fromisoformat(task["created_at"]) < datetime.fromisoformat(self.settings.learning_enabled_since):
                 continue
+            if (state and state['status'] == 'no_slot' and state.get('duration_source') == 'nightly_ai'
+                    and not state.get('availability_search')):
+                # Repair legacy allocation-only failures once, without resending
+                # genuinely exhausted searches on every scheduler tick.
+                state = self.update(task['id'], lambda old: {**old, 'status': 'queued'}
+                    if old and old.get('token') == state['token'] and old['status'] == 'no_slot' else old)
             if not state or state["status"] in {"queued", "planning"}:
                 await self.propose(task, now, [], booked_minutes)
                 state = self.get(task["id"])
                 processed += 1
             if not state:
                 continue
-            if state["status"] in {"proposed", "no_slot"} and state.get("delivery") == "proposal_pending":
-                await self.deliver_proposal(task, state)
+            if ((state["status"] == "proposed" and self.settings.learning_auto_accept
+                    and not state.get("delivery", "").endswith(("_uncertain", "_sending")))
+                    or (state["status"] in {"proposed", "no_slot"} and state.get("delivery") == "proposal_pending")):
+                from .automatic_planning import accept
+                if not await accept(self, task, state, now):
+                    await self.deliver_proposal(task, state)
+                state = self.get(task['id'])
+                if state["status"] == "scheduled":
+                    break
             if state["status"] in {"queued", "planning", "proposed", "editing", "no_slot", "creating"}:
                 break
         await self.retire_cards()
+        from .planning_notices import cleanup
+        await cleanup(self)
         return {"enabled": True, "proposals_checked": processed}
 
     def status(self, *, booked_only=False):
@@ -1110,7 +1480,7 @@ class LearningCalendar:
         labels = {"planning": "Scheduling", "queued": "Queued for planning",
             "proposed": "Awaiting approval", "creating": "Applying approved plan",
             "editing": "Awaiting your direction",
-            "scheduled": "Scheduled", "awaiting_feedback": "Awaiting outcome",
+            "scheduled": "Scheduled", "awaiting_feedback": "Awaiting outcome", "awaiting_resolution": "Awaiting recovery decision",
             "no_slot": "No viable time block", "needs_replan": "Needs replanning",
             "postponed": "Deferred",
             "backward_managed": "Backward plan · /backward progress ID",
@@ -1128,6 +1498,8 @@ class LearningCalendar:
                 item = f"• <b>#{task['id']}</b> {escape(title)}"
                 if scope:
                     item += "\n  " + "\n  ".join(escape(line) for line in scope)
+                if unplanned := state.get('unplanned_minutes'):
+                    item += f" · 剩下 {unplanned} 分鐘待排"
                 groups.setdefault(status, []).append(item)
         for status, tasks in groups.items():
             lines.extend(["", f"<b>{escape(status)}</b>", *tasks])

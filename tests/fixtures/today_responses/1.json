@@ -1,0 +1,28 @@
+{
+  "classify_intent": {
+    "action": "task_complete",
+    "task_ids": [
+      2
+    ],
+    "target_selection": "single",
+    "instruction": "Study ISPM Chapter 2 做完了",
+    "question": null,
+    "start": null,
+    "end": null,
+    "reference": null,
+    "page": 1,
+    "minutes": null,
+    "outcome": null,
+    "operation": null,
+    "day": null,
+    "end_day": null,
+    "title": null,
+    "content": null,
+    "event_category": null,
+    "edit_field": null,
+    "preference_operation": null,
+    "preference_key": null,
+    "preference_value": null,
+    "assignment_course": null
+  }
+}

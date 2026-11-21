@@ -1,0 +1,10 @@
+{
+  "preferred_start_hours": [
+    19
+  ],
+  "constrained_start_hours": [
+    9
+  ],
+  "forgotten": true,
+  "scope": "local SQLite preferences with live Gemini planning; no production writes"
+}

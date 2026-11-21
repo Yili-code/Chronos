@@ -1,0 +1,28 @@
+{
+  "phase": "private hold deletion scope and acknowledgement",
+  "date": "2026-11-04 Asia/Taipei",
+  "base_commit": "d50f2a2a7aa40984a9dbef5d81ad85b5a1d040d3",
+  "before_fix": {
+    "failed": 20,
+    "passed": 26
+  },
+  "tests": {
+    "tests": 3766,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "seconds": 185.736,
+  "wheel_sha256": "e16b6a232cb135c875b468d5011d281bd198d3cb6da5672dddd41ff463e1715d",
+  "source_match": true,
+  "external_writes": "mocked only",
+  "production_deployed": false,
+  "root_causes": [
+    "Private hold ownership check ignored externally expanded recurring scope",
+    "Deletion completion did not inspect transport acknowledgement"
+  ],
+  "fix": [
+    "Reject recurring, omitted-attendee and unsupported event scopes",
+    "Only expected empty dict deletion acknowledgement confirms cancellation; unknown outcomes never replay"
+  ]
+}

@@ -131,7 +131,7 @@ def test_ai_failure_leaves_no_partial_task_queue_and_can_retry(setup):
     calendar.insert.assert_not_awaited()
 
 
-def test_new_calendar_conflict_never_books_or_spills_to_another_day(setup):
+def test_new_calendar_conflict_requires_fresh_approval_for_replacement(setup):
     planner, task, calendar, bot = setup
     asyncio.run(planner.nightly_proposals(NIGHT))
     state = planner.get(task['id'])
@@ -139,7 +139,13 @@ def test_new_calendar_conflict_never_books_or_spills_to_another_day(setup):
     calendar.busy.return_value = [(a, b)]
     reply = asyncio.run(planner.callback('approve', task['id'], state['token'], state['message_id']))
     assert 'No event' in reply
-    assert planner.get(task['id'])['status'] == 'needs_replan'
+    assert planner.get(task['id'])['status'] == 'queued'
+    calendar.insert.assert_not_awaited()
+    asyncio.run(planner.tick(NIGHT))
+    replacement = planner.get(task['id'])
+    assert replacement['status'] == 'proposed' and replacement['token'] != state['token']
+    assert replacement['nightly_slot'] != state['nightly_slot']
+    assert 'approved_at' not in replacement
     calendar.insert.assert_not_awaited()
 
 
