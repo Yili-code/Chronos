@@ -4,13 +4,14 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from chronos.evening_agenda import render_agenda, send_evening_agenda
+from chronos.evening_agenda import render_agenda, send_evening_agenda, send_today_agenda
 from chronos.google_calendar import GoogleCalendar, CalendarError
 from chronos.settings import Settings
 from test_deadline_reminders import store
 from test_system import system
 
 NOW = datetime.fromisoformat("2026-10-19T21:00:00+08:00")
+MORNING = datetime.fromisoformat("2026-10-20T08:00:00+08:00")
 
 
 def event(title="Study graphs"):
@@ -36,6 +37,46 @@ def test_agenda_delivery_deduplicates_and_waits_until_evening(store):
     start, end = calendar.agenda.await_args.args
     assert start.isoformat() == "2026-10-20T00:00:00+08:00"
     assert end - start == timedelta(days=1)
+
+
+def test_today_agenda_waits_until_morning_then_keeps_unchanged_message(store):
+    config = Settings(_env_file=None, enable_learning_calendar=True, telegram_chat_id=123)
+    calendar, bot = AsyncMock(), AsyncMock()
+    calendar.agenda.return_value = [event()]
+    bot.send_message.return_value = {"ok": True, "result": {"message_id": 701}}
+
+    before = asyncio.run(send_today_agenda(store, calendar, bot, config, MORNING.replace(hour=7, minute=55)))
+    assert before == {"waiting_for": "08:00 Asia/Taipei"}
+    calendar.agenda.assert_not_awaited()
+
+    sent = asyncio.run(send_today_agenda(store, calendar, bot, config, MORNING))
+    unchanged = asyncio.run(send_today_agenda(store, calendar, bot, config, MORNING + timedelta(minutes=5)))
+    assert sent["sent"] == 1
+    assert unchanged["changed"] is False
+    assert bot.send_message.await_count == 1
+    bot.request.assert_not_awaited()
+    state = store.get_task_action_state("morning:agenda:2026-10-20")
+    assert state["status"] == "sent" and state["message_ids"] == [701]
+
+
+def test_today_agenda_deletes_previous_message_only_when_content_changes(store):
+    config = Settings(_env_file=None, enable_learning_calendar=True, telegram_chat_id=123)
+    calendar, bot = AsyncMock(), AsyncMock()
+    calendar.agenda.return_value = [event()]
+    bot.send_message.side_effect = [
+        {"ok": True, "result": {"message_id": 701}},
+        {"ok": True, "result": {"message_id": 702}},
+    ]
+    bot.request.return_value = {"ok": True}
+
+    asyncio.run(send_today_agenda(store, calendar, bot, config, MORNING))
+    calendar.agenda.return_value = [event("Updated graphs session")]
+    result = asyncio.run(send_today_agenda(store, calendar, bot, config, MORNING + timedelta(minutes=5)))
+
+    assert result == {"sent": 1, "changed": True, "for_date": "2026-10-20"}
+    bot.request.assert_awaited_once_with("deleteMessage", {"chat_id": 123, "message_id": 701})
+    assert "Updated graphs session" in bot.send_message.await_args.args[1]
+    assert store.get_task_action_state("morning:agenda:2026-10-20")["message_ids"] == [702]
 
 
 def test_empty_day_and_uncertain_send_do_not_duplicate(store):
@@ -92,6 +133,8 @@ def test_endpoint_requires_scheduler_auth(system):
     client, _, _, _ = system
     assert client.post("/internal/agenda/tomorrow").status_code == 403
     assert client.post("/internal/agenda/tomorrow", headers={"X-Chronos-Scheduler-Secret": "test-scheduler"}).json() == {"enabled": False}
+    assert client.post("/internal/agenda/today").status_code == 403
+    assert client.post("/internal/agenda/today", headers={"X-Chronos-Scheduler-Secret": "test-scheduler"}).json() == {"enabled": False}
 
 
 def test_tomorrow_command_reads_full_day_without_consuming_evening_receipt(system,monkeypatch):

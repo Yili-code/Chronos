@@ -52,7 +52,7 @@ from . import task_review
 from . import course_habits
 from . import assignment_access
 from . import preferences
-from .evening_agenda import send_evening_agenda
+from .evening_agenda import send_evening_agenda, send_today_agenda
 from . import agenda_context
 from .task_timing import display_time, task_sort_key, timing_details
 from .study_scheduler import tick_study, notify_study_failures
@@ -235,6 +235,8 @@ async def lifespan(_: FastAPI):
         scheduler.add_job(send_daily_tasks, "cron", hour=8, minute=0, id="daily_tasks", replace_existing=True)
         scheduler.add_job(run_deadline_reminders, "interval", minutes=5, id="deadline_reminders", replace_existing=True, max_instances=1)
         if settings.enable_learning_calendar:
+            scheduler.add_job(run_today_agenda, "cron", minute="*/5", timezone="Asia/Taipei",
+                              id="morning_agenda", replace_existing=True, max_instances=1)
             scheduler.add_job(run_nightly_planning, "cron", hour=21, minute=0, timezone="Asia/Taipei",
                               id="nightly_planning", replace_existing=True, max_instances=1)
             scheduler.add_job(run_evening_agenda, "cron", hour=21, minute=0, timezone="Asia/Taipei",
@@ -646,6 +648,11 @@ async def run_evening_agenda():
     return await send_evening_agenda(db, google_calendar, telegram, settings)
 
 
+@tracked_job(lambda: db)
+async def run_today_agenda():
+    return await send_today_agenda(db, google_calendar, telegram, settings)
+
+
 @app.post("/internal/agenda/tomorrow")
 async def trigger_evening_agenda(x_chronos_scheduler_secret: str | None = Header(default=None)):
     require_learning_scheduler_secret(x_chronos_scheduler_secret)
@@ -653,6 +660,15 @@ async def trigger_evening_agenda(x_chronos_scheduler_secret: str | None = Header
         return await run_evening_agenda()
     except (CalendarError, RuntimeError):
         raise HTTPException(status_code=503, detail="Tomorrow agenda delivery requires retry or inspection") from None
+
+
+@app.post("/internal/agenda/today")
+async def trigger_today_agenda(x_chronos_scheduler_secret: str | None = Header(default=None)):
+    require_learning_scheduler_secret(x_chronos_scheduler_secret)
+    try:
+        return await run_today_agenda()
+    except (CalendarError, RuntimeError):
+        raise HTTPException(status_code=503, detail="Today's agenda delivery requires retry or inspection") from None
 
 
 @drain_messages(lambda: telegram)
