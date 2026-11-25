@@ -1024,7 +1024,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
             await telegram.answer_callback_query(update.callback_query.id)
         return {"ok": True}
     if update.callback_query and (update.callback_query.data or "").startswith("learn:"):
-        matched = re.fullmatch(r"learn:(refreshfeedback|completecancel|adjustbooked|recover|rbusy|rforgot|rload|rlarge|rirrelevant|rprivate|rwrite|ragain|rshort|rdefer|rstop|rconfirm|rback|rwindow|rbook|split|splitconfirm|day[0-9]{8}|approve|edit|earlier|later|longer|shorter|postpone|more|lots|shuffle|manual|reject|retry|done|partial|skipped):(\d+):([a-f0-9]{32})", update.callback_query.data)
+        matched = re.fullmatch(r"learn:(refreshfeedback|completecancel|adjustbooked|pick[0-2]|recover|rbusy|rforgot|rload|rlarge|rirrelevant|rprivate|rwrite|ragain|rshort|rdefer|rstop|rconfirm|rback|rwindow|rbook|split|splitconfirm|day[0-9]{8}|approve|edit|earlier|later|longer|shorter|postpone|more|lots|shuffle|manual|reject|retry|done|partial|skipped):(\d+):([a-f0-9]{32})", update.callback_query.data)
         if not matched or source_message.message_id is None:
             raise HTTPException(status_code=400, detail="Invalid planning callback")
         receipt = db.get_update(update_id)
@@ -1033,7 +1033,12 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
                 reply = "Task planning is unavailable. No event was created."
             else:
                 try:
-                    reply = await learning_calendar().callback(matched[1], int(matched[2]), matched[3], source_message.message_id)
+                    if matched[1].startswith('pick'):
+                        from .booked_options import select_slot
+                        reply = await select_slot(learning_calendar(), chat_id, source_message.message_id,
+                                                  int(matched[2]), matched[3], int(matched[1][-1]), update_id)
+                    else:
+                        reply = await learning_calendar().callback(matched[1], int(matched[2]), matched[3], source_message.message_id)
                 except CalendarError as error:
                     reply = str(error) + " The execution plan remains saved; check /plan."
             receipt = db.process_update(update_id, lambda: reply)

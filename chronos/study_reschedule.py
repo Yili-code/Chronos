@@ -156,20 +156,7 @@ async def reschedule(planner, task_id, token, instruction, now, *, update_id=Non
             return "Calendar 時段已變更，或縮短後的結束時間已過。請重新提出時間調整。"
     else:
         agenda = await planner.calendar.agenda(*(window or (start, end)))
-        own_ids = {planner.settings.calendar_id.casefold()}
-        if planner.settings.calendar_id.casefold() in {'primary', planner.settings.calendar_account.casefold()}:
-            own_ids.update({'primary', planner.settings.calendar_account.casefold()})
-        busy = [bounds(e, planner.settings.tz) for e in agenda if e.get('transparency') != 'transparent'
-                and not (e.get('id') == state['event_id'] and e.get('_calendar_id', '').casefold() in own_ids)]
-        reservations = [(datetime.fromisoformat(s['start']), datetime.fromisoformat(s['end']))
-                        for t in planner.db.list_open_tasks() if t['id'] != task_id
-                        for s in [planner.get(t['id'])] if s and s.get('start') and s['status'] == 'creating']
-        budget = {}
-        for offset in range(8 if window else 1):
-            day = (start + timedelta(days=offset)).astimezone(planner.settings.tz).date().isoformat()
-            bucket = planner.db.get_task_action_state('learning:day:' + day) or {}
-            budget[day] = sum(v for k, v in bucket.items() if k != token)
-        policy = planner.db.get_task_action_state('learning:course-calendar-policy')
+        busy, reservations, budget, policy = scheduling_inputs(planner, task_id, state, agenda, start, 8 if window else 1)
         slot = find_slot(task, now, busy, reservations, planner.settings, pending['minutes'], budget, policy, window=window or (start, end), align_minutes=window is not None)
         if window and slot:
             start, end = slot
@@ -236,3 +223,22 @@ def record(planner, task_id, token, pending, *, update_id=None, reply=None):
         for request_id, text in replies.items():
             planner.db._save_task_action_state(receipt_key(request_id), {'reply': text})
     planner.db._run_task_action(save)
+
+
+def scheduling_inputs(planner, task_id, state, agenda, start, days):
+    token = state['token']
+    own_ids = {planner.settings.calendar_id.casefold()}
+    if planner.settings.calendar_id.casefold() in {'primary', planner.settings.calendar_account.casefold()}:
+        own_ids.update({'primary', planner.settings.calendar_account.casefold()})
+    busy = [bounds(e, planner.settings.tz) for e in agenda if e.get('transparency') != 'transparent'
+            and not (e.get('id') == state['event_id'] and e.get('_calendar_id', '').casefold() in own_ids)]
+    reservations = [(datetime.fromisoformat(s['start']), datetime.fromisoformat(s['end']))
+                    for t in planner.db.list_open_tasks() if t['id'] != task_id
+                    for s in [planner.get(t['id'])] if s and s.get('start') and s['status'] == 'creating']
+    budget = {}
+    for offset in range(days):
+        day = (start + timedelta(days=offset)).astimezone(planner.settings.tz).date().isoformat()
+        bucket = planner.db.get_task_action_state('learning:day:' + day) or {}
+        budget[day] = sum(v for k, v in bucket.items() if k != token)
+    policy = planner.db.get_task_action_state('learning:course-calendar-policy')
+    return busy, reservations, budget, policy
