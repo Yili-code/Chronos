@@ -729,9 +729,8 @@ class LearningCalendar:
         if action in {"earlier", "later", "longer", "shorter"}:
             return await self.revise(task_id, token, "more" if action == "longer" else action, now)
         if action == 'adjustbooked' and state['status'] == 'scheduled':
-            return {'messages': [{'text': 'When would you prefer this work session? Reply with a date/time and optional duration. /cancel keeps the current booking.',
-                'reply_markup': {'force_reply': True},
-                'learning_edit': {'task_id': task_id, 'token': token, 'mode': 'booked'}}]}
+            from .booked_options import adjustment_card
+            return await adjustment_card(self, task, state, now)
         if action == "edit":
             changed = self.update(task_id, lambda old: {**old, "status": "editing"}
                 if old.get("token") == token and old["status"] == "proposed" else old)
