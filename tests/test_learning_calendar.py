@@ -2014,7 +2014,7 @@ def test_partial_answers_collect_only_missing_fields_and_survive_restart(setup):
     planner, task, calendar, bot = setup
     planner.update(task['id'], lambda old: {'token': 'natural', 'status': 'awaiting_feedback', 'snapshot': task_fields(task)})
     reply = planner.partial_reply(task['id'], 'natural', '兩小時')
-    assert '讀到第幾頁' in reply
+    assert '做到哪裡' in reply and '頁' not in reply
     assert planner.db.get_task(task['id'])['status'] == 'open'
     planner = LearningCalendar(planner.db, calendar, bot, planner.settings)
     reply = planner.partial_reply(task['id'], 'natural', '到第20頁，總共48頁')
