@@ -2,8 +2,28 @@
 import re
 import unicodedata
 
-PROMPT = '這次大概專心讀了多久？完成多少進度了？\n例如「讀了兩小時，到第 20 頁」或「三小時，完成 4/7 題」。'
+PROMPT = '這次大概投入多久？完成多少進度了？'
 NUMBER = r'(?:\d+(?:\.\d+)?|[零〇一二兩两三四五六七八九十百]+)'
+
+
+def without_duration(text):
+    return re.sub(rf'(?:{NUMBER}\s*(?:個|个)?半?(?:小時|小时|hours?|hrs?)半?|半(?:個|个)?(?:小時|小时)|{NUMBER}\s*(?:分鐘|分钟|分|minutes?|mins?))', '',
+                  text, flags=re.I).strip(' ，,。.!！；;、')
+
+
+def skip_details(text):
+    rest = without_duration(unicodedata.normalize('NFKC', text))
+    return bool(re.fullmatch(r'(?:我)?(?:懶得想|懒得想|不想想|不想填|不想回報|不想回报|不知道|不確定|不确定|忘了|記不得|记不得|沒記時間|没记时间|沒計時|没计时|沒記進度|没记进度|先這樣|先这样|跳過|跳过|先跳過|先跳过)(?:了|啦|欸|耶)?', rest))
+
+
+def progress_note(text):
+    """Accept a concrete owner description without inventing numeric progress."""
+    rest = without_duration(text)
+    if re.search(r'預計|预计|打算|明天|下次|想要|計畫|计划|[?？]', rest):
+        return None
+    if re.search(r'(?:完成|做了|寫了|写了|修好|整理了|看完|看到|讀完|读完|讀到|读到|做到|處理了|处理了|已經|已经).+', rest):
+        return rest[:1000]
+    return None
 
 
 def number(value):
@@ -71,7 +91,8 @@ def extract(text, *, unit=None):
         result.update(completed=int(pages[1]), total=int(pages[2]))
     else:
         page_text = re.split(r'下次(?:從|从)|接著(?:從|从)|next(?:\s+page)?', text, flags=re.I)[0]
-        reached = re.search(rf'(?:讀到|读到|看到|做到|到第?|第|through\s+page|up\s+to\s+page|page)\s*({NUMBER})\s*(?:頁|页)?', page_text, re.I)
+        reached = re.search(rf'(?:讀到|读到|看到|做到|到第?|第)\s*({NUMBER})\s*(?:頁|页)', page_text, re.I)
+        reached = reached or re.search(rf'(?:through\s+page|up\s+to\s+page|page)\s*({NUMBER})', page_text, re.I)
         if reached:
             result['completed'] = number(reached[1])
         total = re.search(rf'(?:共|總共|总共|total)[為为是:：\s]*({NUMBER})\s*(?:頁|页|pages?)', text, re.I)

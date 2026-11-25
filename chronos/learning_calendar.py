@@ -7,7 +7,8 @@ from hashlib import sha256
 from html import escape
 from uuid import uuid4
 
-from .study_feedback import PROMPT as FEEDBACK_PROMPT, extract as extract_feedback
+from .study_feedback import (PROMPT as FEEDBACK_PROMPT, extract as extract_feedback,
+                             skip_details, progress_note)
 from .ai import AIError
 from .course_tracking import COURSE_SCHEDULE
 from .google_calendar import CalendarError
@@ -1122,14 +1123,25 @@ class LearningCalendar:
         if extracted.get('unit') and extracted['unit'] != (draft.get('unit') or 'pages'):
             draft = {key: value for key, value in draft.items() if key == 'minutes'}
         values = {**draft, **extracted}
+        declined = skip_details(instruction)
+        if not declined and not any(key in extracted for key in ('completed', 'total', 'next_page')):
+            note = progress_note(instruction)
+            if note:
+                values['note'] = note
         if unit == 'questions':
             values.setdefault('unit', unit)
         for key, value in values.items():
-            if key == 'unit':
+            if key in {'unit', 'note'}:
                 continue
             if value != int(value) or value < 1 or (key == 'minutes' and value > 720):
                 return '請確認投入時間與完成進度；時間可以用分鐘或小時說明。這次進度還沒記錄。'
             values[key] = int(value)
+        if values.get('completed') is None and (declined or values.get('note')):
+            if not declined and not values.get('minutes'):
+                self.update(task_id, lambda old: {**old, 'partial_draft': values}
+                    if old and old.get('token') == token and old.get('status') == 'awaiting_feedback' else old)
+                return '進度記下了。這次大概投入多久？沒記時間也沒關係。'
+            return self.feedback(task, token, 'partial', values.get('minutes'), values.get('note', ''))
         if values.get('unit') in {'questions', 'items'}:
             suffix = values['unit']
             label = '題' if suffix == 'questions' else '項'
@@ -1138,14 +1150,14 @@ class LearningCalendar:
             completed = values.get('completed')
             if completed is not None and (completed <= previous or total is not None and completed >= total):
                 return '請確認完成數量；應比上次增加，若全部完成可以選「已完成」。'
-            if not values.get('minutes') or completed is None:
+            if (not values.get('minutes') or completed is None) and not declined:
                 self.update(task_id, lambda old: {**old, 'partial_draft': values}
                     if old and old.get('token') == token and old.get('status') == 'awaiting_feedback' else old)
                 return (f'已記下投入 {values["minutes"]} 分鐘。這次完成幾{label}了？' if values.get('minutes')
                         else f'已完成 {completed} {label}。這次投入多久？' if completed is not None
                         else f'這次投入多久、完成幾{label}？')
             detail = f'已完成 {completed}/{total} {label}，剩下 {total - completed} {label}。' if total else f'已完成 {completed} {label}。'
-            return self.feedback(task, token, 'partial', values['minutes'], detail,
+            return self.feedback(task, token, 'partial', values.get('minutes'), detail,
                 {'unit': suffix, 'completed_' + suffix: completed, 'total_' + suffix: total,
                  'session_' + suffix: completed - previous})
         previous = (state.get('progress') or {}).get('completed_pages', 0)
@@ -1155,15 +1167,15 @@ class LearningCalendar:
             return '請確認目前讀到哪一頁；頁碼需要比上次往前，若全部讀完可以選「已完成」。'
         if completed is not None and values.get('next_page', completed + 1) != completed + 1:
             return f'你讀到第 {completed} 頁，下次是從第 {completed + 1} 頁開始嗎？請再確認頁碼。'
-        if not values.get('minutes') or completed is None:
+        if (not values.get('minutes') or completed is None) and not declined:
             self.update(task_id, lambda old: {**old, 'partial_draft': values}
                 if old and old.get('token') == token and old.get('status') == 'awaiting_feedback' else old)
             if values.get('minutes'):
-                return f'專心讀了 {values["minutes"]} 分鐘。這次讀到第幾頁了？'
+                return f'已記下投入 {values["minutes"]} 分鐘。這次做到哪裡了？'
             if completed is not None:
                 return f'讀到第 {completed} 頁了。這次大概專心讀了多久？'
-            return '這次大概專心讀了多久、讀到第幾頁？直接用平常說話的方式回答就好。'
-        minutes = values['minutes']
+            return FEEDBACK_PROMPT
+        minutes = values.get('minutes')
         next_page = completed + 1
         detail = f'讀到第 {completed} 頁，下次從第 {next_page} 頁開始。'
         if total:
@@ -1229,12 +1241,15 @@ class LearningCalendar:
                     "reason": reason[:1000], "recorded_at": datetime.now(self.settings.tz).isoformat()}}
             continuation = None
             if outcome == "partial":
+                recorded.pop('partial_draft', None)
                 recorded["progress_note"] = reason[:1000]
                 recorded["duration_estimate"] = None
+                recorded.pop('requested_minutes', None)
+                recorded.pop('duration_source', None)
                 if progress:
                     recorded["progress"] = progress
                     suffix = progress.get('unit', 'pages')
-                    if progress.get('total_' + suffix):
+                    if progress.get('total_' + suffix) and actual_minutes is not None:
                         remaining = actual_minutes * (progress['total_' + suffix] - progress['completed_' + suffix]) / progress['session_' + suffix]
                         recorded["requested_minutes"] = max(15, min(180, math.ceil(remaining / 15) * 15))
                         recorded["duration_source"] = "owner"
@@ -1269,10 +1284,15 @@ class LearningCalendar:
             if outcome == 'skipped':
                 from .session_recovery import card
                 return card(self, live, recorded, datetime.now(self.settings.tz))
-            return (PROGRESS_COMPLETED_ACK if outcome == 'done'
-                    else (f"已記下這次投入 {actual_minutes} 分鐘，{reason}" if progress and progress.get('unit') in {'questions', 'items'}
-                          else f"已記下這次投入 {actual_minutes} 分鐘，下次從第 {progress['next_page']} 頁繼續。" if progress else '已記下這次進度，剩下的部分會接著安排。') if outcome == "partial"
-                    else "Recorded. Use /plan to request another execution plan; writing still requires approval.")
+            effort = f'已記下這次投入 {actual_minutes} 分鐘，' if actual_minutes is not None else '已記下這次進度，'
+            if outcome == 'done':
+                return PROGRESS_COMPLETED_ACK
+            if progress:
+                return effort + (reason if progress.get('unit') in {'questions', 'items'}
+                                 else f"下次從第 {progress['next_page']} 頁繼續。")
+            if reason:
+                return effort + reason + ' 剩下的部分會接著安排。'
+            return (effort if actual_minutes is not None else '好，') + '這次進度先不細填，剩下的部分會接著安排。'
         return self.db._run_task_action(record)
 
     async def follow_up(self, task, state, now):
